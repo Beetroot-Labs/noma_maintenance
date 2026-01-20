@@ -5,7 +5,7 @@ import { NotificationProvider } from "@/components/notifications/NotificationPro
 import { MaintenanceProvider } from "@/context/MaintenanceContext";
 import { DemoUserProvider, useDemoUser } from "@/context/DemoUserContext";
 import { theme } from "@/theme";
-import Index from "./pages/Index";
+import MaintenanceHistoryPage from "./pages/MaintenanceHistoryPage";
 import LoginPage from "./pages/LoginPage";
 import ScanPage from "./pages/ScanPage";
 import MaintenancePage from "./pages/MaintenancePage";
@@ -64,10 +64,11 @@ const App = () => (
             <Routes>
               <Route path="/login" element={<LoginPage />} />
               <Route element={<RequireDemoUser />}>
-                <Route path="/" element={<Index />} />
+                <Route path="/" element={<OverviewPage />} />
                 <Route path="/scan" element={<ScanPage />} />
                 <Route path="/maintenance/:workId" element={<MaintenancePage />} />
                 <Route path="/overview" element={<OverviewPage />} />
+                <Route path="/history" element={<MaintenanceHistoryPage />} />
               </Route>
               <Route path="*" element={<NotFound />} />
             </Routes>

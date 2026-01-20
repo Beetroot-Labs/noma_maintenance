@@ -18,9 +18,9 @@ type DemoUserContextType = {
 const DemoUserContext = createContext<DemoUserContextType | undefined>(undefined);
 
 const demoUsers: DemoUser[] = [
-  { id: "u-admin", name: "Kovács Anna", role: "admin" },
-  { id: "u-tech", name: "Nagy Balazs", role: "technician" },
-  { id: "u-partner", name: "Szabó Eszter", role: "partner" },
+  { id: "u-admin", name: "Admin Anna", role: "admin" },
+  { id: "u-tech", name: "Technikus Tamás", role: "technician" },
+  { id: "u-partner", name: "Partner Péter", role: "partner" },
 ];
 
 export function DemoUserProvider({ children }: { children: ReactNode }) {

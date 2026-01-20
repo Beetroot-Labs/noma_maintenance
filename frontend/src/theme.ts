@@ -1,31 +1,31 @@
 import { createTheme } from "@mui/material/styles";
 
 export const appColors = {
-  background: "hsl(200 15% 97%)",
-  foreground: "hsl(200 15% 20%)",
-  card: "hsl(0 0% 100%)",
-  primary: "hsl(200 25% 40%)",
-  primaryForeground: "hsl(0 0% 100%)",
-  secondary: "hsl(200 10% 93%)",
-  secondaryForeground: "hsl(200 15% 25%)",
-  muted: "hsl(200 10% 95%)",
-  mutedForeground: "hsl(200 10% 45%)",
-  accent: "hsl(15 65% 55%)",
-  accentForeground: "hsl(0 0% 100%)",
-  destructive: "hsl(0 55% 55%)",
+  background: "#0F1729",
+  foreground: "hsl(210 40% 98%)",
+  card: "hsl(215 40% 22%)",
+  primary: "#F9941F",
+  primaryForeground: "hsl(215 25% 10%)",
+  secondary: "hsl(215 28% 20%)",
+  secondaryForeground: "hsl(210 40% 98%)",
+  muted: "hsl(215 28% 18%)",
+  mutedForeground: "hsl(215 15% 70%)",
+  accent: "hsl(36 95% 50%)",
+  accentForeground: "hsl(215 25% 10%)",
+  destructive: "hsl(0 72% 68%)",
   destructiveForeground: "hsl(0 0% 100%)",
-  success: "hsl(155 45% 42%)",
+  success: "hsl(142 72% 42%)",
   successForeground: "hsl(0 0% 100%)",
-  warning: "hsl(40 70% 50%)",
-  warningForeground: "hsl(0 0% 15%)",
-  inProgress: "hsl(195 50% 48%)",
-  inProgressForeground: "hsl(0 0% 100%)",
-  border: "hsl(200 15% 88%)",
+  warning: "hsl(36 95% 50%)",
+  warningForeground: "hsl(215 25% 10%)",
+  inProgress: "hsl(205 85% 60%)",
+  inProgressForeground: "hsl(215 25% 10%)",
+  border: "hsl(215 28% 30%)",
 };
 
 export const theme = createTheme({
   palette: {
-    mode: "light",
+    mode: "dark",
     primary: { main: appColors.primary, contrastText: appColors.primaryForeground },
     secondary: { main: appColors.secondary, contrastText: appColors.secondaryForeground },
     error: { main: appColors.destructive, contrastText: appColors.destructiveForeground },
@@ -42,10 +42,10 @@ export const theme = createTheme({
     divider: appColors.border,
   },
   shape: {
-    borderRadius: 12,
+    borderRadius: 6,
   },
   typography: {
-    fontFamily: '"Manrope", "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+    fontFamily: '"Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif',
     h1: { fontWeight: 700 },
     h2: { fontWeight: 700 },
     h3: { fontWeight: 700 },
@@ -62,7 +62,7 @@ export const theme = createTheme({
       styleOverrides: {
         root: {
           textTransform: "none",
-          borderRadius: 12,
+          borderRadius: 8,
           fontWeight: 700,
         },
       },

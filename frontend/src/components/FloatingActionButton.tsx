@@ -27,14 +27,14 @@ export function FloatingActionButton() {
           px: 2.5,
           py: 1.2,
           bgcolor: isContinue ? appColors.inProgress : appColors.accent,
-          color: appColors.accentForeground,
+          color: isContinue ? appColors.inProgressForeground : appColors.accentForeground,
           fontWeight: 700,
           boxShadow: "0 10px 24px rgba(20, 30, 36, 0.25)",
           animation: isContinue ? "pulseSubtle 2s ease-in-out infinite" : "none",
           "&:hover": {
             bgcolor: isContinue
-              ? "hsl(195 50% 44%)"
-              : "hsl(15 65% 50%)",
+              ? "hsl(215 50% 20%)"
+              : "hsl(36 95% 45%)",
           },
         }}
       >

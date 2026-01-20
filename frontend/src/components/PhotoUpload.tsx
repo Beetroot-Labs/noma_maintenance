@@ -75,7 +75,7 @@ export function PhotoUpload({ onPhotoAdd }: PhotoUploadProps) {
         sx={{
           bgcolor: appColors.accent,
           color: appColors.accentForeground,
-          "&:hover": { bgcolor: "hsl(15 65% 50%)" },
+          "&:hover": { bgcolor: "hsl(36 95% 45%)" },
         }}
       >
         Fotó készítése / feltöltés
@@ -100,7 +100,7 @@ export function PhotoUpload({ onPhotoAdd }: PhotoUploadProps) {
                   right: 8,
                   bgcolor: appColors.destructive,
                   color: appColors.destructiveForeground,
-                  "&:hover": { bgcolor: "hsl(0 55% 50%)" },
+                  "&:hover": { bgcolor: "hsl(0 72% 46%)" },
                 }}
               >
                 <X size={16} />
@@ -129,7 +129,7 @@ export function PhotoUpload({ onPhotoAdd }: PhotoUploadProps) {
             sx={{
               bgcolor: appColors.success,
               color: appColors.successForeground,
-              "&:hover": { bgcolor: "hsl(155 45% 38%)" },
+              "&:hover": { bgcolor: "hsl(142 72% 38%)" },
             }}
           >
             Fotó mentése

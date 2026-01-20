@@ -11,6 +11,7 @@ import {
 } from "@mui/material";
 import { ShieldAlert } from "lucide-react";
 import { appColors } from "@/theme";
+import { alpha } from "@mui/material/styles";
 import { useDemoUser } from "@/context/DemoUserContext";
 
 const roleLabel = {
@@ -41,54 +42,72 @@ export default function LoginPage() {
         py: 4,
       }}
     >
-      <Box sx={{ maxWidth: 440, mx: "auto", width: "100%" }}>
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            gap: 1.5,
-            mb: 3,
-          }}
-        >
+      <Box
+        sx={{
+          maxWidth: 920,
+          mx: "auto",
+          width: "100%",
+          display: "grid",
+          gap: 3,
+          gridTemplateColumns: { xs: "1fr", md: "0.9fr 1.1fr" },
+          alignItems: "start",
+        }}
+      >
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <Box
             sx={{
-              bgcolor: "rgba(255, 170, 0, 0.15)",
-              color: appColors.warning,
-              p: 1,
-              borderRadius: 2,
               display: "flex",
+              alignItems: "center",
+              gap: 1.5,
             }}
           >
-            <ShieldAlert size={20} />
+            <Box
+              sx={{
+                bgcolor: alpha(appColors.warning, 0.18),
+                color: appColors.warning,
+                p: 1,
+                borderRadius: 2,
+                display: "flex",
+              }}
+            >
+              <ShieldAlert size={20} />
+            </Box>
+            <Box>
+              <Typography variant="h5" sx={{ fontWeight: 700 }}>
+                Demo bejelentkezés
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Ez csak egy mockup alkalmazás.
+              </Typography>
+            </Box>
           </Box>
-          <Box>
-            <Typography variant="h5" sx={{ fontWeight: 700 }}>
-              Demo bejelentkezés
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Ez csak egy mockup alkalmazás.
-            </Typography>
-          </Box>
+
+          <Card sx={{ boxShadow: "0 12px 30px rgba(31, 50, 58, 0.12)" }}>
+            <CardContent sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <Box
+                sx={{
+                  borderRadius: 2,
+                  border: `1px solid ${appColors.border}`,
+                  bgcolor: appColors.muted,
+                  p: 2,
+                }}
+              >
+                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                  Figyelem
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  A bemutatóhoz előre definiált felhasználók közül választhat.
+                </Typography>
+              </Box>
+              <Typography variant="body2" color="text.secondary">
+                Válasszon szerepkört a demózáshoz, majd lépjen be.
+              </Typography>
+            </CardContent>
+          </Card>
         </Box>
 
         <Card sx={{ boxShadow: "0 12px 30px rgba(31, 50, 58, 0.12)" }}>
           <CardContent sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <Box
-              sx={{
-                borderRadius: 2,
-                border: `1px solid ${appColors.border}`,
-                bgcolor: appColors.muted,
-                p: 2,
-              }}
-            >
-              <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                Figyelem
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                A bemutatóhoz előre definiált felhasználók közül választhat.
-              </Typography>
-            </Box>
-
             <Stack spacing={1.5}>
               {users.map((demoUser) => (
                 <Card

@@ -98,6 +98,29 @@ CREATE TABLE devices (
     CONSTRAINT devices_tenant_code_unique UNIQUE (tenant_id, code)
 );
 
+INSERT INTO devices (code, kind, building_name, building_location, floor, room, additional_info)
+VALUES
+  ('DEMO-DEVICE-001', 'FAN_COIL_UNIT', 'NoMa HQ', 'Budapest, Vaci ut 1', '2', '201', 'Lobby service area'),
+  ('DEMO-DEVICE-002', 'INDOOR_UNIT', 'NoMa HQ', 'Budapest, Vaci ut 1', '3', '305', 'Open office'),
+  ('DEMO-DEVICE-003', 'CONDENSER', 'NoMa HQ', 'Budapest, Vaci ut 1', 'Roof', 'R1', 'Rooftop condenser'),
+  ('DEMO-DEVICE-004', 'FAN', 'NoMa HQ', 'Budapest, Vaci ut 1', '1', '105', 'Ventilation fan'),
+  ('DEMO-DEVICE-005', 'AIR_HANDLER_UNIT', 'NoMa HQ', 'Budapest, Vaci ut 1', 'B1', 'B-12', 'Basement air handling'),
+  ('DEMO-DEVICE-006', 'VRF_OUTDOOR_UNIT', 'NoMa HQ', 'Budapest, Vaci ut 1', 'Roof', 'R2', 'VRF outdoor'),
+  ('DEMO-DEVICE-007', 'CHILLER', 'NoMa HQ', 'Budapest, Vaci ut 1', 'B2', 'B-21', 'Chiller room'),
+  ('DEMO-DEVICE-008', 'FAN_COIL_UNIT', 'NoMa West', 'Budapest, Fehervari ut 12', '2', '215', 'Conference area'),
+  ('DEMO-DEVICE-009', 'INDOOR_UNIT', 'NoMa West', 'Budapest, Fehervari ut 12', '4', '410', 'Executive suite'),
+  ('DEMO-DEVICE-010', 'CONDENSER', 'NoMa West', 'Budapest, Fehervari ut 12', 'Roof', 'R1', 'South wing'),
+  ('DEMO-DEVICE-011', 'FAN', 'NoMa West', 'Budapest, Fehervari ut 12', '1', '112', 'Hall ventilation'),
+  ('DEMO-DEVICE-012', 'AIR_HANDLER_UNIT', 'NoMa West', 'Budapest, Fehervari ut 12', 'B1', 'B-07', 'Service corridor'),
+  ('DEMO-DEVICE-013', 'VRF_OUTDOOR_UNIT', 'NoMa West', 'Budapest, Fehervari ut 12', 'Roof', 'R2', 'North side'),
+  ('DEMO-DEVICE-014', 'CHILLER', 'NoMa West', 'Budapest, Fehervari ut 12', 'B2', 'B-19', 'Cooling center'),
+  ('DEMO-DEVICE-015', 'FAN_COIL_UNIT', 'NoMa Plant', 'Szentendre, Ipari ut 5', '1', 'A-03', 'Assembly line'),
+  ('DEMO-DEVICE-016', 'INDOOR_UNIT', 'NoMa Plant', 'Szentendre, Ipari ut 5', '1', 'A-08', 'Warehouse'),
+  ('DEMO-DEVICE-017', 'CONDENSER', 'NoMa Plant', 'Szentendre, Ipari ut 5', 'Roof', 'R1', 'Production hall'),
+  ('DEMO-DEVICE-018', 'FAN', 'NoMa Plant', 'Szentendre, Ipari ut 5', '2', 'B-12', 'Maintenance bay'),
+  ('DEMO-DEVICE-019', 'AIR_HANDLER_UNIT', 'NoMa Plant', 'Szentendre, Ipari ut 5', 'B1', 'B-01', 'Utility room'),
+  ('DEMO-DEVICE-020', 'VRF_OUTDOOR_UNIT', 'NoMa Plant', 'Szentendre, Ipari ut 5', 'Roof', 'R2', 'Cooling deck');
+
 CREATE TABLE site_visits (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,

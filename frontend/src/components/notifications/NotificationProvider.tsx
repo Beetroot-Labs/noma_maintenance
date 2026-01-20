@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Alert, AlertColor, Snackbar } from "@mui/material";
+import { appColors } from "@/theme";
 import { subscribeToToasts } from "@/lib/toast";
 
 type ToastState = {
@@ -38,7 +39,25 @@ export function NotificationProvider() {
       onClose={handleClose}
       anchorOrigin={{ vertical: "top", horizontal: "right" }}
     >
-      <Alert onClose={handleClose} severity={toastState.severity} variant="filled">
+      <Alert
+        onClose={handleClose}
+        severity={toastState.severity}
+        variant="filled"
+        sx={{
+          bgcolor:
+            toastState.severity === "success"
+              ? appColors.success
+              : toastState.severity === "error"
+                ? appColors.destructive
+                : toastState.severity === "warning"
+                  ? appColors.warning
+                  : appColors.primary,
+          color:
+            toastState.severity === "warning"
+              ? appColors.warningForeground
+              : appColors.successForeground,
+        }}
+      >
         {toastState.message}
       </Alert>
     </Snackbar>

@@ -9,6 +9,8 @@ export interface MaintenanceWork {
   id: string;
   hvacId: string;
   hvacModel: string;
+  hvacKind: string;
+  hvacAddress: string;
   hvacLocation: string;
   status: "in-progress" | "completed";
   isMalfunctioning: boolean;
