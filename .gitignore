@@ -1,0 +1,17 @@
+**/node_modules/
+**/dist/
+**/build/
+**/.vite/
+**/target/
+**/coverage/
+**/.cache/
+
+.env
+.dev.env
+.env.*.local
+.env.local
+
+*.log
+*generated_app*/
+
+.DS_Store
