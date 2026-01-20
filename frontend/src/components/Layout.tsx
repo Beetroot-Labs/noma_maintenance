@@ -102,7 +102,7 @@ export function Layout({ children }: LayoutProps) {
               )}
               <Box
                 component="img"
-                src="/logo-white.webp"
+                src={`${import.meta.env.BASE_URL}logo-white.webp`}
                 alt="NoMa"
                 sx={{ height: 28, width: "auto" }}
               />

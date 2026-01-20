@@ -58,7 +58,7 @@ const App = () => (
         }}
       />
       <NotificationProvider />
-      <BrowserRouter>
+      <BrowserRouter basename={import.meta.env.BASE_URL}>
         <DemoUserProvider>
           <MaintenanceProvider>
             <Routes>

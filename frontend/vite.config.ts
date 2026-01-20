@@ -7,7 +7,10 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const backendUrl = env.VITE_BACKEND_URL || env.BACKEND_URL || "http://localhost:3000";
 
+  const base = mode === "production" ? "/noma_maintenance/" : "/";
+
   return {
+    base,
     plugins: [react()],
     resolve: {
       alias: {

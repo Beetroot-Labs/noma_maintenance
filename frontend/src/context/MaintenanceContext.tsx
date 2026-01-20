@@ -180,8 +180,8 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
   const [pastWorks, setPastWorks] = useState<MaintenanceWork[]>(initialPastWorks);
 
   const shiftManager: ShiftManager = {
-    name: "Michael Rodriguez",
-    phone: "+1-555-0123",
+    name: "Ivanics Károly",
+    phone: "+36301234567",
   };
 
   const startMaintenance = (hvacId: string): string => {
