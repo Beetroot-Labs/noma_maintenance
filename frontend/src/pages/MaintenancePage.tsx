@@ -104,7 +104,7 @@ export default function MaintenancePage() {
           </IconButton>
           <Box sx={{ flex: 1 }}>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1, pb: 2 }}>
-              <Box sx={{ color: appColors.mutedForeground }}>
+              <Box sx={{ color: appColors.primary }}>
               <KindIcon size={36} />
               </Box>
               <Typography variant="h6" sx={{ fontWeight: 700 }}>
@@ -143,7 +143,17 @@ export default function MaintenancePage() {
                 >
                   <Box sx={{ p: 1.5, borderRadius: 2 }}>
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-                      <Box sx={{ p: 1, bgcolor: "rgba(0, 0, 0, 0.08)", borderRadius: 2 }}>
+                      <Box
+                        sx={{
+                          width: 32,
+                          height: 32,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          bgcolor: "rgba(0, 0, 0, 0.08)",
+                          borderRadius: 2,
+                        }}
+                      >
                         <Cpu size={18} color={appColors.primary} />
                       </Box>
                       <Box>
@@ -158,7 +168,17 @@ export default function MaintenancePage() {
                   </Box>
                   <Box sx={{ p: 1.5, borderRadius: 2 }}>
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-                      <Box sx={{ p: 1, bgcolor: "rgba(0, 0, 0, 0.08)", borderRadius: 2 }}>
+                      <Box
+                        sx={{
+                          width: 32,
+                          height: 32,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          bgcolor: "rgba(0, 0, 0, 0.08)",
+                          borderRadius: 2,
+                        }}
+                      >
                         <Blocks size={18} color={appColors.primary} />
                       </Box>
                       <Box>
@@ -173,7 +193,17 @@ export default function MaintenancePage() {
                   </Box>
                   <Box sx={{ p: 1.5, borderRadius: 2 }}>
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-                      <Box sx={{ p: 1, bgcolor: "rgba(0, 0, 0, 0.08)", borderRadius: 2 }}>
+                      <Box
+                        sx={{
+                          width: 32,
+                          height: 32,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          bgcolor: "rgba(0, 0, 0, 0.08)",
+                          borderRadius: 2,
+                        }}
+                      >
                         <MapPin size={18} color={appColors.primary} />
                       </Box>
                       <Box>
@@ -205,7 +235,17 @@ export default function MaintenancePage() {
                 >
                   <Box sx={{ p: 1.5, borderRadius: 2 }}>
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-                      <Box sx={{ p: 1, bgcolor: "rgba(0, 0, 0, 0.08)", borderRadius: 2 }}>
+                      <Box
+                        sx={{
+                          width: 32,
+                          height: 32,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          bgcolor: "rgba(0, 0, 0, 0.08)",
+                          borderRadius: 2,
+                        }}
+                      >
                         <ArrowRightFromLine size={18} color={appColors.primary} />
                       </Box>
                       <Box>
@@ -220,7 +260,17 @@ export default function MaintenancePage() {
                   </Box>
                   <Box sx={{ p: 1.5, borderRadius: 2 }}>
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-                      <Box sx={{ p: 1, bgcolor: "rgba(0, 0, 0, 0.08)", borderRadius: 2 }}>
+                      <Box
+                        sx={{
+                          width: 32,
+                          height: 32,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          bgcolor: "rgba(0, 0, 0, 0.08)",
+                          borderRadius: 2,
+                        }}
+                      >
                         <ArrowRightToLine size={18} color={appColors.primary} />
                       </Box>
                       <Box>

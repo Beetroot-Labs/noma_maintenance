@@ -37,7 +37,8 @@ export function NotificationProvider() {
       open={toastState.open}
       autoHideDuration={3500}
       onClose={handleClose}
-      anchorOrigin={{ vertical: "top", horizontal: "right" }}
+      anchorOrigin={{ vertical: "top", horizontal: "center" }}
+      sx={{ top: { xs: 72, md: 80 } }}
     >
       <Alert
         onClose={handleClose}

@@ -4,8 +4,8 @@
   "description": "NoMa karbantartasi demo alkalmazas",
   "start_url": ".",
   "display": "standalone",
-  "background_color": "#0F1729",
-  "theme_color": "#0F1729",
+  "background_color": "#F6F6F6",
+  "theme_color": "#02322D",
   "icons": [
     {
       "src": "app-images/android/android-launchericon-192-192.png",

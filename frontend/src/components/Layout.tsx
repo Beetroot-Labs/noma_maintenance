@@ -86,9 +86,9 @@ export function Layout({ children }: LayoutProps) {
           position: "sticky",
           top: 0,
           zIndex: 50,
-          bgcolor: appColors.card,
-          color: appColors.foreground,
-          borderBottom: `1px solid ${appColors.border}`,
+          bgcolor: appColors.primary,
+          color: appColors.primaryForeground,
+          borderBottom: `1px solid ${appColors.primary}`,
           boxShadow: "0 6px 14px rgba(15, 23, 42, 0.08)",
         }}
       >
@@ -96,7 +96,7 @@ export function Layout({ children }: LayoutProps) {
           <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2, width: "100%" }}>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
               {isDesktop && (
-                <IconButton onClick={handleDrawerOpen} aria-label="Menü megnyitása">
+                <IconButton onClick={handleDrawerOpen} aria-label="Menü megnyitása" sx={{ color: appColors.accent}}>
                   <MenuIcon size={20} />
                 </IconButton>
               )}
@@ -125,7 +125,7 @@ export function Layout({ children }: LayoutProps) {
                     width: 32,
                     height: 32,
                     bgcolor: "transparent",
-                    color: appColors.primary,
+                    color: appColors.accent,
                     fontSize: 12,
                     fontWeight: 700,
                   }}
@@ -152,7 +152,9 @@ export function Layout({ children }: LayoutProps) {
         sx={{
           position: "sticky",
           bottom: 0,
-          borderTop: `1px solid ${appColors.border}`,
+          borderTop: `1px solid ${appColors.primary}`,
+          bgcolor: appColors.primary,
+          color: appColors.primaryForeground,
           display: { xs: "block", md: "none" },
           borderBottomLeftRadius: 0,
           borderBottomRightRadius: 0,
@@ -180,12 +182,11 @@ export function Layout({ children }: LayoutProps) {
                   gap: 0.5,
                   py: 1,
                   borderRadius: 2,
-                  color: isActive ? appColors.primary : appColors.mutedForeground,
-                  bgcolor: isActive ? alpha(appColors.primary, 0.1) : "transparent",
+                  color: isActive ? appColors.accent : appColors.primaryForeground,
+                  bgcolor: "transparent",
                   transition: "background-color 0.2s ease, color 0.2s ease",
                   "&:hover": {
-                    color: appColors.foreground,
-                    bgcolor: appColors.muted,
+                    color: appColors.accent,
                   },
                 }}
               >
@@ -207,10 +208,10 @@ export function Layout({ children }: LayoutProps) {
               justifyContent: "center",
               borderRadius: "50%",
               bgcolor: appColors.accent,
-              color: appColors.accentForeground,
+              color: appColors.foreground,
               boxShadow: "0 10px 24px rgba(15, 23, 42, 0.2)",
               "&:hover": {
-                bgcolor: "hsl(36 95% 45%)",
+                bgcolor: appColors.accent,
               },
             }}
             aria-label={currentWork ? "Munka folytatása" : "Munka indítása"}
@@ -232,12 +233,11 @@ export function Layout({ children }: LayoutProps) {
                   gap: 0.5,
                   py: 1,
                   borderRadius: 2,
-                  color: isActive ? appColors.primary : appColors.mutedForeground,
-                  bgcolor: isActive ? alpha(appColors.primary, 0.1) : "transparent",
+                  color: isActive ? appColors.accent : appColors.primaryForeground,
+                  bgcolor: "transparent",
                   transition: "background-color 0.2s ease, color 0.2s ease",
                   "&:hover": {
-                    color: appColors.foreground,
-                    bgcolor: appColors.muted,
+                    color: appColors.accent,
                   },
                 }}
               >
@@ -258,8 +258,8 @@ export function Layout({ children }: LayoutProps) {
         PaperProps={{
           sx: {
             width: 260,
-            bgcolor: appColors.background,
-            color: appColors.foreground,
+            bgcolor: appColors.primary,
+            color: appColors.primaryForeground,
           },
         }}
       >
@@ -280,8 +280,8 @@ export function Layout({ children }: LayoutProps) {
               sx={{
                 borderRadius: 2,
                 "&.Mui-selected": {
-                  bgcolor: alpha(appColors.primary, 0.15),
-                  color: appColors.primary,
+                  bgcolor: alpha(appColors.accent, 0.15),
+                  color: appColors.accent,
                 },
               }}
             >
