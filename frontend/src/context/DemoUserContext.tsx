@@ -18,7 +18,6 @@ type DemoUserContextType = {
 const DemoUserContext = createContext<DemoUserContextType | undefined>(undefined);
 
 const demoUsers: DemoUser[] = [
-  { id: "u-admin", name: "Admin Anna", role: "admin" },
   { id: "u-tech", name: "Technikus Tamás", role: "technician" },
   { id: "u-partner", name: "Partner Péter", role: "partner" },
 ];

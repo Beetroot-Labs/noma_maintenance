@@ -1,7 +1,8 @@
-const CACHE_NAME = "noma-maintenance-v1";
+const CACHE_NAME = "noma-maintenance-v3";
 const CORE_ASSETS = [
   "./",
   "./index.html",
+  "./404.html",
   "./manifest.json",
   "./favicon.ico",
   "./logo-white.webp",
@@ -48,6 +49,11 @@ self.addEventListener("fetch", (event) => {
 
 self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "SKIP_WAITING") {
+    event.waitUntil(
+      caches.keys().then((keys) =>
+        Promise.all(keys.map((key) => caches.delete(key))),
+      ),
+    );
     self.skipWaiting();
   }
 });

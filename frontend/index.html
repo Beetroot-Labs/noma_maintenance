@@ -18,6 +18,15 @@
 
   <body>
     <div id="root"></div>
+    <script>
+      (function () {
+        var params = new URLSearchParams(window.location.search);
+        var redirect = params.get("p");
+        if (redirect) {
+          window.history.replaceState(null, "", decodeURIComponent(redirect));
+        }
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
