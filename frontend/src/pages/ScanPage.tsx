@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Autocomplete,
@@ -13,6 +13,8 @@ import {
   Typography,
 } from "@mui/material";
 import { Keyboard, ScanBarcode, X, ArrowRight } from "lucide-react";
+import { BarcodeFormat, DecodeHintType } from "@zxing/library";
+import { BrowserMultiFormatReader } from "@zxing/browser";
 import { Layout } from "@/components/Layout";
 import { appColors } from "@/theme";
 import { hvacDatabase, useMaintenance } from "@/context/MaintenanceContext";
@@ -24,6 +26,11 @@ export default function ScanPage() {
   const [manualEntry, setManualEntry] = useState(false);
   const [hvacId, setHvacId] = useState("");
   const [isScanning, setIsScanning] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const controlsRef = useRef<{ stop: () => void } | null>(null);
+  const readerRef = useRef<BrowserMultiFormatReader | null>(null);
   const deviceIds = useMemo(() => Object.keys(hvacDatabase), []);
 
   const isSubsequenceMatch = (query: string, candidate: string) => {
@@ -45,39 +52,62 @@ export default function ScanPage() {
   }, [deviceIds, hvacId, manualEntry]);
 
   const handleScan = () => {
-    setIsScanning(true);
-    setTimeout(() => {
-      const mockIds = [
-        "DEMO-DEVICE-001",
-        "DEMO-DEVICE-002",
-        "DEMO-DEVICE-003",
-        "DEMO-DEVICE-004",
-        "DEMO-DEVICE-005",
-        "DEMO-DEVICE-006",
-        "DEMO-DEVICE-007",
-        "DEMO-DEVICE-008",
-        "DEMO-DEVICE-009",
-        "DEMO-DEVICE-010",
-        "DEMO-DEVICE-011",
-        "DEMO-DEVICE-012",
-        "DEMO-DEVICE-013",
-        "DEMO-DEVICE-014",
-        "DEMO-DEVICE-015",
-        "DEMO-DEVICE-016",
-        "DEMO-DEVICE-017",
-        "DEMO-DEVICE-018",
-        "DEMO-DEVICE-019",
-        "DEMO-DEVICE-020",
-      ];
-      const scannedId = mockIds[Math.floor(Math.random() * mockIds.length)];
-      setHvacId(scannedId);
-      setIsScanning(false);
-      const workId = startMaintenance(scannedId);
-      toast.success(`Beolvasva: ${scannedId}`);
-      toast.success("Karbantartás elindítva!");
-      navigate(`/maintenance/${workId}`);
-    }, 1500);
+    setScannerOpen((prev) => !prev);
   };
+
+  const stopScanner = () => {
+    controlsRef.current?.stop();
+    controlsRef.current = null;
+    readerRef.current = null;
+    setIsScanning(false);
+  };
+
+  useEffect(() => {
+    if (!scannerOpen) {
+      stopScanner();
+      return;
+    }
+
+    let active = true;
+    setCameraError(null);
+    setIsScanning(true);
+
+    const hints = new Map();
+    hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_39]);
+    const reader = new BrowserMultiFormatReader(hints, 400);
+    readerRef.current = reader;
+
+    reader
+      .decodeFromVideoDevice(null, videoRef.current, (result, error, controls) => {
+        if (!active) return;
+        if (controls && !controlsRef.current) {
+          controlsRef.current = controls;
+          setIsScanning(false);
+        }
+        if (result) {
+          const scannedId = result.getText().trim().toUpperCase();
+          setHvacId(scannedId);
+          stopScanner();
+          setScannerOpen(false);
+          const workId = startMaintenance(scannedId);
+          toast.success(`Beolvasva: ${scannedId}`);
+          toast.success("Karbantartás elindítva!");
+          navigate(`/maintenance/${workId}`);
+        }
+        if (error) {
+          // ignore decode errors while scanning
+        }
+      })
+      .catch(() => {
+        setCameraError("Nem sikerült elindítani a kamerát.");
+        setIsScanning(false);
+      });
+
+    return () => {
+      active = false;
+      stopScanner();
+    };
+  }, [navigate, scannerOpen, startMaintenance]);
 
   const handleStart = () => {
     if (!hvacId.trim()) {
@@ -133,9 +163,19 @@ export default function ScanPage() {
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
+                    overflow: "hidden",
                   }}
                 >
-                  {isScanning ? (
+                  {scannerOpen ? (
+                    <Box sx={{ width: "100%", height: "100%", bgcolor: "#000" }}>
+                      <Box
+                        component="video"
+                        ref={videoRef}
+                        sx={{ width: "100%", height: "100%", objectFit: "cover" }}
+                        muted
+                      />
+                    </Box>
+                  ) : isScanning ? (
                     <Box sx={{ textAlign: "center" }}>
                       <Box sx={{ animation: "pulseSoft 1.2s ease-in-out infinite" }}>
                         <ScanBarcode size={48} color={appColors.primary} />
@@ -162,15 +202,24 @@ export default function ScanPage() {
                     </Box>
                   )}
                 </Box>
+                {cameraError && (
+                  <Typography variant="body2" color="error">
+                    {cameraError}
+                  </Typography>
+                )}
 
                 <Button
                   variant="contained"
                   onClick={handleScan}
-                  disabled={isScanning}
+                  disabled={!scannerOpen && isScanning}
                   fullWidth
                   startIcon={<ScanBarcode size={18} />}
                 >
-                  {isScanning ? "Beolvasás..." : "Vonalkód beolvasása"}
+                  {scannerOpen
+                    ? "Beolvasás leállítása"
+                    : isScanning
+                      ? "Beolvasás..."
+                      : "Vonalkód beolvasása"}
                 </Button>
 
                 <Box sx={{ position: "relative", textAlign: "center" }}>
@@ -192,7 +241,10 @@ export default function ScanPage() {
 
                 <Button
                   variant="outlined"
-                  onClick={() => setManualEntry(true)}
+                  onClick={() => {
+                    setScannerOpen(false);
+                    setManualEntry(true);
+                  }}
                   fullWidth
                   startIcon={<Keyboard size={18} />}
                 >
