@@ -21,6 +21,7 @@ import { alpha, useTheme } from "@mui/material/styles";
 import {
   CircleUser,
   ClipboardList,
+  Cpu,
   History,
   LogOut,
   Menu as MenuIcon,
@@ -39,6 +40,7 @@ const navItems = [
   { path: "/", label: "Mai munka", icon: ClipboardList },
   { path: "/history", label: "Előzmények", icon: History },
 ];
+const partnerNavItems = [{ path: "/devices", label: "Eszközök", icon: Cpu }];
 
 export function Layout({ children }: LayoutProps) {
   const theme = useTheme();
@@ -49,6 +51,8 @@ export function Layout({ children }: LayoutProps) {
   const { currentWork } = useMaintenance();
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const isPartner = user?.role === "partner";
+  const visibleNavItems = isPartner ? partnerNavItems : navItems;
 
   const roleLabel = {
     admin: "adminisztrátor",
@@ -155,7 +159,7 @@ export function Layout({ children }: LayoutProps) {
           borderTop: `1px solid ${appColors.primary}`,
           bgcolor: appColors.primary,
           color: appColors.primaryForeground,
-          display: { xs: "block", md: "none" },
+          display: isPartner ? "none" : { xs: "block", md: "none" },
           borderBottomLeftRadius: 0,
           borderBottomRightRadius: 0,
         }}
@@ -167,7 +171,7 @@ export function Layout({ children }: LayoutProps) {
             py: 0.75,
             pb: 2,
         }}>
-          {navItems.slice(0, 1).map(({ path, label, icon: Icon }) => {
+          {visibleNavItems.slice(0, 1).map(({ path, label, icon: Icon }) => {
             const isActive = location.pathname === path;
             return (
               <Box
@@ -218,7 +222,7 @@ export function Layout({ children }: LayoutProps) {
           >
             {currentWork ? <Play size={20} /> : <ScanBarcode size={22} />}
           </Box>
-          {navItems.slice(1).map(({ path, label, icon: Icon }) => {
+          {visibleNavItems.slice(1).map(({ path, label, icon: Icon }) => {
             const isActive = location.pathname === path;
             return (
               <Box
@@ -270,7 +274,7 @@ export function Layout({ children }: LayoutProps) {
         </Box>
         <Divider sx={{ borderColor: appColors.border }} />
         <List sx={{ px: 1 }}>
-          {navItems.map(({ path, label, icon: Icon }) => (
+          {visibleNavItems.map(({ path, label, icon: Icon }) => (
             <ListItemButton
               key={path}
               component={Link}
@@ -292,28 +296,32 @@ export function Layout({ children }: LayoutProps) {
             </ListItemButton>
           ))}
         </List>
-        <Divider sx={{ borderColor: appColors.border, mt: 1 }} />
-        <List sx={{ px: 1 }}>
-          <ListItemButton
-            component={Link}
-            to={currentWork ? `/maintenance/${currentWork.id}` : "/scan"}
-            onClick={handleDrawerClose}
-            sx={{
-              borderRadius: 2,
-              bgcolor: alpha(appColors.accent, 0.15),
-              color: appColors.accent,
-              fontWeight: 700,
-              "&:hover": {
-                bgcolor: alpha(appColors.accent, 0.25),
-              },
-            }}
-          >
-            <ListItemIcon sx={{ minWidth: 36, color: "inherit" }}>
-              {currentWork ? <Play size={18} /> : <ScanBarcode size={18} />}
-            </ListItemIcon>
-            <ListItemText primary={currentWork ? "Munka folytatása" : "Munka indítása"} />
-          </ListItemButton>
-        </List>
+        {!isPartner && (
+          <>
+            <Divider sx={{ borderColor: appColors.border, mt: 1 }} />
+            <List sx={{ px: 1 }}>
+              <ListItemButton
+                component={Link}
+                to={currentWork ? `/maintenance/${currentWork.id}` : "/scan"}
+                onClick={handleDrawerClose}
+                sx={{
+                  borderRadius: 2,
+                  bgcolor: alpha(appColors.accent, 0.15),
+                  color: appColors.accent,
+                  fontWeight: 700,
+                  "&:hover": {
+                    bgcolor: alpha(appColors.accent, 0.25),
+                  },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 36, color: "inherit" }}>
+                  {currentWork ? <Play size={18} /> : <ScanBarcode size={18} />}
+                </ListItemIcon>
+                <ListItemText primary={currentWork ? "Munka folytatása" : "Munka indítása"} />
+              </ListItemButton>
+            </List>
+          </>
+        )}
       </Drawer>
 
       <Menu

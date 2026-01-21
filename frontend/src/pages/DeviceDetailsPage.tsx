@@ -14,7 +14,6 @@ import { Layout } from "@/components/Layout";
 import { PhotoGallery } from "@/components/PhotoGallery";
 import { hvacDatabase, useMaintenance } from "@/context/MaintenanceContext";
 import { getDeviceKindIcon, getDeviceKindLabel } from "@/lib/deviceKind";
-import { formatDateTime } from "@/lib/date";
 import { appColors } from "@/theme";
 
 export default function DeviceDetailsPage() {
@@ -23,6 +22,18 @@ export default function DeviceDetailsPage() {
   const { todaysWorks, pastWorks } = useMaintenance();
 
   const device = id ? hvacDatabase[id] : undefined;
+  const maintenanceFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat("hu-HU", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }),
+    [],
+  );
 
   const maintenanceItems = useMemo(() => {
     if (!id) return [];
@@ -187,7 +198,7 @@ export default function DeviceDetailsPage() {
               </Box>
             ) : (
               maintenanceItems.map((work) => {
-                const label = formatDateTime(work.endTime ?? work.startTime);
+                const label = maintenanceFormatter.format(work.endTime ?? work.startTime);
                 return (
                   <Card key={work.id} variant="outlined" sx={{ borderColor: appColors.border }}>
                     <CardContent sx={{ display: "flex", flexDirection: "column", gap: 2 }}>

@@ -1,6 +1,6 @@
 import { CssBaseline, GlobalStyles, ThemeProvider } from "@mui/material";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from "react-router-dom";
 import { NotificationProvider } from "@/components/notifications/NotificationProvider";
 import { MaintenanceProvider } from "@/context/MaintenanceContext";
 import { DemoUserProvider, useDemoUser } from "@/context/DemoUserContext";
@@ -18,11 +18,19 @@ const queryClient = new QueryClient();
 
 const RequireDemoUser = () => {
   const { user, isHydrated } = useDemoUser();
+  const location = useLocation();
   if (!isHydrated) {
     return null;
   }
   if (!user) {
     return <Navigate to="/login" replace />;
+  }
+  if (user.role === "partner") {
+    const isDevicesRoute =
+      location.pathname === "/devices" || location.pathname.startsWith("/devices/");
+    if (!isDevicesRoute) {
+      return <Navigate to="/devices" replace />;
+    }
   }
   return <Outlet />;
 };
