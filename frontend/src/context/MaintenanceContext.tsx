@@ -1,10 +1,13 @@
-import { createContext, useContext, useState, ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import type { MaintenancePhoto, MaintenanceWork, ShiftManager } from "@/types/maintenance";
+import { useDemoUser } from "@/context/DemoUserContext";
+import { getPhotosByIds, seedDemoPhotos } from "@/lib/photoStore";
 
 interface MaintenanceContextType {
   currentWork: MaintenanceWork | null;
   todaysWorks: MaintenanceWork[];
   pastWorks: MaintenanceWork[];
+  workdayClosed: boolean;
   shiftManager: ShiftManager;
   startMaintenance: (hvacId: string) => string;
   updateNotes: (workId: string, notes: string) => void;
@@ -12,6 +15,7 @@ interface MaintenanceContextType {
   toggleMalfunction: (workId: string) => void;
   completeMaintenance: (workId: string) => void;
   abortMaintenance: (workId: string) => void;
+  markEdited: (workId: string) => void;
   closeWorkday: () => void;
 }
 
@@ -151,6 +155,7 @@ const initialPastWorks: MaintenanceWork[] = [
     hvacKind: "INDOOR_UNIT",
     hvacAddress: "Budapest, Fehervari ut 12",
     hvacLocation: "4. emelet, 410. iroda",
+    executorId: "u-tech",
     status: "completed",
     isMalfunctioning: false,
     notes: "Szűrők cserélve.",
@@ -165,6 +170,7 @@ const initialPastWorks: MaintenanceWork[] = [
     hvacKind: "FAN",
     hvacAddress: "Budapest, Vaci ut 1",
     hvacLocation: "1. emelet, 105. gépészet",
+    executorId: "u-tech",
     status: "completed",
     isMalfunctioning: true,
     notes: "Szivárgás gyanú, jelölve javításra.",
@@ -175,16 +181,52 @@ const initialPastWorks: MaintenanceWork[] = [
 ];
 
 export function MaintenanceProvider({ children }: { children: ReactNode }) {
+  const { user } = useDemoUser();
   const [currentWork, setCurrentWork] = useState<MaintenanceWork | null>(null);
   const [todaysWorks, setTodaysWorks] = useState<MaintenanceWork[]>([]);
   const [pastWorks, setPastWorks] = useState<MaintenanceWork[]>(initialPastWorks);
+  const [workdayClosed, setWorkdayClosed] = useState(false);
 
   const shiftManager: ShiftManager = {
     name: "Ivanics Károly",
     phone: "+36301234567",
   };
 
+  useEffect(() => {
+    let isActive = true;
+
+    const loadDemoPhotos = async () => {
+      try {
+        await seedDemoPhotos();
+        const [indoorPhoto] = await getPhotosByIds(["photo-demo-indoor-01"]);
+        const fanPhotos = await getPhotosByIds(["photo-demo-fan-01", "photo-demo-fan-02"]);
+
+        if (!isActive) return;
+        setPastWorks((prev) =>
+          prev.map((work) => {
+            if (work.id === "MW-PAST-001" && work.photos.length === 0 && indoorPhoto) {
+              return { ...work, photos: [indoorPhoto] };
+            }
+            if (work.id === "MW-PAST-002" && work.photos.length === 0 && fanPhotos.length > 0) {
+              return { ...work, photos: fanPhotos };
+            }
+            return work;
+          }),
+        );
+      } catch (error) {
+        console.warn("Nem sikerult betolteni a demo fotokat.", error);
+      }
+    };
+
+    loadDemoPhotos();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
   const startMaintenance = (hvacId: string): string => {
+    setWorkdayClosed(false);
     const hvacInfo = hvacDatabase[hvacId] || {
       model: "Ismeretlen modell",
       kind: "UNKNOWN",
@@ -199,6 +241,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
       hvacKind: hvacInfo.kind,
       hvacAddress: hvacInfo.address,
       hvacLocation: hvacInfo.location,
+      executorId: user?.id || "unknown",
       status: "in-progress",
       isMalfunctioning: false,
       notes: "",
@@ -219,6 +262,11 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     setTodaysWorks((prev) =>
       prev.map((work) => (work.id === workId ? { ...work, notes } : work)),
     );
+    setPastWorks((prev) =>
+      prev.map((work) =>
+        work.id === workId && work.status === "completed" ? { ...work, notes } : work,
+      ),
+    );
   };
 
   const addPhoto = (workId: string, photo: MaintenancePhoto) => {
@@ -233,6 +281,13 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
         work.id === workId ? { ...work, photos: [...work.photos, photo] } : work,
       ),
     );
+    setPastWorks((prev) =>
+      prev.map((work) =>
+        work.id === workId && work.status === "completed"
+          ? { ...work, photos: [...work.photos, photo] }
+          : work,
+      ),
+    );
   };
 
   const toggleMalfunction = (workId: string) => {
@@ -243,6 +298,13 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
       });
     }
     setTodaysWorks((prev) =>
+      prev.map((work) =>
+        work.id === workId
+          ? { ...work, isMalfunctioning: !work.isMalfunctioning }
+          : work,
+      ),
+    );
+    setPastWorks((prev) =>
       prev.map((work) =>
         work.id === workId
           ? { ...work, isMalfunctioning: !work.isMalfunctioning }
@@ -287,9 +349,23 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const markEdited = (workId: string) => {
+    const timestamp = new Date();
+    if (currentWork?.id === workId) {
+      setCurrentWork({ ...currentWork, lastEdited: timestamp });
+    }
+    setTodaysWorks((prev) =>
+      prev.map((work) => (work.id === workId ? { ...work, lastEdited: timestamp } : work)),
+    );
+    setPastWorks((prev) =>
+      prev.map((work) => (work.id === workId ? { ...work, lastEdited: timestamp } : work)),
+    );
+  };
+
   const closeWorkday = () => {
     setTodaysWorks([]);
     setCurrentWork(null);
+    setWorkdayClosed(true);
   };
 
   return (
@@ -298,6 +374,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
         currentWork,
         todaysWorks,
         pastWorks,
+        workdayClosed,
         shiftManager,
         startMaintenance,
         updateNotes,
@@ -305,6 +382,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
         toggleMalfunction,
         completeMaintenance,
         abortMaintenance,
+        markEdited,
         closeWorkday,
       }}
     >

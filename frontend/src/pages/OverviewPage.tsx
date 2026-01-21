@@ -162,11 +162,7 @@ export default function OverviewPage() {
                   <WorkCard
                     key={work.id}
                     work={work}
-                    onClick={
-                      work.status === "in-progress"
-                        ? () => navigate(`/maintenance/${work.id}`)
-                        : undefined
-                    }
+                    to={`/maintenance/${work.id}`}
                   />
                 ))}
               </Box>

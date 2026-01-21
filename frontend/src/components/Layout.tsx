@@ -36,7 +36,7 @@ interface LayoutProps {
 }
 
 const navItems = [
-  { path: "/", label: "Áttekintés", icon: ClipboardList },
+  { path: "/", label: "Mai munka", icon: ClipboardList },
   { path: "/history", label: "Előzmények", icon: History },
 ];
 

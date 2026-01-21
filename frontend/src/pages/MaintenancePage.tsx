@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   Box,
@@ -23,12 +23,14 @@ import {
   Cpu,
   MapPin,
   MoreVertical,
+  Pencil,
 } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import { PhotoGallery } from "@/components/PhotoGallery";
 import { PhotoUpload } from "@/components/PhotoUpload";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useMaintenance } from "@/context/MaintenanceContext";
+import { useDemoUser } from "@/context/DemoUserContext";
 import { appColors } from "@/theme";
 import { formatDateTime } from "@/lib/date";
 import { toast } from "@/lib/toast";
@@ -39,15 +41,22 @@ export default function MaintenancePage() {
   const navigate = useNavigate();
   const {
     todaysWorks,
+    pastWorks,
     updateNotes,
     addPhoto,
     toggleMalfunction,
     completeMaintenance,
     abortMaintenance,
+    markEdited,
+    workdayClosed,
   } = useMaintenance();
+  const { user } = useDemoUser();
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
+  const [isEditing, setIsEditing] = useState(false);
 
-  const work = todaysWorks.find((item) => item.id === workId);
+  const work =
+    todaysWorks.find((item) => item.id === workId) ||
+    pastWorks.find((item) => item.id === workId);
 
   if (!work) {
     return (
@@ -65,6 +74,13 @@ export default function MaintenancePage() {
   }
 
   const isCompleted = work.status === "completed";
+  const isExecutor = user?.id === work.executorId;
+  const isReadOnly = isCompleted || (work.status === "in-progress" && !isExecutor);
+  const canEdit = !isReadOnly || (isCompleted && isExecutor && isEditing);
+  const canEditMalfunction = canEdit;
+  const canShowMenu =
+    isExecutor && (work.status === "in-progress" || (work.status === "completed" && !isEditing));
+  const canShowEditOption = !workdayClosed && work.status === "completed" && !isEditing;
 
   const handleComplete = () => {
     if (work.photos.length === 0) {
@@ -91,9 +107,19 @@ export default function MaintenancePage() {
     setMenuAnchor(null);
   };
 
+  const handleSaveEdits = () => {
+    markEdited(work.id);
+    setIsEditing(false);
+    toast.success("Módosítások elmentve.");
+  };
+
   const kindLabel =
     deviceKindLabels[work.hvacKind as keyof typeof deviceKindLabels] ?? work.hvacKind;
   const KindIcon = getDeviceKindIcon(work.hvacKind);
+  const lastEditedLabel = useMemo(
+    () => (work.lastEdited ? formatDateTime(work.lastEdited) : null),
+    [work.lastEdited],
+  );
 
   return (
     <Layout>
@@ -116,7 +142,7 @@ export default function MaintenancePage() {
               {work.isMalfunctioning && <StatusBadge status="malfunction" />}
             </Box>
           </Box>
-          {!isCompleted && (
+          {canShowMenu && (
             <IconButton onClick={handleMenuOpen} aria-label="További lehetőségek">
               <MoreVertical size={18} />
             </IconButton>
@@ -137,7 +163,10 @@ export default function MaintenancePage() {
                 <Box
                   sx={{
                     display: "grid",
-                    gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" },
+                    gridTemplateColumns: {
+                      xs: "1fr",
+                      md: lastEditedLabel ? "repeat(3, minmax(0, 1fr))" : "repeat(2, minmax(0, 1fr))",
+                    },
                     gap: 0,
                   }}
                 >
@@ -283,13 +312,41 @@ export default function MaintenancePage() {
                       </Box>
                     </Box>
                   </Box>
+                  {lastEditedLabel && (
+                    <Box sx={{ p: 1.5, borderRadius: 2 }}>
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+                        <Box
+                          sx={{
+                            width: 32,
+                            height: 32,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            bgcolor: "rgba(0, 0, 0, 0.08)",
+                            borderRadius: 2,
+                          }}
+                        >
+                          <Pencil size={18} color={appColors.primary} />
+                        </Box>
+                        <Box>
+                          <Typography variant="caption" color="text.secondary">
+                            Legutóbb módosítva
+                          </Typography>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                            {lastEditedLabel}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    </Box>
+                  )}
                 </Box>
               </CardContent>
             </Card>
           </Box>
 
           <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
-            <Card
+            {canEditMalfunction && (
+              <Card
               sx={{
                 boxShadow: "0 10px 24px rgba(31, 50, 58, 0.12)",
                 border: work.isMalfunctioning ? `1px solid ${appColors.destructive}` : "none",
@@ -310,7 +367,7 @@ export default function MaintenancePage() {
                   <Switch
                     checked={work.isMalfunctioning}
                     onChange={() => toggleMalfunction(work.id)}
-                    disabled={isCompleted}
+                    disabled={!canEditMalfunction}
                   />
                 </Box>
                 {work.isMalfunctioning && (
@@ -320,19 +377,27 @@ export default function MaintenancePage() {
                 )}
               </CardContent>
             </Card>
+            )}
 
             <Card sx={{ boxShadow: "0 10px 24px rgba(31, 50, 58, 0.12)" }}>
               <CardHeader title="Megjegyzések" titleTypographyProps={{ variant: "subtitle1", fontWeight: 700 }} />
               <CardContent>
-                <TextField
-                  placeholder="Írja le a megfigyeléseket, elvégzett feladatokat vagy talált problémákat..."
-                  value={work.notes}
-                  onChange={(event) => updateNotes(work.id, event.target.value)}
-                  multiline
-                  minRows={4}
-                  fullWidth
-                  disabled={isCompleted}
-                />
+                {canEdit ? (
+                  <TextField
+                    placeholder="Írja le a megfigyeléseket, elvégzett feladatokat vagy talált problémákat..."
+                    value={work.notes}
+                    onChange={(event) => updateNotes(work.id, event.target.value)}
+                    multiline
+                    minRows={4}
+                    fullWidth
+                  />
+                ) : (
+                  <Box sx={{ p: 1.5, borderRadius: 2, bgcolor: appColors.muted }}>
+                    <Typography variant="body2" color="text.secondary">
+                      {work.notes || "Nincs megjegyzés."}
+                    </Typography>
+                  </Box>
+                )}
               </CardContent>
             </Card>
 
@@ -352,11 +417,11 @@ export default function MaintenancePage() {
               />
               <CardContent sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
                 <PhotoGallery photos={work.photos} />
-                {!isCompleted && <PhotoUpload onPhotoAdd={(photo) => addPhoto(work.id, photo)} />}
+                {canEdit && <PhotoUpload onPhotoAdd={(photo) => addPhoto(work.id, photo)} />}
               </CardContent>
             </Card>
 
-            {!isCompleted && (
+            {!isReadOnly && !isCompleted && (
               <Button
                 variant="contained"
                 size="large"
@@ -373,26 +438,57 @@ export default function MaintenancePage() {
                 Karbantartás befejezése
               </Button>
             )}
+
+            {isCompleted && isExecutor && isEditing && (
+              <Button
+                variant="contained"
+                size="large"
+                startIcon={<CheckCircle size={18} />}
+                onClick={handleSaveEdits}
+                fullWidth
+                sx={{
+                  bgcolor: appColors.success,
+                  color: appColors.successForeground,
+                  "&:hover": { bgcolor: "hsl(142 72% 38%)" },
+                }}
+              >
+                Elmentem a módosításokat
+              </Button>
+            )}
           </Box>
         </Box>
 
-        <Menu
+        {canShowMenu && (
+          <Menu
           anchorEl={menuAnchor}
           open={Boolean(menuAnchor)}
           onClose={handleMenuClose}
           anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
           transformOrigin={{ vertical: "top", horizontal: "right" }}
         >
-          <MenuItem
-            onClick={() => {
-              handleMenuClose();
-              handleAbort();
-            }}
-            sx={{ color: appColors.destructive, fontWeight: 700 }}
-          >
-            Karbantartás megszakítása
-          </MenuItem>
-        </Menu>
+          {canShowEditOption && (
+            <MenuItem
+              onClick={() => {
+                handleMenuClose();
+                setIsEditing(true);
+              }}
+            >
+              Utólagos szerkesztés
+            </MenuItem>
+          )}
+          {work.status === "in-progress" && (
+            <MenuItem
+              onClick={() => {
+                handleMenuClose();
+                handleAbort();
+              }}
+              sx={{ color: appColors.destructive, fontWeight: 700 }}
+            >
+              Karbantartás megszakítása
+            </MenuItem>
+          )}
+          </Menu>
+        )}
 
         {work.photos.length === 0 && !isCompleted && (
           <Typography variant="body2" color="text.secondary" sx={{ textAlign: "center" }}>

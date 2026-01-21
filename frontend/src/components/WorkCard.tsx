@@ -1,4 +1,5 @@
-import { Card, CardActionArea, CardContent, Typography, Box } from "@mui/material";
+import { Card, CardContent, Typography, Box } from "@mui/material";
+import { Link } from "react-router-dom";
 import { Camera, Clock, MapPin } from "lucide-react";
 import type { MaintenanceWork } from "@/types/maintenance";
 import { StatusBadge } from "./StatusBadge";
@@ -7,20 +8,46 @@ import { deviceKindLabels, getDeviceKindIcon } from "@/lib/deviceKind";
 
 interface WorkCardProps {
   work: MaintenanceWork;
+  to?: string;
   onClick?: () => void;
 }
 
-
-export function WorkCard({ work, onClick }: WorkCardProps) {
+export function WorkCard({ work, to, onClick }: WorkCardProps) {
   const duration = work.endTime
     ? Math.round((work.endTime.getTime() - work.startTime.getTime()) / 60000)
     : null;
   const kindLabel =
     deviceKindLabels[work.hvacKind as keyof typeof deviceKindLabels] ?? work.hvacKind;
   const KindIcon = getDeviceKindIcon(work.hvacKind);
+  const isClickable = Boolean(to || onClick);
 
-  const content = (
-    <CardContent sx={{ p: 2 }}>
+  return (
+    <Card
+      component={to ? Link : "div"}
+      to={to}
+      role={isClickable ? "button" : undefined}
+      tabIndex={isClickable ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (!onClick) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick();
+        }
+      }}
+      sx={{
+        boxShadow: "0 10px 24px rgba(31, 50, 58, 0.12)",
+        transition: "box-shadow 0.2s ease",
+        animation: "slideUp 0.3s ease-out",
+        cursor: isClickable ? "pointer" : "default",
+        textDecoration: "none",
+        "&:hover": isClickable ? { boxShadow: "0 12px 28px rgba(31, 50, 58, 0.2)" } : undefined,
+        "&:focus-visible": isClickable
+          ? { outline: "none", boxShadow: "0 0 0 3px rgba(2, 50, 45, 0.3)" }
+          : undefined,
+      }}
+    >
+      <CardContent sx={{ p: 2 }}>
         <Box sx={{ display: "flex", justifyContent: "space-between", mb: 2 }}>
           <Box>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
@@ -75,22 +102,6 @@ export function WorkCard({ work, onClick }: WorkCardProps) {
           )}
         </Box>
       </CardContent>
-  );
-
-  return (
-    <Card
-      sx={{
-        boxShadow: "0 10px 24px rgba(31, 50, 58, 0.12)",
-        transition: "box-shadow 0.2s ease",
-        animation: "slideUp 0.3s ease-out",
-        "&:hover": { boxShadow: "0 12px 28px rgba(31, 50, 58, 0.2)" },
-      }}
-    >
-      {onClick ? (
-        <CardActionArea onClick={onClick}>{content}</CardActionArea>
-      ) : (
-        content
-      )}
     </Card>
   );
 }

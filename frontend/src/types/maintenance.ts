@@ -12,12 +12,14 @@ export interface MaintenanceWork {
   hvacKind: string;
   hvacAddress: string;
   hvacLocation: string;
+  executorId: string;
   status: "in-progress" | "completed";
   isMalfunctioning: boolean;
   notes: string;
   photos: MaintenancePhoto[];
   startTime: Date;
   endTime?: Date;
+  lastEdited?: Date;
 }
 
 export interface ShiftManager {

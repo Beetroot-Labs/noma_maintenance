@@ -3,7 +3,6 @@ import { Layout } from "@/components/Layout";
 import { WorkCard } from "@/components/WorkCard";
 import { useMaintenance } from "@/context/MaintenanceContext";
 import { appColors } from "@/theme";
-import { formatDateTime } from "@/lib/date";
 
 const formatDay = (date: Date) =>
   new Intl.DateTimeFormat("hu-HU", {
@@ -54,7 +53,7 @@ export default function MaintenanceHistoryPage() {
                       {dateLabel}
                     </Typography>
                   )}
-                  <WorkCard work={work} />
+                  <WorkCard work={work} to={`/maintenance/${work.id}`} />
                 </Box>
               );
             })}
