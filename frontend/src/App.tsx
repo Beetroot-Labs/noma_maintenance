@@ -10,12 +10,17 @@ import LoginPage from "./pages/LoginPage";
 import ScanPage from "./pages/ScanPage";
 import MaintenancePage from "./pages/MaintenancePage";
 import OverviewPage from "./pages/OverviewPage";
+import DevicesOverview from "./pages/DevicesOverview";
+import DeviceDetailsPage from "./pages/DeviceDetailsPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
 const RequireDemoUser = () => {
-  const { user } = useDemoUser();
+  const { user, isHydrated } = useDemoUser();
+  if (!isHydrated) {
+    return null;
+  }
   if (!user) {
     return <Navigate to="/login" replace />;
   }
@@ -68,6 +73,8 @@ const App = () => (
                 <Route path="/scan" element={<ScanPage />} />
                 <Route path="/maintenance/:workId" element={<MaintenancePage />} />
                 <Route path="/overview" element={<OverviewPage />} />
+                <Route path="/devices" element={<DevicesOverview />} />
+                <Route path="/devices/:id" element={<DeviceDetailsPage />} />
                 <Route path="/history" element={<MaintenanceHistoryPage />} />
               </Route>
               <Route path="*" element={<NotFound />} />

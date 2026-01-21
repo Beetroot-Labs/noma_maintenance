@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import type { MaintenancePhoto, MaintenanceWork, ShiftManager } from "@/types/maintenance";
 import { useDemoUser } from "@/context/DemoUserContext";
-import { getPhotosByIds, seedDemoPhotos } from "@/lib/photoStore";
+import { demoPhotoIds, getPhotosByIds, seedDemoPhotos } from "@/lib/photoStore";
 
 interface MaintenanceContextType {
   currentWork: MaintenanceWork | null;
@@ -147,38 +147,42 @@ export const hvacDatabase: Record<
   },
 };
 
-const initialPastWorks: MaintenanceWork[] = [
-  {
-    id: "MW-PAST-001",
-    hvacId: "DEMO-DEVICE-009",
-    hvacModel: "Mitsubishi MSZ-AP",
-    hvacKind: "INDOOR_UNIT",
-    hvacAddress: "Budapest, Fehervari ut 12",
-    hvacLocation: "4. emelet, 410. iroda",
-    executorId: "u-tech",
-    status: "completed",
-    isMalfunctioning: false,
-    notes: "Szűrők cserélve.",
-    photos: [],
-    startTime: new Date(Date.now() - 1000 * 60 * 60 * 26),
-    endTime: new Date(Date.now() - 1000 * 60 * 60 * 25),
-  },
-  {
-    id: "MW-PAST-002",
-    hvacId: "DEMO-DEVICE-004",
-    hvacModel: "Systemair K-EC",
-    hvacKind: "FAN",
-    hvacAddress: "Budapest, Vaci ut 1",
-    hvacLocation: "1. emelet, 105. gépészet",
-    executorId: "u-tech",
-    status: "completed",
-    isMalfunctioning: true,
-    notes: "Szivárgás gyanú, jelölve javításra.",
-    photos: [],
-    startTime: new Date(Date.now() - 1000 * 60 * 60 * 50),
-    endTime: new Date(Date.now() - 1000 * 60 * 60 * 49),
-  },
-];
+const generatePastWorks = () => {
+  const works: MaintenanceWork[] = [];
+  const now = new Date();
+  const intervalMonths = 6;
+  const totalIntervals = 6;
+
+  Object.entries(hvacDatabase).forEach(([hvacId, device], deviceIndex) => {
+    for (let i = 1; i <= totalIntervals; i += 1) {
+      const endTime = new Date(now);
+      endTime.setMonth(endTime.getMonth() - intervalMonths * i);
+      endTime.setHours(9 + (deviceIndex % 6), (i * 7) % 60, 0, 0);
+      const startTime = new Date(endTime);
+      startTime.setMinutes(endTime.getMinutes() - 45);
+
+      works.push({
+        id: `MW-PAST-${hvacId}-${i.toString().padStart(2, "0")}`,
+        hvacId,
+        hvacModel: device.model,
+        hvacKind: device.kind,
+        hvacAddress: device.address,
+        hvacLocation: device.location,
+        executorId: "u-tech",
+        status: "completed",
+        isMalfunctioning: false,
+        notes: "Rutin karbantartás.",
+        photos: [],
+        startTime,
+        endTime,
+      });
+    }
+  });
+
+  return works;
+};
+
+const initialPastWorks: MaintenanceWork[] = generatePastWorks();
 
 export function MaintenanceProvider({ children }: { children: ReactNode }) {
   const { user } = useDemoUser();
@@ -198,19 +202,24 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     const loadDemoPhotos = async () => {
       try {
         await seedDemoPhotos();
-        const [indoorPhoto] = await getPhotosByIds(["photo-demo-indoor-01"]);
-        const fanPhotos = await getPhotosByIds(["photo-demo-fan-01", "photo-demo-fan-02"]);
+        const demoPhotos = await getPhotosByIds(demoPhotoIds);
 
         if (!isActive) return;
+        if (demoPhotos.length === 0) return;
         setPastWorks((prev) =>
-          prev.map((work) => {
-            if (work.id === "MW-PAST-001" && work.photos.length === 0 && indoorPhoto) {
-              return { ...work, photos: [indoorPhoto] };
+          prev.map((work, index) => {
+            if (work.photos.length > 0) return work;
+            const primary = demoPhotos[index % demoPhotos.length];
+            const secondary = demoPhotos[(index + 3) % demoPhotos.length];
+            const tertiary = demoPhotos[(index + 5) % demoPhotos.length];
+            const photos = [primary];
+            if (index % 3 === 0 && secondary.id !== primary.id) {
+              photos.push(secondary);
             }
-            if (work.id === "MW-PAST-002" && work.photos.length === 0 && fanPhotos.length > 0) {
-              return { ...work, photos: fanPhotos };
+            if (index % 5 === 0 && tertiary.id !== primary.id && tertiary.id !== secondary.id) {
+              photos.push(tertiary);
             }
-            return work;
+            return { ...work, photos };
           }),
         );
       } catch (error) {

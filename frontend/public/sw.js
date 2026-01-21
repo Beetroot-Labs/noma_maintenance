@@ -1,4 +1,6 @@
-const CACHE_NAME = "noma-maintenance-v3";
+const CACHE_VERSION = "__CACHE_VERSION__";
+const resolvedVersion = CACHE_VERSION === "__CACHE_VERSION__" ? "dev" : CACHE_VERSION;
+const CACHE_NAME = `noma-maintenance-${resolvedVersion}`;
 const CORE_ASSETS = [
   "./",
   "./index.html",

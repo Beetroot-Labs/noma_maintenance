@@ -59,15 +59,25 @@ const fetchAsDataUrl = async (url: string): Promise<string> => {
   });
 };
 
+const demoPhotoEntries = [
+  { id: "photo-demo-1000011602", file: "1000011602.jpg", description: "Karbantartasi foto" },
+  { id: "photo-demo-1000011603", file: "1000011603.jpg", description: "Karbantartasi foto" },
+  { id: "photo-demo-1000011604", file: "1000011604.jpg", description: "Karbantartasi foto" },
+  { id: "photo-demo-1000011605", file: "1000011605.webp", description: "Karbantartasi foto" },
+  { id: "photo-demo-1000011606", file: "1000011606.jpg", description: "Karbantartasi foto" },
+  { id: "photo-demo-1000011607", file: "1000011607.jpg", description: "Karbantartasi foto" },
+  { id: "photo-demo-1000011608", file: "1000011608.jpg", description: "Karbantartasi foto" },
+  { id: "photo-demo-fan-01", file: "fan01.jpg", description: "Ventilator" },
+  { id: "photo-demo-fan-02", file: "fan02.jpg", description: "Ventilator" },
+  { id: "photo-demo-indoor-01", file: "indoor01.jpg", description: "Belteri egyseg" },
+];
+
+export const demoPhotoIds = demoPhotoEntries.map((entry) => entry.id);
+
 export const seedDemoPhotos = async () => {
   const base = `${import.meta.env.BASE_URL}demo-photos/`;
-  const entries = [
-    { id: "photo-demo-indoor-01", file: "indoor01.jpg", description: "Beltéri egység" },
-    { id: "photo-demo-fan-01", file: "fan01.jpg", description: "Ventilátor" },
-    { id: "photo-demo-fan-02", file: "fan02.jpg", description: "Ventilátor" },
-  ];
 
-  for (const entry of entries) {
+  for (const entry of demoPhotoEntries) {
     const existing = await getRecord(entry.id);
     if (existing) continue;
     const url = await fetchAsDataUrl(`${base}${entry.file}`);
