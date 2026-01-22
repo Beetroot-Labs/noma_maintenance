@@ -60,16 +60,16 @@ const fetchAsDataUrl = async (url: string): Promise<string> => {
 };
 
 const demoPhotoEntries = [
-  { id: "photo-demo-1000011602", file: "1000011602.jpg", description: "Karbantartasi foto" },
-  { id: "photo-demo-1000011603", file: "1000011603.jpg", description: "Karbantartasi foto" },
-  { id: "photo-demo-1000011604", file: "1000011604.jpg", description: "Karbantartasi foto" },
-  { id: "photo-demo-1000011605", file: "1000011605.webp", description: "Karbantartasi foto" },
-  { id: "photo-demo-1000011606", file: "1000011606.jpg", description: "Karbantartasi foto" },
-  { id: "photo-demo-1000011607", file: "1000011607.jpg", description: "Karbantartasi foto" },
-  { id: "photo-demo-1000011608", file: "1000011608.jpg", description: "Karbantartasi foto" },
-  { id: "photo-demo-fan-01", file: "fan01.jpg", description: "Ventilator" },
-  { id: "photo-demo-fan-02", file: "fan02.jpg", description: "Ventilator" },
-  { id: "photo-demo-indoor-01", file: "indoor01.jpg", description: "Belteri egyseg" },
+  { id: "photo-demo-1000011602", file: "1000011602.jpg", description: "Karbantartási fotó" },
+  { id: "photo-demo-1000011603", file: "1000011603.jpg", description: "Karbantartási fotó" },
+  { id: "photo-demo-1000011604", file: "1000011604.jpg", description: "Karbantartási fotó" },
+  { id: "photo-demo-1000011605", file: "1000011605.webp", description: "Karbantartási fotó" },
+  { id: "photo-demo-1000011606", file: "1000011606.jpg", description: "Karbantartási fotó" },
+  { id: "photo-demo-1000011607", file: "1000011607.jpg", description: "Karbantartási fotó" },
+  { id: "photo-demo-1000011608", file: "1000011608.jpg", description: "Karbantartási fotó" },
+  { id: "photo-demo-fan-01", file: "fan01.jpg", description: "Ventilátor" },
+  { id: "photo-demo-fan-02", file: "fan02.jpg", description: "Ventilátor" },
+  { id: "photo-demo-indoor-01", file: "indoor01.jpg", description: "Beltéri egység" },
 ];
 
 export const demoPhotoIds = demoPhotoEntries.map((entry) => entry.id);
@@ -94,3 +94,12 @@ export const getPhotosByIds = async (ids: string[]) => {
   const results = await Promise.all(ids.map((id) => getRecord(id)));
   return results.filter((photo): photo is MaintenancePhoto => Boolean(photo));
 };
+
+export const savePhoto = async (photo: MaintenancePhoto) => {
+  await putRecord(photo);
+};
+
+export const clearPhotos = async () =>
+  withStore<void>("readwrite", (store) => {
+    store.clear();
+  });

@@ -35,17 +35,21 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  if (!event.request.url.startsWith(self.location.origin)) return;
   event.respondWith(
-    caches.match(event.request).then((cached) => {
+    (async () => {
+      const cached = await caches.match(event.request);
       if (cached) return cached;
-      return fetch(event.request).then((response) => {
+      try {
+        const response = await fetch(event.request);
         const responseClone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseClone);
-        });
+        const cache = await caches.open(CACHE_NAME);
+        cache.put(event.request, responseClone);
         return response;
-      });
-    }),
+      } catch (error) {
+        return cached ?? Response.error();
+      }
+    })(),
   );
 });
 

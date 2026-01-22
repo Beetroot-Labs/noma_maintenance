@@ -5,6 +5,7 @@ const timeFormatter = new Intl.DateTimeFormat("hu-HU", {
 });
 
 const dateTimeFormatter = new Intl.DateTimeFormat("hu-HU", {
+  year: "numeric",
   hour: "2-digit",
   minute: "2-digit",
   hour12: false,

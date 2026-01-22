@@ -43,14 +43,6 @@ export default function ScanPage() {
     return queryIndex === query.length;
   };
 
-  const suggestions = useMemo(() => {
-    if (!manualEntry || !hvacId.trim()) return [];
-    const query = hvacId.trim().toUpperCase();
-    return deviceIds
-      .filter((id) => isSubsequenceMatch(query, id))
-      .slice(0, 6);
-  }, [deviceIds, hvacId, manualEntry]);
-
   const handleScan = () => {
     setScannerOpen((prev) => !prev);
   };
@@ -273,8 +265,13 @@ export default function ScanPage() {
                     </Typography>
                     <Autocomplete
                       freeSolo
-                      options={suggestions}
-                      filterOptions={(options) => options}
+                      options={deviceIds}
+                      openOnFocus
+                      filterOptions={(options, state) => {
+                        const query = state.inputValue.trim().toUpperCase();
+                        if (!query) return options;
+                        return options.filter((id) => isSubsequenceMatch(query, id));
+                      }}
                       inputValue={hvacId}
                       onInputChange={(_, value) => setHvacId(value)}
                       onChange={(_, value) => {

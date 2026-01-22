@@ -13,6 +13,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
+import { AlertTriangle } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import { hvacDatabase, useMaintenance } from "@/context/MaintenanceContext";
 import { getDeviceKindLabel } from "@/lib/deviceKind";
@@ -26,6 +27,7 @@ type DeviceRow = {
   model: string;
   kind: string;
   lastMaintenance?: Date;
+  lastMaintenanceMalfunction?: boolean;
 };
 
 export default function DevicesOverview() {
@@ -56,14 +58,20 @@ export default function DevicesOverview() {
   };
 
   const devices = useMemo(() => {
-    const lastMaintenanceById = new Map<string, Date>();
+    const lastMaintenanceById = new Map<
+      string,
+      { timestamp: Date; isMalfunctioning: boolean }
+    >();
     const allWorks = [...todaysWorks, ...pastWorks];
 
     allWorks.forEach((work) => {
       const timestamp = work.endTime ?? work.startTime;
       const existing = lastMaintenanceById.get(work.hvacId);
-      if (!existing || timestamp.getTime() > existing.getTime()) {
-        lastMaintenanceById.set(work.hvacId, timestamp);
+      if (!existing || timestamp.getTime() > existing.timestamp.getTime()) {
+        lastMaintenanceById.set(work.hvacId, {
+          timestamp,
+          isMalfunctioning: work.isMalfunctioning,
+        });
       }
     });
 
@@ -73,7 +81,8 @@ export default function DevicesOverview() {
       location: device.location,
       model: device.model,
       kind: getDeviceKindLabel(device.kind as Parameters<typeof getDeviceKindLabel>[0]) ?? device.kind,
-      lastMaintenance: lastMaintenanceById.get(id),
+      lastMaintenance: lastMaintenanceById.get(id)?.timestamp,
+      lastMaintenanceMalfunction: lastMaintenanceById.get(id)?.isMalfunctioning ?? false,
     })) satisfies DeviceRow[];
   }, [pastWorks, todaysWorks]);
 
@@ -83,14 +92,12 @@ export default function DevicesOverview() {
       return devices;
     }
     return devices.filter((device) => {
-      const lastMaintenance = device.lastMaintenance ? formatDateTime(device.lastMaintenance) : "";
       const haystack = [
         device.id,
         device.address,
         device.location,
         device.model,
         device.kind,
-        lastMaintenance,
       ].join(" ");
       return isFuzzyMatch(query, haystack);
     });
@@ -142,7 +149,16 @@ export default function DevicesOverview() {
                       onClick={() => navigate(`/devices/${device.id}`)}
                       sx={{ cursor: "pointer" }}
                     >
-                      <TableCell sx={{ fontWeight: 600 }}>{device.id}</TableCell>
+                      <TableCell sx={{ fontWeight: 600 }}>
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                          <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
+                            {device.id}
+                          </Typography>
+                          {device.lastMaintenanceMalfunction && (
+                            <AlertTriangle size={16} color={appColors.destructive} />
+                          )}
+                        </Box>
+                      </TableCell>
                       <TableCell>{device.address}</TableCell>
                       <TableCell>{device.location}</TableCell>
                       <TableCell>{device.model}</TableCell>

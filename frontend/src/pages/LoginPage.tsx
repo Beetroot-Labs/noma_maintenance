@@ -13,6 +13,8 @@ import { ShieldAlert } from "lucide-react";
 import { appColors } from "@/theme";
 import { alpha } from "@mui/material/styles";
 import { useDemoUser } from "@/context/DemoUserContext";
+import { useMaintenance } from "@/context/MaintenanceContext";
+import { toast } from "@/lib/toast";
 
 const roleLabel = {
   admin: "admin",
@@ -23,6 +25,14 @@ const roleLabel = {
 export default function LoginPage() {
   const navigate = useNavigate();
   const { user, users, selectUser } = useDemoUser();
+  const { resetMaintenance } = useMaintenance();
+
+  const handleReset = async () => {
+    const success = await resetMaintenance();
+    if (success) {
+      toast.success("A bevitt adatok törölve lettek.");
+    }
+  };
 
   useEffect(() => {
     if (user) {
@@ -162,6 +172,16 @@ export default function LoginPage() {
             </Stack>
           </CardContent>
         </Card>
+      </Box>
+      <Box sx={{ maxWidth: 920, mx: "auto", width: "100%", mt: 3 }}>
+        <Button
+          variant="outlined"
+          fullWidth
+          onClick={handleReset}
+          sx={{ borderColor: appColors.border, color: appColors.primary }}
+        >
+          Bevitt adatok törlése
+        </Button>
       </Box>
     </Box>
   );

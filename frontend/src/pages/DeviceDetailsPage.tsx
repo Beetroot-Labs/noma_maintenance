@@ -9,7 +9,7 @@ import {
   IconButton,
   Typography,
 } from "@mui/material";
-import { ArrowLeft, Blocks, Cpu, MapPin } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Blocks, Cpu, MapPin } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import { PhotoGallery } from "@/components/PhotoGallery";
 import { hvacDatabase, useMaintenance } from "@/context/MaintenanceContext";
@@ -37,7 +37,11 @@ export default function DeviceDetailsPage() {
 
   const maintenanceItems = useMemo(() => {
     if (!id) return [];
-    return [...todaysWorks, ...pastWorks]
+    const byId = new Map<string, (typeof todaysWorks)[number]>();
+    for (const work of [...todaysWorks, ...pastWorks]) {
+      byId.set(work.id, work);
+    }
+    return Array.from(byId.values())
       .filter((work) => work.hvacId === id)
       .sort((a, b) => {
         const aTime = a.endTime?.getTime() ?? a.startTime.getTime();
@@ -216,6 +220,14 @@ export default function DeviceDetailsPage() {
                         <Typography variant="body2" color="text.secondary">
                           Nincs csatolt fotó.
                         </Typography>
+                      )}
+                      {work.isMalfunctioning && (
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 1, color: appColors.destructive }}>
+                          <AlertTriangle size={16} />
+                          <Typography variant="body2" sx={{ fontWeight: 600, color: "inherit" }}>
+                            Hibát észleltek a karbantartás során.
+                          </Typography>
+                        </Box>
                       )}
                     </CardContent>
                   </Card>
