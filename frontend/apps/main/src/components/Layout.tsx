@@ -73,8 +73,8 @@ export function Layout({ children }: LayoutProps) {
 
   const handleCloseMenu = () => setMenuAnchor(null);
 
-  const handleLogout = () => {
-    clearUser();
+  const handleLogout = async () => {
+    await clearUser();
     setMenuAnchor(null);
     navigate("/login");
   };
