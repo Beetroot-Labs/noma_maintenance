@@ -59,40 +59,37 @@ WITH tenant_and_user AS (
       AND u.email = 'floomatik@nomahutes.hu'
 ),
 location_seed AS (
-    SELECT
-        'NoMa Központ'::text AS building_name,
-        '2'::text AS floor,
-        'A'::text AS wing,
-        '204'::text AS room,
-        'Open office melletti mennyezeti egyseg'::text AS location_description
-    UNION ALL
-    SELECT
-        'NoMa Központ',
-        '3',
-        'B',
-        '311',
-        'Targyalo melletti belteri egyseg'
-    UNION ALL
-    SELECT
-        'NoMa Raktár',
-        '0',
-        'A',
-        'G-07',
-        'Raktari kiszolgalo ter'
-    UNION ALL
-    SELECT
-        'NoMa Raktár',
-        'TETŐ',
-        'R1',
-        NULL,
-        'Kondenzator a nyugati tetoszakaszon'
-    UNION ALL
-    SELECT
-        'NoMa Szervizpont',
-        '1',
-        'SZ',
-        '112',
-        'Szerviziroda hatso helyiseg'
+    VALUES
+        ('NoMa Központ', '1', 'A', '101', 'Recepció feletti beltéri egység'),
+        ('NoMa Központ', '1', 'A', '103', 'Ügyféltér oldalfali egység'),
+        ('NoMa Központ', '2', 'A', '204', 'Open office melletti mennyezeti egység'),
+        ('NoMa Központ', '2', 'A', '208', 'Konyha melletti fan-coil sor'),
+        ('NoMa Központ', '2', 'B', '215', 'Szerverterem előtere'),
+        ('NoMa Központ', '3', 'B', '311', 'Tárgyaló melletti beltéri egység'),
+        ('NoMa Központ', '3', 'B', '315', 'Igazgatói iroda déli oldala'),
+        ('NoMa Központ', '4', 'C', '402', 'Bemutatóterem északi zóna'),
+        ('NoMa Központ', '4', 'C', '409', 'Raktárkapcsolati folyosó'),
+        ('NoMa Központ', 'TETŐ', 'R1', NULL, 'Tetőszinti kültéri sor'),
+        ('NoMa Raktár', '0', 'A', 'G-01', 'Áruátvételi zóna'),
+        ('NoMa Raktár', '0', 'A', 'G-03', 'Komissiózó tér'),
+        ('NoMa Raktár', '0', 'A', 'G-07', 'Raktári kiszolgáló tér'),
+        ('NoMa Raktár', '0', 'B', 'G-11', 'Hűtött tároló előtere'),
+        ('NoMa Raktár', '1', 'B', 'M-02', 'Mezanin iroda'),
+        ('NoMa Raktár', '1', 'B', 'M-06', 'Műhely melletti pihenő'),
+        ('NoMa Raktár', '1', 'C', 'M-09', 'Akkumulátoros töltőhelyiség'),
+        ('NoMa Raktár', 'TETŐ', 'R1', NULL, 'Kondenzátor a nyugati tetőszakaszon'),
+        ('NoMa Raktár', 'TETŐ', 'R2', NULL, 'Kondenzátor a keleti tetőszakaszon'),
+        ('NoMa Raktár', '-1', 'P', 'B-02', 'Gépészeti tér északi oldal'),
+        ('NoMa Szervizpont', '0', 'SZ', '012', 'Fogadótér mennyezeti egység'),
+        ('NoMa Szervizpont', '0', 'SZ', '018', 'Alkatrészraktár belépő zóna'),
+        ('NoMa Szervizpont', '1', 'SZ', '112', 'Szerviziroda hátsó helyiség'),
+        ('NoMa Szervizpont', '1', 'SZ', '118', 'Szerszámkiadó pult mögött'),
+        ('NoMa Szervizpont', '1', 'K', '125', 'Képzőterem nyugati fal'),
+        ('NoMa Szervizpont', '2', 'K', '206', 'Nyitott irodarész középzóna'),
+        ('NoMa Szervizpont', '2', 'K', '212', 'Próbaüzemi labor'),
+        ('NoMa Szervizpont', '2', 'K', '219', 'Alkatrészvizsgáló műhely'),
+        ('NoMa Szervizpont', 'TETŐ', 'R1', NULL, 'Szervizpont tető kültéri egységei'),
+        ('NoMa Szervizpont', '-1', 'G', 'B-04', 'Gépészeti csatornatér')
 ),
 resolved_locations AS (
     SELECT
@@ -148,60 +145,69 @@ WITH tenant_and_user AS (
       AND u.email = 'floomatik@nomahutes.hu'
 ),
 device_seed AS (
-    SELECT
-        'NoMa Központ'::text AS building_name,
-        '2'::text AS floor,
-        'A'::text AS wing,
-        '204'::text AS room,
-        'Open office melletti mennyezeti egyseg'::text AS location_description,
-        'FAN_COIL_UNIT'::device_kind AS kind,
-        'Daikin'::text AS brand,
-        'FXFQ50A'::text AS model,
-        'Eszakkeleti zona fan-coil egyseg'::text AS additional_info
-    UNION ALL
-    SELECT
-        'NoMa Központ',
-        '3',
-        'B',
-        '311',
-        'Targyalo melletti belteri egyseg',
-        'INDOOR_UNIT'::device_kind,
-        'Mitsubishi Electric',
-        'MSZ-AP35VG',
-        'Targyaloi split belteri egyseg'
-    UNION ALL
-    SELECT
-        'NoMa Raktár',
-        '0',
-        'A',
-        'G-07',
-        'Raktari kiszolgalo ter',
-        'AIR_HANDLER_UNIT'::device_kind,
-        'Systemair',
-        'Topvex SR09',
-        'Raktari kezeloegyseg'
-    UNION ALL
-    SELECT
-        'NoMa Raktár',
-        'TETŐ',
-        'R1',
-        NULL,
-        'Kondenzator a nyugati tetoszakaszon',
-        'CONDENSER'::device_kind,
-        'Daikin',
-        'RXYQ10U',
-        'Kulteri VRV kondenzator'
-    UNION ALL
-    SELECT
-        'NoMa Szervizpont',
-        '1',
-        'SZ',
-        '112',
-        'Szerviziroda hatso helyiseg',
-        'FAN'::device_kind,
-        'Systemair',
-        'K 160 EC',
-        'Szellozesi elszivo ventilator'
+    VALUES
+        ('NoMa Központ', '1', 'A', '101', 'Recepció feletti beltéri egység', 'INDOOR_UNIT'::device_kind, 'Daikin', 'FTXM25R', 'Recepciós oldali split beltéri'),
+        ('NoMa Központ', '1', 'A', '103', 'Ügyféltér oldalfali egység', 'INDOOR_UNIT'::device_kind, 'Mitsubishi Electric', 'MSZ-AY35VGK', 'Ügyféltér nyugati oldali egység'),
+        ('NoMa Központ', '2', 'A', '204', 'Open office melletti mennyezeti egység', 'FAN_COIL_UNIT'::device_kind, 'Daikin', 'FXFQ50A', 'Open office északkeleti zóna'),
+        ('NoMa Központ', '2', 'A', '204', 'Open office melletti mennyezeti egység', 'FAN_COIL_UNIT'::device_kind, 'Daikin', 'FXFQ32A', 'Open office délkeleti zóna'),
+        ('NoMa Központ', '2', 'A', '208', 'Konyha melletti fan-coil sor', 'FAN_COIL_UNIT'::device_kind, 'Galletti', 'ESTRO 12', 'Konyha előtti első fan-coil'),
+        ('NoMa Központ', '2', 'A', '208', 'Konyha melletti fan-coil sor', 'FAN_COIL_UNIT'::device_kind, 'Galletti', 'ESTRO 15', 'Konyha előtti második fan-coil'),
+        ('NoMa Központ', '2', 'B', '215', 'Szerverterem előtere', 'AIR_HANDLER_UNIT'::device_kind, 'Systemair', 'Topvex FR08', 'Szerverterem előtér légkezelő'),
+        ('NoMa Központ', '2', 'B', '215', 'Szerverterem előtere', 'FAN'::device_kind, 'Systemair', 'K 200 EC', 'Szerverterem előtér elszívó'),
+        ('NoMa Központ', '3', 'B', '311', 'Tárgyaló melletti beltéri egység', 'INDOOR_UNIT'::device_kind, 'Mitsubishi Electric', 'MSZ-AP35VG', 'Tárgyalói split beltéri'),
+        ('NoMa Központ', '3', 'B', '311', 'Tárgyaló melletti beltéri egység', 'FAN'::device_kind, 'Soler & Palau', 'Silent 300', 'Tárgyalói frisslevegős ventilátor'),
+        ('NoMa Központ', '3', 'B', '315', 'Igazgatói iroda déli oldala', 'INDOOR_UNIT'::device_kind, 'Daikin', 'Perfera 35', 'Igazgatói iroda belső egység'),
+        ('NoMa Központ', '3', 'B', '315', 'Igazgatói iroda déli oldala', 'FAN_COIL_UNIT'::device_kind, 'Gree', 'U-Match 5.0', 'Igazgatói iroda tartalék fan-coil'),
+        ('NoMa Központ', '4', 'C', '402', 'Bemutatóterem északi zóna', 'AIR_HANDLER_UNIT'::device_kind, 'Swegon', 'GOLD RX 04', 'Bemutatótermi légkezelő'),
+        ('NoMa Központ', '4', 'C', '402', 'Bemutatóterem északi zóna', 'FAN'::device_kind, 'Systemair', 'KVK 125', 'Bemutatóterem befúvó ventilátor'),
+        ('NoMa Központ', '4', 'C', '409', 'Raktárkapcsolati folyosó', 'FAN'::device_kind, 'Helios', 'RR 160', 'Folyosói elszívó ventilátor'),
+        ('NoMa Központ', '4', 'C', '409', 'Raktárkapcsolati folyosó', 'INDOOR_UNIT'::device_kind, 'Fujitsu', 'ASYG12KM', 'Folyosói oldalfali beltéri'),
+        ('NoMa Központ', 'TETŐ', 'R1', NULL, 'Tetőszinti kültéri sor', 'CONDENSER'::device_kind, 'Daikin', 'RZQSG100', 'Tető kültéri 01'),
+        ('NoMa Központ', 'TETŐ', 'R1', NULL, 'Tetőszinti kültéri sor', 'CONDENSER'::device_kind, 'Daikin', 'RZQSG125', 'Tető kültéri 02'),
+        ('NoMa Központ', 'TETŐ', 'R1', NULL, 'Tetőszinti kültéri sor', 'VRF_OUTDOOR_UNIT'::device_kind, 'Daikin', 'RXYQ10U', 'Tető VRF kültéri'),
+        ('NoMa Központ', 'TETŐ', 'R1', NULL, 'Tetőszinti kültéri sor', 'CHILLER'::device_kind, 'Trane', 'CGAM 020', 'Tető folyadékhűtő'),
+
+        ('NoMa Raktár', '0', 'A', 'G-01', 'Áruátvételi zóna', 'AIR_HANDLER_UNIT'::device_kind, 'Systemair', 'Topvex SR06', 'Áruátvételi légkezelő'),
+        ('NoMa Raktár', '0', 'A', 'G-01', 'Áruátvételi zóna', 'FAN'::device_kind, 'Systemair', 'K 160 XL', 'Áruátvételi elszívó'),
+        ('NoMa Raktár', '0', 'A', 'G-03', 'Komissiózó tér', 'FAN_COIL_UNIT'::device_kind, 'Galletti', 'ESTRO 18', 'Komissiózó 1. zóna'),
+        ('NoMa Raktár', '0', 'A', 'G-03', 'Komissiózó tér', 'FAN_COIL_UNIT'::device_kind, 'Galletti', 'ESTRO 20', 'Komissiózó 2. zóna'),
+        ('NoMa Raktár', '0', 'A', 'G-07', 'Raktári kiszolgáló tér', 'AIR_HANDLER_UNIT'::device_kind, 'Systemair', 'Topvex SR09', 'Raktári kezelőegység'),
+        ('NoMa Raktár', '0', 'A', 'G-07', 'Raktári kiszolgáló tér', 'FAN'::device_kind, 'Systemair', 'KVK 315', 'Raktári befúvó ventilátor'),
+        ('NoMa Raktár', '0', 'B', 'G-11', 'Hűtött tároló előtere', 'INDOOR_UNIT'::device_kind, 'Midea', 'Mission 26', 'Előtéri split beltéri'),
+        ('NoMa Raktár', '0', 'B', 'G-11', 'Hűtött tároló előtere', 'CONDENSER'::device_kind, 'Midea', 'MOX330', 'Előtéri split kültéri párja'),
+        ('NoMa Raktár', '1', 'B', 'M-02', 'Mezanin iroda', 'INDOOR_UNIT'::device_kind, 'Daikin', 'Comfora 35', 'Mezanin iroda beltéri'),
+        ('NoMa Raktár', '1', 'B', 'M-02', 'Mezanin iroda', 'FAN'::device_kind, 'Helios', 'MiniVent M1', 'Mezanin iroda elszívó'),
+        ('NoMa Raktár', '1', 'B', 'M-06', 'Műhely melletti pihenő', 'INDOOR_UNIT'::device_kind, 'Gree', 'Comfort X', 'Pihenő split beltéri'),
+        ('NoMa Raktár', '1', 'B', 'M-06', 'Műhely melletti pihenő', 'FAN_COIL_UNIT'::device_kind, 'Sabiana', 'Carisma 34', 'Pihenő fan-coil'),
+        ('NoMa Raktár', '1', 'C', 'M-09', 'Akkumulátoros töltőhelyiség', 'FAN'::device_kind, 'Soler & Palau', 'TD-800', 'Töltőhelyiség elszívó'),
+        ('NoMa Raktár', '1', 'C', 'M-09', 'Akkumulátoros töltőhelyiség', 'AIR_HANDLER_UNIT'::device_kind, 'Komfovent', 'Domekt R 400', 'Töltőhelyiség frisslevegős gép'),
+        ('NoMa Raktár', '-1', 'P', 'B-02', 'Gépészeti tér északi oldal', 'CHILLER'::device_kind, 'Carrier', '30RB 040', 'Gépészeti tér folyadékhűtő'),
+        ('NoMa Raktár', '-1', 'P', 'B-02', 'Gépészeti tér északi oldal', 'FAN'::device_kind, 'Ziehl-Abegg', 'FN063', 'Gépészeti tér segédventilátor'),
+        ('NoMa Raktár', 'TETŐ', 'R1', NULL, 'Kondenzátor a nyugati tetőszakaszon', 'CONDENSER'::device_kind, 'Daikin', 'RXYQ10U', 'Nyugati tető kültéri 01'),
+        ('NoMa Raktár', 'TETŐ', 'R1', NULL, 'Kondenzátor a nyugati tetőszakaszon', 'CONDENSER'::device_kind, 'Daikin', 'RXYQ12U', 'Nyugati tető kültéri 02'),
+        ('NoMa Raktár', 'TETŐ', 'R2', NULL, 'Kondenzátor a keleti tetőszakaszon', 'VRF_OUTDOOR_UNIT'::device_kind, 'Mitsubishi Electric', 'PUHY-P250', 'Keleti tető VRF kültéri'),
+        ('NoMa Raktár', 'TETŐ', 'R2', NULL, 'Kondenzátor a keleti tetőszakaszon', 'CONDENSER'::device_kind, 'Mitsubishi Electric', 'PUHZ-ZRP140', 'Keleti tető split kültéri'),
+
+        ('NoMa Szervizpont', '0', 'SZ', '012', 'Fogadótér mennyezeti egység', 'FAN_COIL_UNIT'::device_kind, 'Gree', 'U-Match 7.0', 'Fogadótér 1. zóna'),
+        ('NoMa Szervizpont', '0', 'SZ', '012', 'Fogadótér mennyezeti egység', 'FAN_COIL_UNIT'::device_kind, 'Gree', 'U-Match 5.0', 'Fogadótér 2. zóna'),
+        ('NoMa Szervizpont', '0', 'SZ', '018', 'Alkatrészraktár belépő zóna', 'INDOOR_UNIT'::device_kind, 'Fujitsu', 'ASYG14KM', 'Alkatrészraktár split beltéri'),
+        ('NoMa Szervizpont', '0', 'SZ', '018', 'Alkatrészraktár belépő zóna', 'FAN'::device_kind, 'Helios', 'RRK 125', 'Alkatrészraktár elszívó'),
+        ('NoMa Szervizpont', '1', 'SZ', '112', 'Szerviziroda hátsó helyiség', 'FAN'::device_kind, 'Systemair', 'K 160 EC', 'Szellőzési elszívó ventilátor'),
+        ('NoMa Szervizpont', '1', 'SZ', '112', 'Szerviziroda hátsó helyiség', 'INDOOR_UNIT'::device_kind, 'Daikin', 'FTXM20R', 'Szerviziroda split beltéri'),
+        ('NoMa Szervizpont', '1', 'SZ', '118', 'Szerszámkiadó pult mögött', 'AIR_HANDLER_UNIT'::device_kind, 'Swegon', 'GOLD RX 03', 'Szerszámkiadó légkezelő'),
+        ('NoMa Szervizpont', '1', 'SZ', '118', 'Szerszámkiadó pult mögött', 'FAN'::device_kind, 'Systemair', 'KVK Slim 200', 'Szerszámkiadó elszívó'),
+        ('NoMa Szervizpont', '1', 'K', '125', 'Képzőterem nyugati fal', 'INDOOR_UNIT'::device_kind, 'Mitsubishi Electric', 'MSZ-EF35', 'Képzőterem oldalfali egység 1'),
+        ('NoMa Szervizpont', '1', 'K', '125', 'Képzőterem nyugati fal', 'INDOOR_UNIT'::device_kind, 'Mitsubishi Electric', 'MSZ-EF42', 'Képzőterem oldalfali egység 2'),
+        ('NoMa Szervizpont', '2', 'K', '206', 'Nyitott irodarész középzóna', 'FAN_COIL_UNIT'::device_kind, 'Sabiana', 'Carisma 44', 'Nyitott iroda fan-coil 1'),
+        ('NoMa Szervizpont', '2', 'K', '206', 'Nyitott irodarész középzóna', 'FAN_COIL_UNIT'::device_kind, 'Sabiana', 'Carisma 34', 'Nyitott iroda fan-coil 2'),
+        ('NoMa Szervizpont', '2', 'K', '212', 'Próbaüzemi labor', 'AIR_HANDLER_UNIT'::device_kind, 'Systemair', 'Topvex FC06', 'Próbalabor légkezelő'),
+        ('NoMa Szervizpont', '2', 'K', '212', 'Próbaüzemi labor', 'FAN'::device_kind, 'Ziehl-Abegg', 'RH35M', 'Próbalabor elszívó'),
+        ('NoMa Szervizpont', '2', 'K', '219', 'Alkatrészvizsgáló műhely', 'FAN'::device_kind, 'Soler & Palau', 'CADB 800', 'Műhely frisslevegős ventilátor'),
+        ('NoMa Szervizpont', '2', 'K', '219', 'Alkatrészvizsgáló műhely', 'INDOOR_UNIT'::device_kind, 'Daikin', 'Comfora 25', 'Műhely split beltéri'),
+        ('NoMa Szervizpont', '-1', 'G', 'B-04', 'Gépészeti csatornatér', 'CHILLER'::device_kind, 'Clivet', 'WSAN-XEE 41', 'Pincei folyadékhűtő'),
+        ('NoMa Szervizpont', '-1', 'G', 'B-04', 'Gépészeti csatornatér', 'FAN'::device_kind, 'Systemair', 'RVK 315', 'Pincei légcsatorna ventilátor'),
+        ('NoMa Szervizpont', 'TETŐ', 'R1', NULL, 'Szervizpont tető kültéri egységei', 'CONDENSER'::device_kind, 'Daikin', 'RZAG71', 'Tető split kültéri 01'),
+        ('NoMa Szervizpont', 'TETŐ', 'R1', NULL, 'Szervizpont tető kültéri egységei', 'VRF_OUTDOOR_UNIT'::device_kind, 'Daikin', 'RXYQ8U', 'Tető VRF kültéri')
 ),
 resolved_devices AS (
     SELECT

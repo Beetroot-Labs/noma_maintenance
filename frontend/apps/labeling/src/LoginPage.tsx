@@ -31,7 +31,7 @@ export default function LoginPage({ googleClientId }: LoginPageProps) {
       <Box sx={{ px: 1, pt: 3 }}>
         <Typography
           variant="overline"
-          sx={{ letterSpacing: "0.16em", color: "secondary.main", fontWeight: 700 }}
+          sx={{ letterSpacing: "0.16em", color: "primary.main", fontWeight: 700 }}
         >
           NoMa Karbantartás
         </Typography>
@@ -48,9 +48,10 @@ export default function LoginPage({ googleClientId }: LoginPageProps) {
         sx={{
           width: "min(460px, 100%)",
           borderRadius: "5px",
-          border: "1px solid rgba(20, 35, 52, 0.08)",
-          background: "rgba(255, 255, 255, 0.92)",
-          boxShadow: "0 18px 40px rgba(20, 35, 52, 0.10)",
+          border: "1px solid",
+          borderColor: "divider",
+          background: "rgba(255, 255, 255, 0.96)",
+          boxShadow: "0 18px 36px rgba(2, 50, 45, 0.08)",
           backdropFilter: "blur(12px)",
         }}
       >
@@ -69,7 +70,7 @@ export default function LoginPage({ googleClientId }: LoginPageProps) {
               sx={{
                 height: 1,
                 background:
-                  "linear-gradient(90deg, rgba(20,35,52,0.12), rgba(20,35,52,0.04))",
+                  "linear-gradient(90deg, rgba(58, 120, 93, 0.28), rgba(58, 120, 93, 0.06))",
               }}
             />
 

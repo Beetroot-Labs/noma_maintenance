@@ -1,6 +1,6 @@
 use axum::Json;
 use axum::Router;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::http::{HeaderValue, header};
 use axum::response::IntoResponse;
@@ -95,6 +95,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/auth/google", post(google_login))
         .route("/auth/me", get(get_current_user))
         .route("/auth/logout", post(logout))
+        .route("/labeling/buildings", get(list_labeling_buildings))
+        .route(
+            "/labeling/buildings/{building_id}/cache",
+            get(get_labeling_building_cache),
+        )
         .with_state(app_state);
 
     let assets_service = ServiceBuilder::new()
@@ -194,6 +199,41 @@ struct SessionUser {
     tenant_id: uuid::Uuid,
     full_name: String,
     email: String,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+struct BuildingSummary {
+    id: uuid::Uuid,
+    name: String,
+    address: String,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+struct CachedLocation {
+    id: uuid::Uuid,
+    building_id: uuid::Uuid,
+    floor: Option<String>,
+    wing: Option<String>,
+    room: Option<String>,
+    location_description: Option<String>,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+struct CachedDevice {
+    id: uuid::Uuid,
+    location_id: Option<uuid::Uuid>,
+    kind: String,
+    additional_info: Option<String>,
+    brand: Option<String>,
+    model: Option<String>,
+    device_photo_url: Option<String>,
+}
+
+#[derive(Serialize)]
+struct BuildingCacheResponse {
+    building: BuildingSummary,
+    locations: Vec<CachedLocation>,
+    devices: Vec<CachedDevice>,
 }
 
 #[derive(Deserialize)]
@@ -458,6 +498,102 @@ async fn logout(
     ))
 }
 
+async fn list_labeling_buildings(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+
+    let buildings = sqlx::query_as::<_, BuildingSummary>(
+        r#"
+        SELECT id, name, address
+        FROM buildings
+        WHERE tenant_id = $1
+        ORDER BY name
+        "#,
+    )
+    .bind(user.tenant_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(Json(buildings))
+}
+
+async fn get_labeling_building_cache(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(building_id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+
+    let building = sqlx::query_as::<_, BuildingSummary>(
+        r#"
+        SELECT id, name, address
+        FROM buildings
+        WHERE tenant_id = $1 AND id = $2
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(building_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(|| ApiError::forbidden("building not found for current tenant"))?;
+
+    let locations = sqlx::query_as::<_, CachedLocation>(
+        r#"
+        SELECT id, building_id, floor, wing, room, location_description
+        FROM site_locations
+        WHERE tenant_id = $1 AND building_id = $2
+        ORDER BY floor NULLS FIRST, wing NULLS FIRST, room NULLS FIRST, created_at
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(building_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let devices = sqlx::query_as::<_, CachedDevice>(
+        r#"
+        SELECT
+            d.id,
+            d.location_id,
+            d.kind::text AS kind,
+            d.additional_info,
+            d.brand,
+            d.model,
+            d.device_photo_url
+        FROM devices d
+        JOIN site_locations sl
+          ON sl.tenant_id = d.tenant_id
+         AND sl.id = d.location_id
+        WHERE d.tenant_id = $1 AND sl.building_id = $2
+        ORDER BY d.kind, d.brand NULLS FIRST, d.model NULLS FIRST, d.created_at
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(building_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(Json(BuildingCacheResponse {
+        building,
+        locations,
+        devices,
+    }))
+}
+
 async fn verify_google_id_token(
     state: &AppState,
     id_token: &str,
@@ -566,6 +702,40 @@ fn build_session_cookie(auth: &AuthConfig, token: &str, expires_at: DateTime<Utc
         cookie.push_str("; Secure");
     }
     cookie
+}
+
+async fn require_session_user(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<SessionUser, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let auth = state
+        .auth
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("google auth is not configured"))?;
+    let token = extract_session_token(headers, &auth.session_cookie_name)
+        .ok_or_else(|| ApiError::unauthorized("missing session cookie"))?;
+    let token_hash = hash_session_token(&token);
+
+    sqlx::query_as::<_, SessionUser>(
+        r#"
+        SELECT u.id, u.tenant_id, u.full_name, u.email::text AS email
+        FROM sessions s
+        JOIN users u ON u.id = s.user_id
+        WHERE s.session_token_hash = $1
+          AND s.revoked_at IS NULL
+          AND s.expires_at > NOW()
+          AND u.is_active = TRUE
+        "#,
+    )
+    .bind(token_hash)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(|| ApiError::unauthorized("invalid session"))
 }
 
 fn extract_session_token(headers: &HeaderMap, cookie_name: &str) -> Option<String> {

@@ -1,31 +1,56 @@
 import { createTheme } from "@mui/material/styles";
 
+const appColors = {
+  background: "#F6F6F6",
+  foreground: "#292728",
+  card: "#FFFFFF",
+  primary: "#02322D",
+  primaryForeground: "#F6F6F6",
+  secondary: "#3A785D",
+  secondaryForeground: "#F6F6F6",
+  muted: "#F0F0F0",
+  mutedForeground: "#5C5A5B",
+  accent: "#CAAB6A",
+  accentForeground: "#292728",
+  destructive: "hsl(0 72% 45%)",
+  destructiveForeground: "#F6F6F6",
+  success: "hsl(142 60% 36%)",
+  successForeground: "#F6F6F6",
+  warning: "#3A785D",
+  warningForeground: "#F6F6F6",
+  border: "#3A785D",
+};
+
 export const theme = createTheme({
   palette: {
     mode: "light",
     primary: {
-      main: "#14324a",
+      main: appColors.primary,
+      contrastText: appColors.primaryForeground,
     },
     secondary: {
-      main: "#c56a2d",
+      main: appColors.secondary,
+      contrastText: appColors.secondaryForeground,
     },
     background: {
-      default: "#e8eef1",
-      paper: "rgba(255, 255, 255, 0.9)",
+      default: appColors.background,
+      paper: appColors.card,
     },
     text: {
-      primary: "#142334",
-      secondary: "#4e6172",
+      primary: appColors.foreground,
+      secondary: appColors.mutedForeground,
     },
     error: {
-      main: "#ab3f16",
+      main: appColors.destructive,
+      contrastText: appColors.destructiveForeground,
     },
+    divider: appColors.border,
   },
   shape: {
     borderRadius: 5,
   },
   typography: {
-    fontFamily: '"Segoe UI", sans-serif',
+    fontFamily: '"Open Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif',
     h1: {
       fontSize: "clamp(2.6rem, 8vw, 4rem)",
       lineHeight: 0.95,
@@ -40,6 +65,27 @@ export const theme = createTheme({
     button: {
       textTransform: "none",
       fontWeight: 600,
+    },
+  },
+  components: {
+    MuiButton: {
+      defaultProps: {
+        disableElevation: true,
+      },
+      styleOverrides: {
+        root: {
+          textTransform: "none",
+          borderRadius: 8,
+          fontWeight: 700,
+        },
+      },
+    },
+    MuiPaper: {
+      styleOverrides: {
+        root: {
+          borderColor: appColors.border,
+        },
+      },
     },
   },
 });
