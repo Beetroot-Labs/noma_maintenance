@@ -226,6 +226,8 @@ struct CachedDevice {
     additional_info: Option<String>,
     brand: Option<String>,
     model: Option<String>,
+    serial_number: Option<String>,
+    source_device_code: Option<String>,
     device_photo_url: Option<String>,
 }
 
@@ -572,6 +574,8 @@ async fn get_labeling_building_cache(
             d.additional_info,
             d.brand,
             d.model,
+            d.serial_number,
+            d.source_device_code,
             d.device_photo_url
         FROM devices d
         JOIN site_locations sl

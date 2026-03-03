@@ -83,13 +83,45 @@ CREATE TABLE sessions (
 );
 
 CREATE TYPE device_kind AS ENUM (
-    'FAN_COIL_UNIT',
-    'INDOOR_UNIT',
-    'CONDENSER',
+    'WINDOW_AIR_CONDITIONER',
+    'FAN_COIL',
+    'COMFORT_FAN_COIL',
+    'AIR_CURTAIN',
+    'SPLIT_UNIT',
+    'SPLIT_INDOOR_UNIT',
+    'SERVER_ROOM_SPLIT_INDOOR_UNIT',
+    'AIR_HANDLING_UNIT',
+    'VRV_INDOOR_UNIT',
+    'VRV_OUTDOOR_UNIT',
     'FAN',
-    'AIR_HANDLER_UNIT',
-    'VRF_OUTDOOR_UNIT',
-    'CHILLER'
+    'LIQUID_CHILLER',
+    'CONDENSER'
+);
+
+CREATE TYPE tender_classification AS ENUM (
+    'WINDOW_AIR_CONDITIONER_UP_TO_2_5_KW',
+    'WINDOW_AIR_CONDITIONER_ABOVE_2_5_KW',
+    'INDOOR_UNIT_UP_TO_2_5_KW',
+    'INDOOR_UNIT_ABOVE_2_5_KW',
+    'LIQUID_CHILLER_UP_TO_50_KW',
+    'LIQUID_CHILLER_50_TO_100_KW',
+    'LIQUID_CHILLER_100_TO_500_KW',
+    'CONDENSER_ABOVE_80_KW',
+    'SPLIT_DUAL_MULTI_AC_UP_TO_5_KW',
+    'SPLIT_DUAL_MULTI_AC_5_TO_10_KW',
+    'SPLIT_DUAL_MULTI_AC_ABOVE_10_KW',
+    'AIR_HANDLING_UNIT_UP_TO_3000_M3_H',
+    'AIR_HANDLING_UNIT_3000_TO_5000_M3_H',
+    'AIR_HANDLING_UNIT_5000_TO_10000_M3_H',
+    'AIR_HANDLING_UNIT_10000_TO_30000_M3_H',
+    'VRV_OUTDOOR_UNIT_UP_TO_20_KW',
+    'VRV_OUTDOOR_UNIT_20_TO_30_KW',
+    'VRV_OUTDOOR_UNIT_30_TO_50_KW',
+    'VRV_OUTDOOR_UNIT_ABOVE_50_KW',
+    'AXIAL_FAN_BELOW_1000_M3_H',
+    'AXIAL_FAN_1000_TO_3000_M3_H',
+    'AXIAL_FAN_3000_TO_5000_M3_H',
+    'AXIAL_FAN_ABOVE_5000_M3_H'
 );
 
 CREATE TABLE buildings (
@@ -125,9 +157,13 @@ CREATE TABLE devices (
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     location_id UUID,
     kind device_kind NOT NULL,
+    tender_classification tender_classification,
+    maintenance_frequency_per_year INTEGER CHECK (maintenance_frequency_per_year IS NULL OR maintenance_frequency_per_year > 0),
     additional_info TEXT,
     brand TEXT,
     model TEXT,
+    serial_number TEXT,
+    source_device_code TEXT,
     device_photo_url TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
     created_by UUID REFERENCES users(id) ON DELETE SET NULL,
@@ -177,6 +213,13 @@ ON devices (tenant_id, location_id);
 
 CREATE INDEX devices_tenant_kind_idx
 ON devices (tenant_id, kind);
+
+CREATE INDEX devices_tenant_tender_classification_idx
+ON devices (tenant_id, tender_classification);
+
+CREATE UNIQUE INDEX devices_tenant_source_device_code_unique_idx
+ON devices (tenant_id, source_device_code)
+WHERE source_device_code IS NOT NULL;
 
 CREATE INDEX barcodes_tenant_device_idx
 ON barcodes (tenant_id, device_id);

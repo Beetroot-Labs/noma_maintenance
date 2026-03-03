@@ -38,9 +38,6 @@ export default function LoginPage({ googleClientId }: LoginPageProps) {
         <Typography variant="h1" sx={{ mt: 1, mb: 1 }}>
           Címkéző
         </Typography>
-        <Typography color="text.secondary">
-          Gyors belépés a belső címkézési felületre.
-        </Typography>
       </Box>
 
       <Box sx={{ display: "grid", placeItems: "center", flex: 1, py: 3 }}>
@@ -58,27 +55,20 @@ export default function LoginPage({ googleClientId }: LoginPageProps) {
         <CardContent sx={{ p: { xs: 3, sm: 4 } }}>
           <Stack spacing={3}>
             <Box>
-              <Typography variant="h2" sx={{ mb: 1 }}>
+              <Typography variant="h2">
                 Bejelentkezés
-              </Typography>
-              <Typography color="text.secondary">
-                Használja a céges Google-fiókját.
               </Typography>
             </Box>
 
-            <Box
-              sx={{
-                height: 1,
-                background:
-                  "linear-gradient(90deg, rgba(58, 120, 93, 0.28), rgba(58, 120, 93, 0.06))",
-              }}
-            />
-
             <Typography variant="body2" color="text.secondary">
-              Belépés céges Google-fiókkal.
+              Az alkalmazásba nomahutes.hu fiókoddal tudsz bejelentkezni.
             </Typography>
 
-            <Box sx={{ display: "flex", justifyContent: "center" }}>
+            <Box sx={{
+                display: "flex",
+                justifyContent: "center",
+                px: 9,
+            }}>
               {!googleClientId ? (
                 <Alert severity="error" sx={{ width: "100%" }}>
                   Ehhez az alkalmazáshoz nincs beállítva Google kliensazonosító.
@@ -87,7 +77,6 @@ export default function LoginPage({ googleClientId }: LoginPageProps) {
                 <GoogleSignInButton
                   clientId={googleClientId}
                   disabled={isAuthenticating}
-                  width={320}
                   onCredential={loginWithGoogle}
                   onLoadError={() => {
                     window.alert("A Google bejelentkezési script nem tölthető be.");
@@ -104,10 +93,6 @@ export default function LoginPage({ googleClientId }: LoginPageProps) {
                 </Typography>
               </Stack>
             )}
-
-            <Typography variant="caption" color="text.secondary" textAlign="center">
-              {productNames.labeling}
-            </Typography>
           </Stack>
         </CardContent>
       </Card>
@@ -115,7 +100,7 @@ export default function LoginPage({ googleClientId }: LoginPageProps) {
 
       <Box sx={{ px: 1, pb: 1 }}>
         <Typography variant="caption" color="text.secondary">
-          Belső használatra
+            &copy; {new Date().getFullYear()} NoMa Kft.
         </Typography>
       </Box>
     </Box>

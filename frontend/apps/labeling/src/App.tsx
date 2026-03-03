@@ -4,10 +4,14 @@ import {
   ThemeProvider,
 } from "@mui/material";
 import { AuthProvider } from "@noma/shared";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { DeviceDetailsPage } from "./DeviceDetailsPage";
 import { LabelingHome } from "./LabelingHome";
 import { theme } from "./theme";
 
 export default function App() {
+  const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -18,7 +22,15 @@ export default function App() {
         }}
       >
         <AuthProvider defaultRole="technician">
-          <LabelingHome googleClientId={import.meta.env.VITE_GOOGLE_CLIENT_ID} />
+          <BrowserRouter>
+            <Routes>
+              <Route path="/" element={<LabelingHome googleClientId={googleClientId} />} />
+              <Route
+                path="/devices/:id"
+                element={<DeviceDetailsPage googleClientId={googleClientId} />}
+              />
+            </Routes>
+          </BrowserRouter>
         </AuthProvider>
       </Box>
     </ThemeProvider>
