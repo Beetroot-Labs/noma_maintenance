@@ -24,6 +24,7 @@ export type CachedLocation = {
 export type CachedDevice = {
   id: string;
   location_id: string | null;
+  code?: string | null;
   kind: string;
   additional_info: string | null;
   brand: string | null;
@@ -155,9 +156,15 @@ export const cacheBuildingData = async (
   payload: BuildingCachePayload,
   selectedBuildingId: string,
 ): Promise<void> => {
+  const existingDevices = await getAllRecords<CachedDevice>(DEVICES_STORE);
+  const existingCodesByDeviceId = new Map(
+    existingDevices
+      .filter((device) => device.code)
+      .map((device) => [device.id, device.code ?? null]),
+  );
   const photoRecords = (
     await Promise.all(
-      payload.devices.map(async (device, index) => {
+      payload.devices.map(async (device) => {
         if (!device.device_photo_url) {
           return null;
         }
@@ -195,7 +202,10 @@ export const cacheBuildingData = async (
       tx.objectStore(LOCATIONS_STORE).put(location);
     });
     payload.devices.forEach((device) => {
-      tx.objectStore(DEVICES_STORE).put(device);
+      tx.objectStore(DEVICES_STORE).put({
+        ...device,
+        code: existingCodesByDeviceId.get(device.id) ?? null,
+      } satisfies CachedDevice);
     });
     photoRecords.forEach((record) => {
       tx.objectStore(DEVICE_PHOTOS_STORE).put(record);
@@ -233,7 +243,7 @@ export const getCachedDeviceListItems = async (): Promise<CachedDeviceListItem[]
 
     return {
       id: device.id,
-      code: null,
+      code: device.code ?? null,
       floor: location?.floor ?? null,
       wing: location?.wing ?? null,
       room: location?.room ?? null,
@@ -263,7 +273,7 @@ export const getCachedDeviceDetails = async (
 
   return {
     id: device.id,
-    code: null,
+    code: device.code ?? null,
     floor: location?.floor ?? null,
     wing: location?.wing ?? null,
     room: location?.room ?? null,
@@ -277,6 +287,38 @@ export const getCachedDeviceDetails = async (
     devicePhotoUrl: device.device_photo_url ?? null,
     cachedPhotoBlob: cachedPhoto?.blob ?? null,
   };
+};
+
+export const assignCachedDeviceBarcode = async (deviceId: string, code: string): Promise<void> => {
+  const db = await openDb();
+  const normalizedCode = code.trim();
+
+  if (!normalizedCode) {
+    throw new Error("barcode is empty");
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(DEVICES_STORE, "readwrite");
+    tx.onerror = () => reject(tx.error);
+    tx.oncomplete = () => resolve();
+
+    const store = tx.objectStore(DEVICES_STORE);
+    const request = store.get(deviceId);
+
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const device = request.result as CachedDevice | undefined;
+      if (!device) {
+        reject(new Error("device not found"));
+        return;
+      }
+
+      store.put({
+        ...device,
+        code: normalizedCode,
+      } satisfies CachedDevice);
+    };
+  });
 };
 
 export const replaceCachedDevicePhoto = async (deviceId: string): Promise<void> => {

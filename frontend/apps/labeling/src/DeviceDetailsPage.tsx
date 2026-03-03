@@ -15,24 +15,29 @@ import {
   CircularProgress,
   Divider,
   Dialog,
+  Fab,
   IconButton,
   Paper,
   Stack,
   Typography,
 } from "@mui/material";
-import { Barcode, Camera, Trash2 } from "lucide-react";
+import { BarcodeFormat, DecodeHintType } from "@zxing/library";
+import { BrowserMultiFormatReader } from "@zxing/browser";
+import { Barcode, Camera, ImagePlus, ScanBarcode, Trash2 } from "lucide-react";
 import { getDeviceKindLabel, useAuth } from "@noma/shared";
 import { ChangeEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import LoginPage from "./LoginPage";
 import { LabelingAppBar } from "./components/LabelingAppBar";
 import {
+  assignCachedDeviceBarcode,
   CachedDeviceDetails,
   deleteCachedDevicePhoto,
   getCachedDeviceDetails,
   getSelectedCachedBuilding,
   replaceCachedDevicePhoto,
 } from "./lib/offlineCache";
+import { appColors } from "./theme";
 
 type DeviceDetailsPageProps = {
   googleClientId: string;
@@ -59,6 +64,14 @@ function DetailRow({ icon, label, value }: DetailRowProps) {
 }
 
 export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
+  const accentFabSx = {
+    backgroundColor: appColors.accent,
+    color: appColors.accentIcon,
+    "&:hover": {
+      backgroundColor: "#BE9A54",
+    },
+  } as const;
+
   const { user, clearUser, isHydrated } = useAuth();
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
@@ -67,8 +80,13 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [cachedPhotoUrl, setCachedPhotoUrl] = useState<string | null>(null);
   const [photoDialogOpen, setPhotoDialogOpen] = useState(false);
+  const [barcodeDialogOpen, setBarcodeDialogOpen] = useState(false);
   const [isUpdatingPhoto, setIsUpdatingPhoto] = useState(false);
+  const [isAssigningBarcode, setIsAssigningBarcode] = useState(false);
+  const [barcodeCameraError, setBarcodeCameraError] = useState<string | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const barcodeVideoRef = useRef<HTMLVideoElement | null>(null);
+  const barcodeControlsRef = useRef<{ stop: () => void } | null>(null);
 
   const loadDeviceDetails = async (deviceId: string) => {
     const [selectedBuilding, cachedDevice] = await Promise.all([
@@ -121,6 +139,79 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
     };
   }, [device]);
 
+  const stopBarcodeScanner = () => {
+    barcodeControlsRef.current?.stop();
+    barcodeControlsRef.current = null;
+    setIsAssigningBarcode(false);
+  };
+
+  const startBarcodeScanner = () => {
+    if (!barcodeDialogOpen || !barcodeVideoRef.current) {
+      return;
+    }
+
+    stopBarcodeScanner();
+    setBarcodeCameraError(null);
+    setIsAssigningBarcode(true);
+
+    const hints = new Map();
+    hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_128]);
+    const reader = new BrowserMultiFormatReader(hints, 400);
+
+    reader
+      .decodeFromVideoDevice(null, barcodeVideoRef.current, async (result, error, controls) => {
+        if (!barcodeDialogOpen) {
+          return;
+        }
+
+        if (controls && !barcodeControlsRef.current) {
+          barcodeControlsRef.current = controls;
+          setIsAssigningBarcode(false);
+        }
+
+        if (result && id) {
+          const scannedCode = result.getText().trim();
+          if (!scannedCode) {
+            return;
+          }
+
+          stopBarcodeScanner();
+          setIsAssigningBarcode(true);
+
+          try {
+            await assignCachedDeviceBarcode(id, scannedCode);
+            await loadDeviceDetails(id);
+            setBarcodeDialogOpen(false);
+          } catch {
+            setBarcodeCameraError("Nem sikerült elmenteni a beolvasott vonalkódot.");
+          } finally {
+            if (barcodeDialogOpen) {
+              setIsAssigningBarcode(false);
+            }
+          }
+        }
+
+        if (error) {
+          // Ignore decode misses while scanning.
+        }
+      })
+      .catch(() => {
+        setBarcodeCameraError("Nem sikerült elindítani a kamerát.");
+        setIsAssigningBarcode(false);
+      });
+  };
+
+  useEffect(() => {
+    if (!barcodeDialogOpen) {
+      stopBarcodeScanner();
+      setBarcodeCameraError(null);
+    }
+
+    return () => {
+      stopBarcodeScanner();
+    };
+  }, [barcodeDialogOpen]);
+
   const handleDeletePhoto = async () => {
     if (!id || !window.confirm("Biztosan törölni akarod az eszköz képét?")) {
       return;
@@ -139,6 +230,10 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
 
   const handleOpenPhotoPicker = () => {
     uploadInputRef.current?.click();
+  };
+
+  const handleAssignBarcode = () => {
+    setBarcodeDialogOpen(true);
   };
 
   const handlePhotoSelection = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -237,15 +332,28 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
             ) : (
               <Stack divider={<Divider flexItem />}>
                 <Box sx={{ px: 3, py: 2.5 }}>
-                  <Typography variant="caption" color="text.secondary">
-                    Modell
-                  </Typography>
-                  <Typography variant="h2" sx={{ mt: 0.5 }}>
-                    {device.model ?? "Nincs megadva"}
-                  </Typography>
-                  <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-                    {device.brand ?? "Ismeretlen márka"}
-                  </Typography>
+                  <Box
+                    sx={{
+                      display: "flex",
+                      flexDirection: { xs: "column", sm: "row" },
+                      justifyContent: "space-between",
+                      alignItems: { xs: "flex-start", sm: "center" },
+                      gap: 2,
+                    }}
+                  >
+                    <Box>
+                      <Typography variant="caption" color="text.secondary">
+                        Modell
+                      </Typography>
+                      <Typography variant="h2" sx={{ mt: 0.5 }}>
+                        {device.model ?? "Nincs megadva"}
+                      </Typography>
+                      <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+                        {device.brand ?? "Ismeretlen márka"}
+                      </Typography>
+                    </Box>
+
+                  </Box>
                 </Box>
 
                 <Box sx={{ px: 3, py: 2.5 }}>
@@ -422,6 +530,113 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
           </Paper>
         </Stack>
       </Box>
+
+      {device && (device.code == null || !cachedPhotoUrl) && (
+        <Stack
+          spacing={1.25}
+          sx={{
+            position: "fixed",
+            right: 32,
+            bottom: "calc(32px + env(safe-area-inset-bottom))",
+            zIndex: 1200,
+          }}
+        >
+          {device.code == null && (
+            <Fab
+              aria-label="Vonalkód hozzárendelése"
+              onClick={handleAssignBarcode}
+              sx={accentFabSx}
+            >
+              <ScanBarcode size={20} />
+            </Fab>
+          )}
+          {!cachedPhotoUrl && (
+            <Fab
+              aria-label="Fénykép hozzáadása"
+              onClick={handleOpenPhotoPicker}
+              disabled={isUpdatingPhoto}
+              sx={accentFabSx}
+            >
+              <ImagePlus size={20} />
+            </Fab>
+          )}
+        </Stack>
+      )}
+
+      <Dialog
+        open={barcodeDialogOpen}
+        onClose={() => {
+          if (!isAssigningBarcode) {
+            setBarcodeDialogOpen(false);
+          }
+        }}
+        TransitionProps={{
+          onEntered: () => {
+            window.setTimeout(() => {
+              startBarcodeScanner();
+            }, 0);
+          },
+        }}
+        fullWidth
+        maxWidth="sm"
+        PaperProps={{
+          sx: {
+            borderRadius: "5px",
+          },
+        }}
+      >
+        <Box sx={{ px: 3, py: 2.5 }}>
+          <Stack spacing={2}>
+            <Box>
+              <Typography variant="h2">Vonalkód hozzárendelése</Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                Irányítsd a kamerát a CODE 128 vonalkódra.
+              </Typography>
+            </Box>
+
+            <Box
+              sx={{
+                aspectRatio: "16 / 9",
+                bgcolor: "grey.900",
+                borderRadius: "5px",
+                overflow: "hidden",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Box
+                component="video"
+                ref={barcodeVideoRef}
+                autoPlay
+                playsInline
+                disablePictureInPicture
+                sx={{ width: "100%", height: "100%", objectFit: "cover" }}
+                muted
+              />
+            </Box>
+
+            {barcodeCameraError && (
+              <Typography variant="body2" color="error">
+                {barcodeCameraError}
+              </Typography>
+            )}
+
+            {isAssigningBarcode && !barcodeCameraError && (
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1.25 }}>
+                <CircularProgress size={18} color="secondary" />
+                <Typography variant="body2" color="text.secondary">
+                  Kamera indítása...
+                </Typography>
+              </Box>
+            )}
+
+            <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+              <Button onClick={() => setBarcodeDialogOpen(false)}>Bezárás</Button>
+            </Box>
+          </Stack>
+        </Box>
+      </Dialog>
 
       <Dialog
         open={photoDialogOpen}

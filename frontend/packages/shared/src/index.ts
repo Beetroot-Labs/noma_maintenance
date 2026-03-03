@@ -8,3 +8,4 @@ export type { AuthUser, AuthUserRole } from "./auth";
 export { deviceKindLabels, getDeviceKindLabel } from "./deviceKinds";
 export type { DeviceKind } from "./deviceKinds";
 export { GoogleSignInButton } from "./googleIdentity";
+export { appColors, theme } from "./theme";

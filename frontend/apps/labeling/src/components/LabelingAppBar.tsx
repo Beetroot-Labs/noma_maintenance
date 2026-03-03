@@ -51,37 +51,33 @@ export function LabelingAppBar({
         <Toolbar
           sx={{
             minHeight: "unset",
-            display: "block",
+            display: "flex",
+            alignItems: "center",
+            gap: 1.25,
             px: 2,
             pt: "max(8px, env(safe-area-inset-top))",
-            pb: 1.25,
+            pb: 1,
           }}
         >
-          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 2 }}>
-            <Box sx={{ minWidth: 0 }}>
-              <Box
-                component="img"
-                src={logoWhite}
-                alt="NoMa"
-                sx={{
-                  display: "block",
-                  width: 148,
-                  height: 28,
-                  objectFit: "cover",
-                  objectPosition: "center",
-                }}
-              />
-            </Box>
-
-            <IconButton onClick={handleOpenAccountMenu} sx={{ color: accentColor, mr: -1 }}>
-              <AccountCircleOutlined sx={{ fontSize: 30 }} />
-            </IconButton>
+          <Box sx={{ minWidth: 0, flexShrink: 0 }}>
+            <Box
+              component="img"
+              src={logoWhite}
+              alt="NoMa"
+              sx={{
+                display: "block",
+                width: 148,
+                height: 28,
+                objectFit: "cover",
+                objectPosition: "center",
+              }}
+            />
           </Box>
-
           <ButtonBase
             onClick={onBuildingClick}
             sx={{
-              width: "100%",
+              minWidth: 0,
+              flex: 1,
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
@@ -112,6 +108,10 @@ export function LabelingAppBar({
               </Box>
             </Stack>
           </ButtonBase>
+
+          <IconButton onClick={handleOpenAccountMenu} sx={{ color: accentColor, mr: -1, flexShrink: 0 }}>
+            <AccountCircleOutlined sx={{ fontSize: 30 }} />
+          </IconButton>
         </Toolbar>
       </AppBar>
 
