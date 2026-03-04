@@ -1,5 +1,6 @@
 use axum::Json;
 use axum::body::Bytes;
+use axum::extract::DefaultBodyLimit;
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -123,6 +124,7 @@ async fn main() -> anyhow::Result<()> {
             "/labeling/buildings/{building_id}/cache",
             get(get_labeling_building_cache),
         )
+        .layer(DefaultBodyLimit::max(20 * 1024 * 1024))
         .with_state(app_state);
 
     let assets_service = ServiceBuilder::new()
