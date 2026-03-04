@@ -34,10 +34,13 @@ import {
   BuildingCachePayload,
   CachedBuilding,
   cacheBuildingData,
+  clearPendingSyncChanges,
   CachedDeviceListItem,
+  getPendingSyncChangesCount,
   getCachedDeviceListItems,
   getSelectedCachedBuilding,
   hasOfflineCache,
+  syncPendingBarcodeAssignments,
 } from "./lib/offlineCache";
 
 type LabelingHomeProps = {
@@ -85,6 +88,9 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
   const [columnFilters, setColumnFilters] = useState<ColumnFilterState>(emptyFilters);
   const [activeFilterKey, setActiveFilterKey] = useState<FilterKey | null>(null);
   const [filterMenuAnchor, setFilterMenuAnchor] = useState<HTMLElement | null>(null);
+  const [unsyncedWarningOpen, setUnsyncedWarningOpen] = useState(false);
+  const [unsyncedChangeCount, setUnsyncedChangeCount] = useState(0);
+  const [allowDiscardUnsyncedSwitch, setAllowDiscardUnsyncedSwitch] = useState(false);
   const filterInputRef = useRef<HTMLInputElement | null>(null);
   const hasCachedBuilding = Boolean(selectedBuildingName);
 
@@ -227,6 +233,12 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
     setCacheError(null);
 
     try {
+      const currentBuilding = await getSelectedCachedBuilding();
+      const isSwitchingBuilding = currentBuilding?.id !== selectedBuildingId;
+      if (isSwitchingBuilding && allowDiscardUnsyncedSwitch) {
+        await clearPendingSyncChanges();
+      }
+
       const response = await fetch(`/api/labeling/buildings/${selectedBuildingId}/cache`, {
         credentials: "include",
       });
@@ -239,6 +251,7 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
       setSelectedBuildingName(payload.building.name);
       setDeviceRows(await getCachedDeviceListItems());
       setCacheDialogOpen(false);
+      setAllowDiscardUnsyncedSwitch(false);
     } catch (error) {
       setCacheError(
         error instanceof Error ? error.message : "Nem sikerült elkészíteni a helyi gyorsítótárat.",
@@ -249,6 +262,21 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
   };
 
   const handleOpenBuildingSelector = async () => {
+    if (hasCachedBuilding) {
+      await syncPendingBarcodeAssignments();
+      const pendingChanges = await getPendingSyncChangesCount();
+      if (pendingChanges > 0) {
+        setUnsyncedChangeCount(pendingChanges);
+        setUnsyncedWarningOpen(true);
+        return;
+      }
+    }
+
+    setAllowDiscardUnsyncedSwitch(false);
+    await openBuildingSelectorDialog();
+  };
+
+  const openBuildingSelectorDialog = async () => {
     setCacheError(null);
     setIsLoadingBuildings(true);
     setCacheDialogOpen(true);
@@ -265,6 +293,12 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
     } finally {
       setIsLoadingBuildings(false);
     }
+  };
+
+  const handleConfirmDiscardUnsyncedChanges = async () => {
+    setUnsyncedWarningOpen(false);
+    setAllowDiscardUnsyncedSwitch(true);
+    await openBuildingSelectorDialog();
   };
 
   const handleCloseCacheDialog = () => {
@@ -386,6 +420,42 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
           await clearUser();
         }}
       />
+
+      <Dialog
+        open={unsyncedWarningOpen}
+        onClose={() => setUnsyncedWarningOpen(false)}
+        fullWidth
+        maxWidth="xs"
+        PaperProps={{ sx: { borderRadius: "5px" } }}
+      >
+        <DialogTitle>Nem mentett változtatások</DialogTitle>
+        <DialogContent sx={{ pt: 1, pb: 3 }}>
+          <Stack spacing={2.5}>
+            <Typography color="text.secondary">
+              {`Van ${unsyncedChangeCount} nem mentett változtatásod a jelenlegi épületben. Ha most átváltasz egy másik épületre, ezek a változtatások elvesznek. Biztosan ezt akarod?`}
+            </Typography>
+            <Stack direction="row" spacing={1.5} justifyContent="flex-end">
+              <Button
+                variant="text"
+                color="inherit"
+                onClick={() => {
+                  setUnsyncedWarningOpen(false);
+                  setAllowDiscardUnsyncedSwitch(false);
+                }}
+              >
+                Mégse
+              </Button>
+              <Button
+                variant="outlined"
+                color="error"
+                onClick={() => void handleConfirmDiscardUnsyncedChanges()}
+              >
+                Igen, eldobom a változásokat
+              </Button>
+            </Stack>
+          </Stack>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={cacheDialogOpen}

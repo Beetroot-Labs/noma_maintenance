@@ -101,6 +101,7 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const barcodeVideoRef = useRef<HTMLVideoElement | null>(null);
   const barcodeControlsRef = useRef<{ stop: () => void } | null>(null);
+  const activeObjectUrlRef = useRef<string | null>(null);
 
   const loadDeviceDetails = async (deviceId: string) => {
     const [selectedBuilding, cachedDevice] = await Promise.all([
@@ -141,17 +142,35 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
 
   useEffect(() => {
     if (!device?.cachedPhotoBlob) {
-      setCachedPhotoUrl(null);
+      if (activeObjectUrlRef.current) {
+        URL.revokeObjectURL(activeObjectUrlRef.current);
+        activeObjectUrlRef.current = null;
+      }
+      setCachedPhotoUrl(device?.devicePhotoUrl ?? null);
       return;
     }
 
     const objectUrl = URL.createObjectURL(device.cachedPhotoBlob);
+    const previousObjectUrl = activeObjectUrlRef.current;
+    activeObjectUrlRef.current = objectUrl;
     setCachedPhotoUrl(objectUrl);
 
-    return () => {
-      URL.revokeObjectURL(objectUrl);
-    };
+    if (previousObjectUrl) {
+      window.setTimeout(() => {
+        URL.revokeObjectURL(previousObjectUrl);
+      }, 1000);
+    }
   }, [device]);
+
+  useEffect(
+    () => () => {
+      if (activeObjectUrlRef.current) {
+        URL.revokeObjectURL(activeObjectUrlRef.current);
+        activeObjectUrlRef.current = null;
+      }
+    },
+    [],
+  );
 
   const stopBarcodeScanner = () => {
     barcodeControlsRef.current?.stop();
@@ -251,6 +270,7 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
 
     try {
       await deleteCachedDevicePhoto(id);
+      await syncPendingBarcodeAssignments();
       await loadDeviceDetails(id);
     } finally {
       setIsUpdatingPhoto(false);
@@ -276,7 +296,8 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
     setIsUpdatingPhoto(true);
 
     try {
-      await replaceCachedDevicePhoto(id);
+      await replaceCachedDevicePhoto(id, file);
+      await syncPendingBarcodeAssignments();
       await loadDeviceDetails(id);
     } finally {
       setIsUpdatingPhoto(false);

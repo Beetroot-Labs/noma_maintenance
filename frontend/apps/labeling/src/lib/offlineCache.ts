@@ -8,6 +8,7 @@ const SYNC_OUTBOX_STORE = "sync_outbox";
 const SETTINGS_STORE = "settings";
 
 export type DeviceCodeSyncState = "SYNCED" | "PENDING" | "FAILED";
+export type DevicePhotoSyncState = "SYNCED" | "PENDING" | "FAILED";
 
 export type CachedBuilding = {
   id: string;
@@ -31,6 +32,9 @@ export type CachedDevice = {
   code_sync_state?: DeviceCodeSyncState;
   code_sync_error?: string | null;
   code_updated_at?: string | null;
+  photo_sync_state?: DevicePhotoSyncState;
+  photo_sync_error?: string | null;
+  photo_updated_at?: string | null;
   kind: string;
   additional_info: string | null;
   brand: string | null;
@@ -72,11 +76,13 @@ export type CachedDeviceDetails = CachedDeviceListItem & {
 
 type SyncOutboxRecord = {
   id: string;
-  entity_type: "DEVICE_BARCODE";
+  entity_type: "DEVICE_BARCODE" | "DEVICE_PHOTO";
   entity_id: string;
-  operation: "ASSIGN_BARCODE";
+  operation: "ASSIGN_BARCODE" | "UPSERT_PHOTO" | "DELETE_PHOTO";
   payload: {
-    barcode: string;
+    barcode?: string;
+    contentType?: string | null;
+    sourceUrl?: string | null;
   };
   status: "PENDING" | "IN_PROGRESS" | "FAILED";
   retryable: boolean;
@@ -91,6 +97,12 @@ type CachedDevicePhotoRecord = {
   deviceId: string;
   blob: Blob;
   sourceUrl: string;
+  contentType: string | null;
+};
+
+export type SyncStatusSummary = {
+  hasRetryableChanges: boolean;
+  hasSyncErrors: boolean;
 };
 
 const openDb = (): Promise<IDBDatabase> =>
@@ -168,7 +180,7 @@ const getAllRecords = async <T>(storeName: string): Promise<T[]> => {
 };
 
 const fetchPhotoBlob = async (url: string): Promise<Blob> => {
-  const response = await fetch(url, { cache: "no-store" });
+  const response = await fetch(url, { cache: "no-store", credentials: "include" });
   if (!response.ok) {
     throw new Error("failed to fetch device photo");
   }
@@ -177,6 +189,7 @@ const fetchPhotoBlob = async (url: string): Promise<Blob> => {
 };
 
 const barcodeOutboxId = (deviceId: string) => `DEVICE_BARCODE:${deviceId}`;
+const photoOutboxId = (deviceId: string) => `DEVICE_PHOTO:${deviceId}`;
 
 const readErrorMessage = async (response: Response) => {
   try {
@@ -199,13 +212,50 @@ export const hasOfflineCache = async (): Promise<boolean> => {
   return buildingCount > 0 && deviceCount > 0;
 };
 
+export const getPendingSyncChangesCount = async (): Promise<number> => {
+  const items = await getAllRecords<SyncOutboxRecord>(SYNC_OUTBOX_STORE);
+  return items.filter(
+    (item) =>
+      item.status === "PENDING" ||
+      item.status === "IN_PROGRESS" ||
+      (item.status === "FAILED" && item.retryable),
+  ).length;
+};
+
+export const getSyncStatusSummary = async (): Promise<SyncStatusSummary> => {
+  const items = await getAllRecords<SyncOutboxRecord>(SYNC_OUTBOX_STORE);
+  return {
+    hasRetryableChanges: items.some(
+      (item) =>
+        item.status === "PENDING" ||
+        item.status === "IN_PROGRESS" ||
+        (item.status === "FAILED" && item.retryable),
+    ),
+    hasSyncErrors: items.some((item) => item.status === "FAILED"),
+  };
+};
+
+export const clearPendingSyncChanges = async (): Promise<void> => {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(SYNC_OUTBOX_STORE, "readwrite");
+    tx.onerror = () => reject(tx.error);
+    tx.oncomplete = () => resolve();
+    tx.objectStore(SYNC_OUTBOX_STORE).clear();
+  });
+};
+
 export const cacheBuildingData = async (
   payload: BuildingCachePayload,
   selectedBuildingId: string,
 ): Promise<void> => {
   const existingDevices = await getAllRecords<CachedDevice>(DEVICES_STORE);
+  const existingPhotoRecords = await getAllRecords<CachedDevicePhotoRecord>(DEVICE_PHOTOS_STORE);
   const pendingBarcodeOutbox = await getAllRecords<SyncOutboxRecord>(SYNC_OUTBOX_STORE);
   const existingDeviceById = new Map(existingDevices.map((device) => [device.id, device]));
+  const existingPhotoByDeviceId = new Map(
+    existingPhotoRecords.map((record) => [record.deviceId, record]),
+  );
   const pendingBarcodeDeviceIds = new Set(
     pendingBarcodeOutbox
       .filter(
@@ -215,9 +265,17 @@ export const cacheBuildingData = async (
       )
       .map((item) => item.entity_id),
   );
+  const pendingPhotoDeviceIds = new Set(
+    pendingBarcodeOutbox
+      .filter((item) => item.entity_type === "DEVICE_PHOTO")
+      .map((item) => item.entity_id),
+  );
   const photoRecords = (
     await Promise.all(
       payload.devices.map(async (device) => {
+        if (pendingPhotoDeviceIds.has(device.id)) {
+          return existingPhotoByDeviceId.get(device.id) ?? null;
+        }
         if (!device.device_photo_url) {
           return null;
         }
@@ -227,6 +285,7 @@ export const cacheBuildingData = async (
             deviceId: device.id,
             blob: await fetchPhotoBlob(device.device_photo_url),
             sourceUrl: device.device_photo_url,
+            contentType: null,
           } satisfies CachedDevicePhotoRecord;
         } catch {
           return null;
@@ -264,6 +323,7 @@ export const cacheBuildingData = async (
     payload.devices.forEach((device) => {
       const existingDevice = existingDeviceById.get(device.id);
       const preserveLocalBarcode = pendingBarcodeDeviceIds.has(device.id);
+      const preserveLocalPhoto = pendingPhotoDeviceIds.has(device.id);
       const nextCode = preserveLocalBarcode ? existingDevice?.code ?? null : device.code ?? null;
       const nextSyncState = preserveLocalBarcode
         ? existingDevice?.code_sync_state ?? "PENDING"
@@ -274,6 +334,20 @@ export const cacheBuildingData = async (
         : existingDevice?.code !== device.code
           ? new Date().toISOString()
           : existingDevice?.code_updated_at ?? null;
+      const nextPhotoUrl = preserveLocalPhoto
+        ? existingDevice?.device_photo_url ?? null
+        : device.device_photo_url ?? null;
+      const nextPhotoSyncState = preserveLocalPhoto
+        ? existingDevice?.photo_sync_state ?? "PENDING"
+        : "SYNCED";
+      const nextPhotoSyncError = preserveLocalPhoto
+        ? existingDevice?.photo_sync_error ?? null
+        : null;
+      const nextPhotoUpdatedAt = preserveLocalPhoto
+        ? existingDevice?.photo_updated_at ?? null
+        : existingDevice?.device_photo_url !== device.device_photo_url
+          ? new Date().toISOString()
+          : existingDevice?.photo_updated_at ?? null;
 
       tx.objectStore(DEVICES_STORE).put({
         ...device,
@@ -281,6 +355,10 @@ export const cacheBuildingData = async (
         code_sync_state: nextSyncState,
         code_sync_error: nextSyncError,
         code_updated_at: nextCodeUpdatedAt,
+        device_photo_url: nextPhotoUrl,
+        photo_sync_state: nextPhotoSyncState,
+        photo_sync_error: nextPhotoSyncError,
+        photo_updated_at: nextPhotoUpdatedAt,
       } satisfies CachedDevice);
     });
     photoRecords.forEach((record) => {
@@ -439,7 +517,6 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
   const items = await getAllRecords<SyncOutboxRecord>(SYNC_OUTBOX_STORE);
   const pendingItems = items.filter(
     (item) =>
-      item.entity_type === "DEVICE_BARCODE" &&
       (item.status === "PENDING" || item.status === "IN_PROGRESS" || (item.status === "FAILED" && item.retryable)),
   );
 
@@ -465,8 +542,15 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
 
         devicesStore.put({
           ...device,
-          code_sync_state: "PENDING",
-          code_sync_error: null,
+          ...(item.entity_type === "DEVICE_BARCODE"
+            ? {
+                code_sync_state: "PENDING" as const,
+                code_sync_error: null,
+              }
+            : {
+                photo_sync_state: "PENDING" as const,
+                photo_sync_error: null,
+              }),
         } satisfies CachedDevice);
 
         outboxStore.put({
@@ -481,14 +565,43 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
     });
 
     try {
-      const response = await fetch(`/api/labeling/devices/${item.entity_id}/barcode`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        credentials: "include",
-        body: JSON.stringify({ code: item.payload.barcode }),
-      });
+      let response: Response;
+
+      if (item.entity_type === "DEVICE_BARCODE") {
+        response = await fetch(`/api/labeling/devices/${item.entity_id}/barcode`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          credentials: "include",
+          body: JSON.stringify({ code: item.payload.barcode }),
+        });
+      } else if (item.operation === "UPSERT_PHOTO") {
+        const photoRecord = await getRecord<CachedDevicePhotoRecord>(DEVICE_PHOTOS_STORE, item.entity_id);
+        if (!photoRecord) {
+          await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(SYNC_OUTBOX_STORE, "readwrite");
+            tx.onerror = () => reject(tx.error);
+            tx.oncomplete = () => resolve();
+            tx.objectStore(SYNC_OUTBOX_STORE).delete(item.id);
+          });
+          continue;
+        }
+
+        response = await fetch(`/api/labeling/devices/${item.entity_id}/photo`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": photoRecord.contentType ?? "application/octet-stream",
+          },
+          credentials: "include",
+          body: photoRecord.blob,
+        });
+      } else {
+        response = await fetch(`/api/labeling/devices/${item.entity_id}/photo`, {
+          method: "DELETE",
+          credentials: "include",
+        });
+      }
 
       if (!response.ok) {
         const errorMessage = await readErrorMessage(response);
@@ -509,8 +622,15 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
             if (device) {
               devicesStore.put({
                 ...device,
-                code_sync_state: "FAILED",
-                code_sync_error: errorMessage,
+                ...(item.entity_type === "DEVICE_BARCODE"
+                  ? {
+                      code_sync_state: "FAILED" as const,
+                      code_sync_error: errorMessage,
+                    }
+                  : {
+                      photo_sync_state: "FAILED" as const,
+                      photo_sync_error: errorMessage,
+                    }),
               } satisfies CachedDevice);
             }
 
@@ -542,11 +662,24 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
         deviceRequest.onsuccess = () => {
           const device = deviceRequest.result as CachedDevice | undefined;
           if (device) {
+            const nextPhotoUrl =
+              item.entity_type === "DEVICE_PHOTO" && item.operation === "UPSERT_PHOTO"
+                ? `/api/labeling/devices/${item.entity_id}/photo`
+                : null;
+
             devicesStore.put({
               ...device,
-              code: item.payload.barcode,
-              code_sync_state: "SYNCED",
-              code_sync_error: null,
+              ...(item.entity_type === "DEVICE_BARCODE"
+                ? {
+                    code: item.payload.barcode ?? device.code ?? null,
+                    code_sync_state: "SYNCED" as const,
+                    code_sync_error: null,
+                  }
+                : {
+                    device_photo_url: nextPhotoUrl,
+                    photo_sync_state: "SYNCED" as const,
+                    photo_sync_error: null,
+                  }),
             } satisfies CachedDevice);
           }
 
@@ -569,8 +702,15 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
           if (device) {
             devicesStore.put({
               ...device,
-              code_sync_state: "FAILED",
-              code_sync_error: "A szerver jelenleg nem érhető el.",
+              ...(item.entity_type === "DEVICE_BARCODE"
+                ? {
+                    code_sync_state: "FAILED" as const,
+                    code_sync_error: "A szerver jelenleg nem érhető el.",
+                  }
+                : {
+                    photo_sync_state: "FAILED" as const,
+                    photo_sync_error: "A szerver jelenleg nem érhető el.",
+                  }),
             } satisfies CachedDevice);
           }
 
@@ -589,13 +729,14 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
   }
 };
 
-export const replaceCachedDevicePhoto = async (deviceId: string): Promise<void> => {
+export const replaceCachedDevicePhoto = async (deviceId: string, file: Blob): Promise<void> => {
   const db = await openDb();
-  const sourceUrl = `https://picsum.photos/seed/${Date.now()}/600/400`;
-  const blob = await fetchPhotoBlob(sourceUrl);
+  const now = new Date().toISOString();
+  const sourceUrl = `local://device-photo/${deviceId}/${Date.now()}`;
+  const blob = file.slice(0, file.size, file.type || "application/octet-stream");
 
   await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction([DEVICES_STORE, DEVICE_PHOTOS_STORE], "readwrite");
+    const tx = db.transaction([DEVICES_STORE, DEVICE_PHOTOS_STORE, SYNC_OUTBOX_STORE], "readwrite");
     tx.onerror = () => reject(tx.error);
     tx.oncomplete = () => resolve();
 
@@ -613,22 +754,45 @@ export const replaceCachedDevicePhoto = async (deviceId: string): Promise<void> 
       devicesStore.put({
         ...device,
         device_photo_url: sourceUrl,
+        photo_sync_state: "PENDING",
+        photo_sync_error: null,
+        photo_updated_at: now,
       });
 
       tx.objectStore(DEVICE_PHOTOS_STORE).put({
         deviceId,
         blob,
         sourceUrl,
+        contentType: blob.type || null,
       } satisfies CachedDevicePhotoRecord);
+
+      tx.objectStore(SYNC_OUTBOX_STORE).put({
+        id: photoOutboxId(deviceId),
+        entity_type: "DEVICE_PHOTO",
+        entity_id: deviceId,
+        operation: "UPSERT_PHOTO",
+        payload: {
+          contentType: blob.type || null,
+          sourceUrl,
+        },
+        status: "PENDING",
+        retryable: true,
+        created_at: now,
+        updated_at: now,
+        last_attempt_at: null,
+        attempt_count: 0,
+        last_error: null,
+      } satisfies SyncOutboxRecord);
     };
   });
 };
 
 export const deleteCachedDevicePhoto = async (deviceId: string): Promise<void> => {
   const db = await openDb();
+  const now = new Date().toISOString();
 
   await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction([DEVICES_STORE, DEVICE_PHOTOS_STORE], "readwrite");
+    const tx = db.transaction([DEVICES_STORE, DEVICE_PHOTOS_STORE, SYNC_OUTBOX_STORE], "readwrite");
     tx.onerror = () => reject(tx.error);
     tx.oncomplete = () => resolve();
 
@@ -646,8 +810,25 @@ export const deleteCachedDevicePhoto = async (deviceId: string): Promise<void> =
       devicesStore.put({
         ...device,
         device_photo_url: null,
+        photo_sync_state: "PENDING",
+        photo_sync_error: null,
+        photo_updated_at: now,
       });
       tx.objectStore(DEVICE_PHOTOS_STORE).delete(deviceId);
+      tx.objectStore(SYNC_OUTBOX_STORE).put({
+        id: photoOutboxId(deviceId),
+        entity_type: "DEVICE_PHOTO",
+        entity_id: deviceId,
+        operation: "DELETE_PHOTO",
+        payload: {},
+        status: "PENDING",
+        retryable: true,
+        created_at: now,
+        updated_at: now,
+        last_attempt_at: null,
+        attempt_count: 0,
+        last_error: null,
+      } satisfies SyncOutboxRecord);
     };
   });
 };

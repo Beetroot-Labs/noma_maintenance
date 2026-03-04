@@ -1,17 +1,20 @@
 use axum::Json;
+use axum::body::Bytes;
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::http::{HeaderValue, header};
 use axum::response::IntoResponse;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use chrono::{DateTime, Duration, Utc};
+use cloud_storage::Object;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use simple_logger::SimpleLogger;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
+use std::borrow::Cow;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -90,6 +93,7 @@ async fn main() -> anyhow::Result<()> {
     let app_state = AppState {
         client: reqwest::Client::new(),
         db_pool,
+        storage: load_storage_config()?,
         auth: (!google_client_ids.is_empty()).then_some(AuthConfig {
             google_client_ids,
             google_hosted_domain,
@@ -108,6 +112,12 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/labeling/devices/{device_id}/barcode",
             post(assign_labeling_device_barcode),
+        )
+        .route(
+            "/labeling/devices/{device_id}/photo",
+            put(upload_labeling_device_photo)
+                .get(get_labeling_device_photo)
+                .delete(delete_labeling_device_photo),
         )
         .route(
             "/labeling/buildings/{building_id}/cache",
@@ -191,6 +201,7 @@ async fn main() -> anyhow::Result<()> {
 struct AppState {
     client: reqwest::Client,
     db_pool: Option<PgPool>,
+    storage: Option<StorageConfig>,
     auth: Option<AuthConfig>,
 }
 
@@ -201,6 +212,12 @@ struct AuthConfig {
     session_cookie_name: String,
     session_duration: Duration,
     cookie_secure: bool,
+}
+
+#[derive(Clone)]
+struct StorageConfig {
+    bucket: String,
+    device_photo_prefix: String,
 }
 
 #[derive(Deserialize)]
@@ -290,6 +307,12 @@ struct BuildingCacheResponse {
 struct BarcodeAssignmentResponse {
     device_id: uuid::Uuid,
     code: String,
+}
+
+#[derive(Serialize)]
+struct DevicePhotoResponse {
+    device_id: uuid::Uuid,
+    photo_url: String,
 }
 
 #[derive(Deserialize)]
@@ -631,7 +654,10 @@ async fn get_labeling_building_cache(
             d.model,
             d.serial_number,
             d.source_device_code,
-            d.device_photo_url
+            CASE
+                WHEN d.device_photo_url IS NULL THEN NULL
+                ELSE CONCAT('/api/labeling/devices/', d.id::text, '/photo')
+            END AS device_photo_url
         FROM devices d
         JOIN site_locations sl
           ON sl.tenant_id = d.tenant_id
@@ -655,6 +681,181 @@ async fn get_labeling_building_cache(
         locations,
         devices,
     }))
+}
+
+async fn upload_labeling_device_photo(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(device_id): Path<uuid::Uuid>,
+    body: Bytes,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let storage = state
+        .storage
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("device photo storage is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+
+    if body.is_empty() {
+        return Err(ApiError::bad_request("photo body is required"));
+    }
+    if body.len() > 15 * 1024 * 1024 {
+        return Err(ApiError::bad_request("photo is too large"));
+    }
+
+    let content_type = image_content_type(
+        headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+    )?;
+
+    let object_name = device_photo_object_name(storage, user.tenant_id, device_id);
+
+    let device_exists: Option<bool> = sqlx::query_scalar(
+        r#"
+        SELECT TRUE
+        FROM devices
+        WHERE tenant_id = $1 AND id = $2
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(device_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    if device_exists.is_none() {
+        return Err(ApiError::forbidden("device not found for current tenant"));
+    }
+
+    Object::create(
+        &storage.bucket,
+        body.to_vec(),
+        &object_name,
+        content_type.as_ref(),
+    )
+    .await
+    .map_err(ApiError::internal)?;
+
+    sqlx::query(
+        r#"
+        UPDATE devices
+        SET device_photo_url = $3
+        WHERE tenant_id = $1 AND id = $2
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(device_id)
+    .bind(&object_name)
+    .execute(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(Json(DevicePhotoResponse {
+        device_id,
+        photo_url: device_photo_api_path(device_id),
+    }))
+}
+
+async fn get_labeling_device_photo(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(device_id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let storage = state
+        .storage
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("device photo storage is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+
+    let object_name = sqlx::query_scalar::<_, Option<String>>(
+        r#"
+        SELECT device_photo_url
+        FROM devices
+        WHERE tenant_id = $1 AND id = $2
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(device_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?
+    .flatten()
+    .ok_or_else(|| ApiError::forbidden("device photo not found for current tenant"))?;
+
+    let metadata = Object::read(&storage.bucket, &object_name)
+        .await
+        .map_err(ApiError::internal)?;
+    let bytes = Object::download(&storage.bucket, &object_name)
+        .await
+        .map_err(ApiError::internal)?;
+    let content_type = metadata
+        .content_type
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+
+    Ok((
+        [(header::CONTENT_TYPE, content_type)],
+        bytes,
+    ))
+}
+
+async fn delete_labeling_device_photo(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(device_id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let storage = state
+        .storage
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("device photo storage is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+
+    let object_name = sqlx::query_scalar::<_, Option<String>>(
+        r#"
+        SELECT device_photo_url
+        FROM devices
+        WHERE tenant_id = $1 AND id = $2
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(device_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let Some(object_name) = object_name.flatten() else {
+        return Ok(StatusCode::NO_CONTENT);
+    };
+
+    Object::delete(&storage.bucket, &object_name)
+        .await
+        .map_err(ApiError::internal)?;
+
+    sqlx::query(
+        r#"
+        UPDATE devices
+        SET device_photo_url = NULL
+        WHERE tenant_id = $1 AND id = $2
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(device_id)
+    .execute(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn assign_labeling_device_barcode(
@@ -983,6 +1184,87 @@ impl IntoResponse for ApiError {
         )
             .into_response()
     }
+}
+
+fn load_storage_config() -> anyhow::Result<Option<StorageConfig>> {
+    let Some(bucket) = std::env::var("GCS_BUCKET").ok().filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(None);
+    };
+
+    let has_valid_service_account_path = std::env::var("SERVICE_ACCOUNT")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(|path| std::path::Path::new(&path).is_file())
+        .unwrap_or(false);
+
+    if !has_valid_service_account_path {
+        if let Some(service_account_json) = std::env::var("GCS_SERVICE_ACCOUNT_JSON")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+        {
+            let temp_file = std::env::temp_dir().join(format!(
+                "noma-gcs-service-account-{}.json",
+                std::process::id()
+            ));
+            std::fs::write(&temp_file, service_account_json)?;
+            // Safe at startup before worker threads begin handling requests.
+            unsafe { std::env::set_var("SERVICE_ACCOUNT", &temp_file) };
+        }
+    }
+
+    let service_account_path = std::env::var("SERVICE_ACCOUNT")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "GCS_BUCKET is set but SERVICE_ACCOUNT is missing. Set SERVICE_ACCOUNT to a valid JSON key path or provide GCS_SERVICE_ACCOUNT_JSON."
+            )
+        })?;
+
+    if !std::path::Path::new(&service_account_path).is_file() {
+        anyhow::bail!(
+            "SERVICE_ACCOUNT file not found: {}. Set a valid path or provide GCS_SERVICE_ACCOUNT_JSON.",
+            service_account_path
+        );
+    }
+
+    let device_photo_prefix = std::env::var("GCS_DEVICE_PHOTO_PREFIX")
+        .unwrap_or_else(|_| "device-photos".to_string())
+        .trim_matches('/')
+        .to_string();
+
+    Ok(Some(StorageConfig {
+        bucket,
+        device_photo_prefix,
+    }))
+}
+
+fn image_content_type(header_value: Option<&str>) -> Result<Cow<'static, str>, ApiError> {
+    match header_value.map(str::trim) {
+        Some("image/jpeg") => Ok(Cow::Borrowed("image/jpeg")),
+        Some("image/png") => Ok(Cow::Borrowed("image/png")),
+        Some("image/webp") => Ok(Cow::Borrowed("image/webp")),
+        Some("image/heic") => Ok(Cow::Borrowed("image/heic")),
+        Some("image/heif") => Ok(Cow::Borrowed("image/heif")),
+        Some(other) if other.starts_with("image/") => Ok(Cow::Owned(other.to_string())),
+        _ => Err(ApiError::bad_request("unsupported photo content type")),
+    }
+}
+
+fn device_photo_object_name(
+    storage: &StorageConfig,
+    tenant_id: uuid::Uuid,
+    device_id: uuid::Uuid,
+) -> String {
+    format!(
+        "{}/tenants/{}/devices/{}/photo",
+        storage.device_photo_prefix, tenant_id, device_id
+    )
+}
+
+fn device_photo_api_path(device_id: uuid::Uuid) -> String {
+    format!("/api/labeling/devices/{device_id}/photo")
 }
 
 fn load_google_client_ids() -> Vec<String> {

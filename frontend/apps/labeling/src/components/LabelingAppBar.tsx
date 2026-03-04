@@ -1,8 +1,16 @@
-import { AccountCircleOutlined, LocationOnOutlined } from "@mui/icons-material";
-import { AppBar, Box, ButtonBase, Divider, IconButton, Menu, MenuItem, Stack, Toolbar, Typography } from "@mui/material";
+import {
+  AccountCircleOutlined,
+  CloudDoneOutlined,
+  LocationOnOutlined,
+  PriorityHighOutlined,
+  SyncOutlined,
+  SyncProblemOutlined,
+} from "@mui/icons-material";
+import { AppBar, Box, ButtonBase, Divider, IconButton, Menu, MenuItem, Stack, Toolbar, Tooltip, Typography } from "@mui/material";
 import { LogOut } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import logoWhite from "../../../main/public/Noma_logo_white_horizontal.png";
+import { getSyncStatusSummary } from "../lib/offlineCache";
 
 const accentColor = "#CAAB6A";
 
@@ -22,6 +30,30 @@ export function LabelingAppBar({
   onLogout,
 }: LabelingAppBarProps) {
   const [accountMenuAnchor, setAccountMenuAnchor] = useState<null | HTMLElement>(null);
+  const [hasRetryableSyncChanges, setHasRetryableSyncChanges] = useState(false);
+  const [hasSyncErrors, setHasSyncErrors] = useState(false);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const refreshSyncIndicator = async () => {
+      const summary = await getSyncStatusSummary();
+      if (!isCancelled) {
+        setHasRetryableSyncChanges(summary.hasRetryableChanges);
+        setHasSyncErrors(summary.hasSyncErrors);
+      }
+    };
+
+    void refreshSyncIndicator();
+    const intervalId = window.setInterval(() => {
+      void refreshSyncIndicator();
+    }, 5000);
+
+    return () => {
+      isCancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, []);
 
   const handleOpenAccountMenu = (event: React.MouseEvent<HTMLElement>) => {
     setAccountMenuAnchor(event.currentTarget);
@@ -35,6 +67,30 @@ export function LabelingAppBar({
     handleCloseAccountMenu();
     await onLogout();
   };
+
+  const syncIndicatorConfig = hasRetryableSyncChanges
+    ? hasSyncErrors
+      ? {
+          icon: <SyncProblemOutlined sx={{ fontSize: 19 }} />,
+          color: "error.light",
+          label: "Szinkronizációs hibák vannak, és maradtak függőben lévő változtatások.",
+        }
+      : {
+          icon: <SyncOutlined sx={{ fontSize: 19 }} />,
+          color: "warning.light",
+          label: "Nem mentett változások vannak, szinkronizálás szükséges.",
+        }
+    : hasSyncErrors
+      ? {
+          icon: <PriorityHighOutlined sx={{ fontSize: 19 }} />,
+          color: "error.light",
+          label: "Szinkronizációs hibák vannak. Kérjük ellenőrizd a módosításokat.",
+        }
+      : {
+          icon: <CloudDoneOutlined sx={{ fontSize: 19 }} />,
+          color: "success.light",
+          label: "Minden változás szinkronizálva.",
+        };
 
   return (
     <>
@@ -108,6 +164,26 @@ export function LabelingAppBar({
               </Box>
             </Stack>
           </ButtonBase>
+
+          <Tooltip
+            title={syncIndicatorConfig.label}
+            arrow
+          >
+            <Box
+              sx={{
+                color: syncIndicatorConfig.color,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 32,
+                height: 32,
+                flexShrink: 0,
+              }}
+              aria-label={syncIndicatorConfig.label}
+            >
+              {syncIndicatorConfig.icon}
+            </Box>
+          </Tooltip>
 
           <IconButton onClick={handleOpenAccountMenu} sx={{ color: accentColor, mr: -1, flexShrink: 0 }}>
             <AccountCircleOutlined sx={{ fontSize: 30 }} />
