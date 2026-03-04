@@ -133,8 +133,10 @@ async fn main() -> anyhow::Result<()> {
         .fallback_service(static_root_service)
         .layer(cors);
 
+    let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());
-    let addr = SocketAddr::from(([0, 0, 0, 0], port.parse::<u16>().unwrap_or(3000)));
+    let addr = SocketAddr::from_str(&format!("{host}:{port}"))
+        .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 3000)));
     log::info!("Listening on {}", addr);
     let listener = TcpListener::bind(addr).await?;
     axum::serve(

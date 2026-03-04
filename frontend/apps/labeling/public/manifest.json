@@ -1,0 +1,23 @@
+{
+  "name": "NoMa Karbantartás Címkéző",
+  "short_name": "NoMa Címkéző",
+  "description": "NoMa karbantartási címkéző alkalmazás",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#F6F6F6",
+  "theme_color": "#02322D",
+  "icons": [
+    {
+      "src": "app-images/android/android-launchericon-192-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "app-images/android/android-launchericon-512-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

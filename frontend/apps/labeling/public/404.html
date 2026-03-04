@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="hu">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NoMa Karbantartás</title>
+    <script>
+      (function () {
+        var base = "/noma_maintenance/";
+        var path = window.location.pathname;
+        var search = window.location.search;
+        var hash = window.location.hash;
+        var target = base + "?p=" + encodeURIComponent(path + search + hash);
+        window.location.replace(target);
+      })();
+    </script>
+  </head>
+  <body></body>
+</html>
