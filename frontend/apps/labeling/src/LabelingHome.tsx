@@ -24,6 +24,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { getDeviceKindLabel, useAuth } from "@noma/shared";
 import { useNavigate } from "react-router-dom";
@@ -344,6 +345,30 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
     }),
   );
 
+  const renderBarcodeCell = (device: CachedDeviceListItem) => {
+    const hasBarcodeError = device.codeSyncState === "FAILED" && Boolean(device.code);
+
+    return (
+      <Box
+        sx={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 0.75,
+          color: hasBarcodeError ? "error.main" : "text.primary",
+        }}
+      >
+        <Typography
+          component="span"
+          variant="body2"
+          sx={{ color: "inherit", fontWeight: hasBarcodeError ? 700 : 400 }}
+        >
+          {device.code ?? "-"}
+        </Typography>
+        {hasBarcodeError ? <TriangleAlert size={16} aria-label="Vonalkód szinkronhiba" /> : null}
+      </Box>
+    );
+  };
+
   return (
     <Box
       sx={{
@@ -546,7 +571,7 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
                           onClick={() => navigate(`/devices/${device.id}`)}
                           sx={{ cursor: "pointer" }}
                         >
-                          <TableCell>{device.code ?? "-"}</TableCell>
+                          <TableCell>{renderBarcodeCell(device)}</TableCell>
                           <TableCell>{device.floor ?? "-"}</TableCell>
                           <TableCell>{device.wing ?? "-"}</TableCell>
                           <TableCell>{device.room ?? "-"}</TableCell>

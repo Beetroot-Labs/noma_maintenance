@@ -1,10 +1,13 @@
 const DB_NAME = "noma-labeling";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const BUILDINGS_STORE = "buildings";
 const LOCATIONS_STORE = "locations";
 const DEVICES_STORE = "devices";
 const DEVICE_PHOTOS_STORE = "device_photos";
+const SYNC_OUTBOX_STORE = "sync_outbox";
 const SETTINGS_STORE = "settings";
+
+export type DeviceCodeSyncState = "SYNCED" | "PENDING" | "FAILED";
 
 export type CachedBuilding = {
   id: string;
@@ -25,6 +28,9 @@ export type CachedDevice = {
   id: string;
   location_id: string | null;
   code?: string | null;
+  code_sync_state?: DeviceCodeSyncState;
+  code_sync_error?: string | null;
+  code_updated_at?: string | null;
   kind: string;
   additional_info: string | null;
   brand: string | null;
@@ -43,6 +49,8 @@ export type BuildingCachePayload = {
 export type CachedDeviceListItem = {
   id: string;
   code: string | null;
+  codeSyncState: DeviceCodeSyncState;
+  codeSyncError: string | null;
   floor: string | null;
   wing: string | null;
   room: string | null;
@@ -54,10 +62,29 @@ export type CachedDeviceListItem = {
 export type CachedDeviceDetails = CachedDeviceListItem & {
   locationDescription: string | null;
   additionalInfo: string | null;
+  codeSyncState: DeviceCodeSyncState;
+  codeSyncError: string | null;
   serialNumber: string | null;
   sourceDeviceCode: string | null;
   devicePhotoUrl: string | null;
   cachedPhotoBlob: Blob | null;
+};
+
+type SyncOutboxRecord = {
+  id: string;
+  entity_type: "DEVICE_BARCODE";
+  entity_id: string;
+  operation: "ASSIGN_BARCODE";
+  payload: {
+    barcode: string;
+  };
+  status: "PENDING" | "IN_PROGRESS" | "FAILED";
+  retryable: boolean;
+  created_at: string;
+  updated_at: string;
+  last_attempt_at: string | null;
+  attempt_count: number;
+  last_error: string | null;
 };
 
 type CachedDevicePhotoRecord = {
@@ -83,6 +110,11 @@ const openDb = (): Promise<IDBDatabase> =>
       }
       if (!db.objectStoreNames.contains(DEVICE_PHOTOS_STORE)) {
         db.createObjectStore(DEVICE_PHOTOS_STORE, { keyPath: "deviceId" });
+      }
+      if (!db.objectStoreNames.contains(SYNC_OUTBOX_STORE)) {
+        const outboxStore = db.createObjectStore(SYNC_OUTBOX_STORE, { keyPath: "id" });
+        outboxStore.createIndex("status", "status", { unique: false });
+        outboxStore.createIndex("updated_at", "updated_at", { unique: false });
       }
       if (!db.objectStoreNames.contains(SETTINGS_STORE)) {
         db.createObjectStore(SETTINGS_STORE, { keyPath: "key" });
@@ -144,6 +176,21 @@ const fetchPhotoBlob = async (url: string): Promise<Blob> => {
   return response.blob();
 };
 
+const barcodeOutboxId = (deviceId: string) => `DEVICE_BARCODE:${deviceId}`;
+
+const readErrorMessage = async (response: Response) => {
+  try {
+    const payload = (await response.json()) as { error?: string };
+    if (payload.error) {
+      return payload.error;
+    }
+  } catch {
+    // Ignore invalid error payloads.
+  }
+
+  return "Sikertelen szinkronizáció.";
+};
+
 export const hasOfflineCache = async (): Promise<boolean> => {
   const [buildingCount, deviceCount] = await Promise.all([
     countStore(BUILDINGS_STORE),
@@ -157,10 +204,16 @@ export const cacheBuildingData = async (
   selectedBuildingId: string,
 ): Promise<void> => {
   const existingDevices = await getAllRecords<CachedDevice>(DEVICES_STORE);
-  const existingCodesByDeviceId = new Map(
-    existingDevices
-      .filter((device) => device.code)
-      .map((device) => [device.id, device.code ?? null]),
+  const pendingBarcodeOutbox = await getAllRecords<SyncOutboxRecord>(SYNC_OUTBOX_STORE);
+  const existingDeviceById = new Map(existingDevices.map((device) => [device.id, device]));
+  const pendingBarcodeDeviceIds = new Set(
+    pendingBarcodeOutbox
+      .filter(
+        (item) =>
+          item.entity_type === "DEVICE_BARCODE" &&
+          (item.status === "PENDING" || item.status === "IN_PROGRESS" || item.retryable),
+      )
+      .map((item) => item.entity_id),
   );
   const photoRecords = (
     await Promise.all(
@@ -185,7 +238,14 @@ export const cacheBuildingData = async (
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(
-      [BUILDINGS_STORE, LOCATIONS_STORE, DEVICES_STORE, DEVICE_PHOTOS_STORE, SETTINGS_STORE],
+      [
+        BUILDINGS_STORE,
+        LOCATIONS_STORE,
+        DEVICES_STORE,
+        DEVICE_PHOTOS_STORE,
+        SYNC_OUTBOX_STORE,
+        SETTINGS_STORE,
+      ],
       "readwrite",
     );
 
@@ -202,9 +262,25 @@ export const cacheBuildingData = async (
       tx.objectStore(LOCATIONS_STORE).put(location);
     });
     payload.devices.forEach((device) => {
+      const existingDevice = existingDeviceById.get(device.id);
+      const preserveLocalBarcode = pendingBarcodeDeviceIds.has(device.id);
+      const nextCode = preserveLocalBarcode ? existingDevice?.code ?? null : device.code ?? null;
+      const nextSyncState = preserveLocalBarcode
+        ? existingDevice?.code_sync_state ?? "PENDING"
+        : "SYNCED";
+      const nextSyncError = preserveLocalBarcode ? existingDevice?.code_sync_error ?? null : null;
+      const nextCodeUpdatedAt = preserveLocalBarcode
+        ? existingDevice?.code_updated_at ?? null
+        : existingDevice?.code !== device.code
+          ? new Date().toISOString()
+          : existingDevice?.code_updated_at ?? null;
+
       tx.objectStore(DEVICES_STORE).put({
         ...device,
-        code: existingCodesByDeviceId.get(device.id) ?? null,
+        code: nextCode,
+        code_sync_state: nextSyncState,
+        code_sync_error: nextSyncError,
+        code_updated_at: nextCodeUpdatedAt,
       } satisfies CachedDevice);
     });
     photoRecords.forEach((record) => {
@@ -244,6 +320,8 @@ export const getCachedDeviceListItems = async (): Promise<CachedDeviceListItem[]
     return {
       id: device.id,
       code: device.code ?? null,
+      codeSyncState: device.code_sync_state ?? "SYNCED",
+      codeSyncError: device.code_sync_error ?? null,
       floor: location?.floor ?? null,
       wing: location?.wing ?? null,
       room: location?.room ?? null,
@@ -282,6 +360,8 @@ export const getCachedDeviceDetails = async (
     model: device.model,
     locationDescription: location?.location_description ?? null,
     additionalInfo: device.additional_info ?? null,
+    codeSyncState: device.code_sync_state ?? "SYNCED",
+    codeSyncError: device.code_sync_error ?? null,
     serialNumber: device.serial_number ?? null,
     sourceDeviceCode: device.source_device_code ?? null,
     devicePhotoUrl: device.device_photo_url ?? null,
@@ -292,18 +372,29 @@ export const getCachedDeviceDetails = async (
 export const assignCachedDeviceBarcode = async (deviceId: string, code: string): Promise<void> => {
   const db = await openDb();
   const normalizedCode = code.trim();
+  const now = new Date().toISOString();
 
   if (!normalizedCode) {
     throw new Error("barcode is empty");
   }
 
+  const existingDevices = await getAllRecords<CachedDevice>(DEVICES_STORE);
+  const conflictingDevice = existingDevices.find(
+    (device) => device.id !== deviceId && device.code?.trim() === normalizedCode,
+  );
+
+  if (conflictingDevice) {
+    throw new Error("Ez a vonalkód már hozzá van rendelve egy másik eszközhöz.");
+  }
+
   await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(DEVICES_STORE, "readwrite");
+    const tx = db.transaction([DEVICES_STORE, SYNC_OUTBOX_STORE], "readwrite");
     tx.onerror = () => reject(tx.error);
     tx.oncomplete = () => resolve();
 
-    const store = tx.objectStore(DEVICES_STORE);
-    const request = store.get(deviceId);
+    const devicesStore = tx.objectStore(DEVICES_STORE);
+    const outboxStore = tx.objectStore(SYNC_OUTBOX_STORE);
+    const request = devicesStore.get(deviceId);
 
     request.onerror = () => reject(request.error);
     request.onsuccess = () => {
@@ -313,12 +404,189 @@ export const assignCachedDeviceBarcode = async (deviceId: string, code: string):
         return;
       }
 
-      store.put({
+      devicesStore.put({
         ...device,
         code: normalizedCode,
+        code_sync_state: "PENDING",
+        code_sync_error: null,
+        code_updated_at: now,
       } satisfies CachedDevice);
+
+      outboxStore.put({
+        id: barcodeOutboxId(deviceId),
+        entity_type: "DEVICE_BARCODE",
+        entity_id: deviceId,
+        operation: "ASSIGN_BARCODE",
+        payload: { barcode: normalizedCode },
+        status: "PENDING",
+        retryable: true,
+        created_at: now,
+        updated_at: now,
+        last_attempt_at: null,
+        attempt_count: 0,
+        last_error: null,
+      } satisfies SyncOutboxRecord);
     };
   });
+};
+
+export const syncPendingBarcodeAssignments = async (): Promise<void> => {
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    return;
+  }
+
+  const db = await openDb();
+  const items = await getAllRecords<SyncOutboxRecord>(SYNC_OUTBOX_STORE);
+  const pendingItems = items.filter(
+    (item) =>
+      item.entity_type === "DEVICE_BARCODE" &&
+      (item.status === "PENDING" || item.status === "IN_PROGRESS" || (item.status === "FAILED" && item.retryable)),
+  );
+
+  for (const item of pendingItems) {
+    const attemptAt = new Date().toISOString();
+
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction([DEVICES_STORE, SYNC_OUTBOX_STORE], "readwrite");
+      tx.onerror = () => reject(tx.error);
+      tx.oncomplete = () => resolve();
+
+      const devicesStore = tx.objectStore(DEVICES_STORE);
+      const outboxStore = tx.objectStore(SYNC_OUTBOX_STORE);
+
+      const deviceRequest = devicesStore.get(item.entity_id);
+      deviceRequest.onerror = () => reject(deviceRequest.error);
+      deviceRequest.onsuccess = () => {
+        const device = deviceRequest.result as CachedDevice | undefined;
+        if (!device) {
+          outboxStore.delete(item.id);
+          return;
+        }
+
+        devicesStore.put({
+          ...device,
+          code_sync_state: "PENDING",
+          code_sync_error: null,
+        } satisfies CachedDevice);
+
+        outboxStore.put({
+          ...item,
+          status: "IN_PROGRESS",
+          updated_at: attemptAt,
+          last_attempt_at: attemptAt,
+          attempt_count: item.attempt_count + 1,
+          last_error: null,
+        } satisfies SyncOutboxRecord);
+      };
+    });
+
+    try {
+      const response = await fetch(`/api/labeling/devices/${item.entity_id}/barcode`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({ code: item.payload.barcode }),
+      });
+
+      if (!response.ok) {
+        const errorMessage = await readErrorMessage(response);
+        const retryable = response.status >= 500 || response.status === 429;
+
+        await new Promise<void>((resolve, reject) => {
+          const tx = db.transaction([DEVICES_STORE, SYNC_OUTBOX_STORE], "readwrite");
+          tx.onerror = () => reject(tx.error);
+          tx.oncomplete = () => resolve();
+
+          const devicesStore = tx.objectStore(DEVICES_STORE);
+          const outboxStore = tx.objectStore(SYNC_OUTBOX_STORE);
+          const deviceRequest = devicesStore.get(item.entity_id);
+
+          deviceRequest.onerror = () => reject(deviceRequest.error);
+          deviceRequest.onsuccess = () => {
+            const device = deviceRequest.result as CachedDevice | undefined;
+            if (device) {
+              devicesStore.put({
+                ...device,
+                code_sync_state: "FAILED",
+                code_sync_error: errorMessage,
+              } satisfies CachedDevice);
+            }
+
+            outboxStore.put({
+              ...item,
+              status: "FAILED",
+              retryable,
+              updated_at: new Date().toISOString(),
+              last_attempt_at: attemptAt,
+              attempt_count: item.attempt_count + 1,
+              last_error: errorMessage,
+            } satisfies SyncOutboxRecord);
+          };
+        });
+
+        continue;
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction([DEVICES_STORE, SYNC_OUTBOX_STORE], "readwrite");
+        tx.onerror = () => reject(tx.error);
+        tx.oncomplete = () => resolve();
+
+        const devicesStore = tx.objectStore(DEVICES_STORE);
+        const outboxStore = tx.objectStore(SYNC_OUTBOX_STORE);
+        const deviceRequest = devicesStore.get(item.entity_id);
+
+        deviceRequest.onerror = () => reject(deviceRequest.error);
+        deviceRequest.onsuccess = () => {
+          const device = deviceRequest.result as CachedDevice | undefined;
+          if (device) {
+            devicesStore.put({
+              ...device,
+              code: item.payload.barcode,
+              code_sync_state: "SYNCED",
+              code_sync_error: null,
+            } satisfies CachedDevice);
+          }
+
+          outboxStore.delete(item.id);
+        };
+      });
+    } catch {
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction([DEVICES_STORE, SYNC_OUTBOX_STORE], "readwrite");
+        tx.onerror = () => reject(tx.error);
+        tx.oncomplete = () => resolve();
+
+        const devicesStore = tx.objectStore(DEVICES_STORE);
+        const outboxStore = tx.objectStore(SYNC_OUTBOX_STORE);
+        const deviceRequest = devicesStore.get(item.entity_id);
+
+        deviceRequest.onerror = () => reject(deviceRequest.error);
+        deviceRequest.onsuccess = () => {
+          const device = deviceRequest.result as CachedDevice | undefined;
+          if (device) {
+            devicesStore.put({
+              ...device,
+              code_sync_state: "FAILED",
+              code_sync_error: "A szerver jelenleg nem érhető el.",
+            } satisfies CachedDevice);
+          }
+
+          outboxStore.put({
+            ...item,
+            status: "FAILED",
+            retryable: true,
+            updated_at: new Date().toISOString(),
+            last_attempt_at: attemptAt,
+            attempt_count: item.attempt_count + 1,
+            last_error: "A szerver jelenleg nem érhető el.",
+          } satisfies SyncOutboxRecord);
+        };
+      });
+    }
+  }
 };
 
 export const replaceCachedDevicePhoto = async (deviceId: string): Promise<void> => {

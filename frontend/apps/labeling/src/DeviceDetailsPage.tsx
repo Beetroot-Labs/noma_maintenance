@@ -25,7 +25,7 @@ import {
 } from "@mui/material";
 import { BarcodeFormat, DecodeHintType } from "@zxing/library";
 import { BrowserMultiFormatReader } from "@zxing/browser";
-import { Barcode, Camera, ImagePlus, ScanBarcode, Trash2 } from "lucide-react";
+import { Barcode, Camera, ImagePlus, ScanBarcode, Trash2, TriangleAlert } from "lucide-react";
 import { getDeviceKindLabel, useAuth, validateNomaBarcode } from "@noma/shared";
 import { ChangeEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -38,6 +38,7 @@ import {
   getCachedDeviceDetails,
   getSelectedCachedBuilding,
   replaceCachedDevicePhoto,
+  syncPendingBarcodeAssignments,
 } from "./lib/offlineCache";
 import { appColors } from "./theme";
 
@@ -49,9 +50,12 @@ type DetailRowProps = {
   icon: ReactNode;
   label: string;
   value: string;
+  valueColor?: string;
+  valueAdornment?: ReactNode;
+  helperText?: string | null;
 };
 
-function DetailRow({ icon, label, value }: DetailRowProps) {
+function DetailRow({ icon, label, value, valueColor, valueAdornment, helperText }: DetailRowProps) {
   return (
     <Stack direction="row" spacing={1.5} alignItems="flex-start">
       <Box sx={{ color: "secondary.main", mt: "2px" }}>{icon}</Box>
@@ -59,7 +63,15 @@ function DetailRow({ icon, label, value }: DetailRowProps) {
         <Typography variant="caption" color="text.secondary">
           {label}
         </Typography>
-        <Typography>{value}</Typography>
+        <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0 }}>
+          <Typography sx={{ color: valueColor ?? "text.primary" }}>{value}</Typography>
+          {valueAdornment}
+        </Stack>
+        {helperText ? (
+          <Typography variant="caption" color="error.main">
+            {helperText}
+          </Typography>
+        ) : null}
       </Box>
     </Stack>
   );
@@ -192,10 +204,15 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
 
           try {
             await assignCachedDeviceBarcode(id, identifier);
+            await syncPendingBarcodeAssignments();
             await loadDeviceDetails(id);
             setBarcodeDialogOpen(false);
-          } catch {
-            setBarcodeCameraError("Nem sikerült elmenteni a beolvasott vonalkódot.");
+          } catch (error) {
+            setBarcodeCameraError(
+              error instanceof Error
+                ? error.message
+                : "Nem sikerült elmenteni a beolvasott vonalkódot.",
+            );
           } finally {
             if (barcodeDialogOpen) {
               setIsAssigningBarcode(false);
@@ -277,6 +294,9 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
   if (!user) {
     return <LoginPage googleClientId={googleClientId} />;
   }
+
+  const barcodeHasSyncError = device?.codeSyncState === "FAILED" && Boolean(device.code);
+  const shouldShowBarcodeFab = device ? device.code == null || device.codeSyncState === "FAILED" : false;
 
   return (
     <Box
@@ -431,6 +451,15 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
                         icon={<Barcode fontSize="small" />}
                         label="Kód"
                         value={device.code ?? "Nincs hozzárendelt kód"}
+                        valueColor={barcodeHasSyncError ? "error.main" : undefined}
+                        valueAdornment={
+                          barcodeHasSyncError ? (
+                            <Box sx={{ color: "error.main", display: "inline-flex" }}>
+                              <TriangleAlert size={16} aria-label="Vonalkód szinkronhiba" />
+                            </Box>
+                          ) : null
+                        }
+                        helperText={barcodeHasSyncError ? device.codeSyncError : null}
                       />
                       <DetailRow
                         icon={<CategoryOutlined fontSize="small" />}
@@ -543,7 +572,7 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
         </Stack>
       </Box>
 
-      {device && (device.code == null || !cachedPhotoUrl) && (
+      {device && (shouldShowBarcodeFab || !cachedPhotoUrl) && (
         <Stack
           spacing={1.25}
           sx={{
@@ -553,7 +582,7 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
             zIndex: 1200,
           }}
         >
-          {device.code == null && (
+          {shouldShowBarcodeFab && (
             <Fab
               aria-label="Vonalkód hozzárendelése"
               onClick={handleAssignBarcode}

@@ -106,6 +106,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/auth/logout", post(logout))
         .route("/labeling/buildings", get(list_labeling_buildings))
         .route(
+            "/labeling/devices/{device_id}/barcode",
+            post(assign_labeling_device_barcode),
+        )
+        .route(
             "/labeling/buildings/{building_id}/cache",
             get(get_labeling_building_cache),
         )
@@ -204,6 +208,11 @@ struct GoogleLoginRequest {
     credential: String,
 }
 
+#[derive(Deserialize)]
+struct AssignBarcodeRequest {
+    code: String,
+}
+
 #[derive(Serialize)]
 struct UserResponse {
     id: uuid::Uuid,
@@ -260,6 +269,7 @@ struct CachedLocation {
 struct CachedDevice {
     id: uuid::Uuid,
     location_id: Option<uuid::Uuid>,
+    code: Option<String>,
     kind: String,
     additional_info: Option<String>,
     brand: Option<String>,
@@ -274,6 +284,12 @@ struct BuildingCacheResponse {
     building: BuildingSummary,
     locations: Vec<CachedLocation>,
     devices: Vec<CachedDevice>,
+}
+
+#[derive(Serialize)]
+struct BarcodeAssignmentResponse {
+    device_id: uuid::Uuid,
+    code: String,
 }
 
 #[derive(Deserialize)]
@@ -608,6 +624,7 @@ async fn get_labeling_building_cache(
         SELECT
             d.id,
             d.location_id,
+            b.code,
             d.kind::text AS kind,
             d.additional_info,
             d.brand,
@@ -619,6 +636,10 @@ async fn get_labeling_building_cache(
         JOIN site_locations sl
           ON sl.tenant_id = d.tenant_id
          AND sl.id = d.location_id
+        LEFT JOIN barcodes b
+          ON b.tenant_id = d.tenant_id
+         AND b.device_id = d.id
+         AND b.deactivated_at IS NULL
         WHERE d.tenant_id = $1 AND sl.building_id = $2
         ORDER BY d.kind, d.brand NULLS FIRST, d.model NULLS FIRST, d.created_at
         "#,
@@ -633,6 +654,107 @@ async fn get_labeling_building_cache(
         building,
         locations,
         devices,
+    }))
+}
+
+async fn assign_labeling_device_barcode(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(device_id): Path<uuid::Uuid>,
+    Json(payload): Json<AssignBarcodeRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+
+    let code = payload.code.trim();
+    if code.is_empty() {
+        return Err(ApiError::bad_request("barcode is required"));
+    }
+
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+
+    let device_exists: Option<bool> = sqlx::query_scalar(
+        r#"
+        SELECT TRUE
+        FROM devices
+        WHERE tenant_id = $1 AND id = $2
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(device_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    if device_exists.is_none() {
+        return Err(ApiError::forbidden("device not found for current tenant"));
+    }
+
+    let existing_code_owner: Option<Option<uuid::Uuid>> = sqlx::query_scalar(
+        r#"
+        SELECT device_id
+        FROM barcodes
+        WHERE tenant_id = $1
+          AND code = $2
+          AND deactivated_at IS NULL
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(code)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    if let Some(Some(existing_device_id)) = existing_code_owner {
+        if existing_device_id != device_id {
+            return Err(ApiError::conflict(
+                "barcode is already assigned to another device",
+            ));
+        }
+    }
+
+    sqlx::query(
+        r#"
+        UPDATE barcodes
+        SET deactivated_at = NOW()
+        WHERE tenant_id = $1
+          AND device_id = $2
+          AND deactivated_at IS NULL
+          AND code <> $3
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(device_id)
+    .bind(code)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO barcodes (tenant_id, code, device_id, deactivated_at, created_by)
+        VALUES ($1, $2, $3, NULL, $4)
+        ON CONFLICT (tenant_id, code) DO UPDATE
+        SET device_id = EXCLUDED.device_id,
+            deactivated_at = NULL
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(code)
+    .bind(device_id)
+    .bind(user.id)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    tx.commit().await.map_err(ApiError::internal)?;
+
+    Ok(Json(BarcodeAssignmentResponse {
+        device_id,
+        code: code.to_string(),
     }))
 }
 
@@ -807,6 +929,13 @@ struct ApiError {
 }
 
 impl ApiError {
+    fn bad_request(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message: message.into(),
+        }
+    }
+
     fn unauthorized(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::UNAUTHORIZED,
@@ -817,6 +946,13 @@ impl ApiError {
     fn forbidden(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::FORBIDDEN,
+            message: message.into(),
+        }
+    }
+
+    fn conflict(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
             message: message.into(),
         }
     }
