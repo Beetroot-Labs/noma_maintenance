@@ -10,6 +10,7 @@ import {
   Business,
 } from "@mui/icons-material";
 import {
+  Alert,
   Box,
   Button,
   CircularProgress,
@@ -18,13 +19,14 @@ import {
   Fab,
   IconButton,
   Paper,
+  Snackbar,
   Stack,
   Typography,
 } from "@mui/material";
 import { BarcodeFormat, DecodeHintType } from "@zxing/library";
 import { BrowserMultiFormatReader } from "@zxing/browser";
 import { Barcode, Camera, ImagePlus, ScanBarcode, Trash2 } from "lucide-react";
-import { getDeviceKindLabel, useAuth } from "@noma/shared";
+import { getDeviceKindLabel, useAuth, validateNomaBarcode } from "@noma/shared";
 import { ChangeEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import LoginPage from "./LoginPage";
@@ -175,11 +177,21 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
             return;
           }
 
+          const validation = validateNomaBarcode(scannedCode);
+          if (validation.error) {
+            setBarcodeCameraError(validation.error);
+            return;
+          }
+          const identifier = validation.identifier;
+          if (!identifier) {
+            return;
+          }
+
           stopBarcodeScanner();
           setIsAssigningBarcode(true);
 
           try {
-            await assignCachedDeviceBarcode(id, scannedCode);
+            await assignCachedDeviceBarcode(id, identifier);
             await loadDeviceDetails(id);
             setBarcodeDialogOpen(false);
           } catch {
@@ -590,7 +602,7 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
             <Box>
               <Typography variant="h2">Vonalkód hozzárendelése</Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                Irányítsd a kamerát a CODE 128 vonalkódra.
+                Irányítsd a kamerát a CODE 128 NoMa vonalkódra.
               </Typography>
             </Box>
 
@@ -616,12 +628,6 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
               />
             </Box>
 
-            {barcodeCameraError && (
-              <Typography variant="body2" color="error">
-                {barcodeCameraError}
-              </Typography>
-            )}
-
             {isAssigningBarcode && !barcodeCameraError && (
               <Box sx={{ display: "flex", alignItems: "center", gap: 1.25 }}>
                 <CircularProgress size={18} color="secondary" />
@@ -637,6 +643,27 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
           </Stack>
         </Box>
       </Dialog>
+
+      <Snackbar
+        open={Boolean(barcodeCameraError)}
+        autoHideDuration={5000}
+        onClose={(_, reason) => {
+          if (reason === "clickaway") {
+            return;
+          }
+          setBarcodeCameraError(null);
+        }}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert
+          onClose={() => setBarcodeCameraError(null)}
+          severity="error"
+          variant="filled"
+          sx={{ width: "100%" }}
+        >
+          {barcodeCameraError}
+        </Alert>
+      </Snackbar>
 
       <Dialog
         open={photoDialogOpen}
