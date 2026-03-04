@@ -11,6 +11,7 @@ import { theme } from "./theme";
 
 export default function App() {
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  const basename = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   return (
     <ThemeProvider theme={theme}>
@@ -22,7 +23,7 @@ export default function App() {
         }}
       >
         <AuthProvider defaultRole="technician">
-          <BrowserRouter>
+          <BrowserRouter basename={basename}>
             <Routes>
               <Route path="/" element={<LabelingHome googleClientId={googleClientId} />} />
               <Route

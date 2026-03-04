@@ -37,10 +37,19 @@ async fn main() -> anyhow::Result<()> {
 
     let static_dir =
         std::env::var("STATIC_DIR").unwrap_or_else(|_| "../frontend/apps/main/dist".to_string());
+    let labeling_static_dir = std::env::var("LABELING_STATIC_DIR")
+        .unwrap_or_else(|_| "../frontend/apps/labeling/dist".to_string());
     let static_root = PathBuf::from(&static_dir);
+    let labeling_static_root = PathBuf::from(&labeling_static_dir);
     let assets_root = static_root.join("assets");
     let index_file = static_root.join("index.html");
-    log::info!("Serving frontend from {}", static_root.display());
+    let labeling_assets_root = labeling_static_root.join("assets");
+    let labeling_index_file = labeling_static_root.join("index.html");
+    log::info!("Serving main frontend from {}", static_root.display());
+    log::info!(
+        "Serving labeling frontend from {} at /labeling-app",
+        labeling_static_root.display()
+    );
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -127,8 +136,35 @@ async fn main() -> anyhow::Result<()> {
                 .fallback(index_service),
         );
 
+    let labeling_assets_service = ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
+        ))
+        .service(ServeDir::new(labeling_assets_root).append_index_html_on_directories(false));
+
+    let labeling_index_service = ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-cache, no-store, must-revalidate"),
+        ))
+        .service(ServeFile::new(labeling_index_file.clone()));
+
+    let labeling_root_service = ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-cache, no-store, must-revalidate"),
+        ))
+        .service(
+            ServeDir::new(labeling_static_root)
+                .append_index_html_on_directories(false)
+                .fallback(labeling_index_service),
+        );
+
     let app = Router::new()
         .nest("/api", api)
+        .nest_service("/labeling-app/assets", labeling_assets_service)
+        .nest_service("/labeling-app", labeling_root_service)
         .nest_service("/assets", assets_service)
         .fallback_service(static_root_service)
         .layer(cors);

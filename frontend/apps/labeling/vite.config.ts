@@ -31,7 +31,7 @@ export default defineConfig(({ mode }) => {
     ...loadEnv(mode, process.cwd(), ""),
   };
   const backendUrl = env.VITE_BACKEND_URL || env.BACKEND_URL || "http://127.0.0.1:3000";
-  const base = env.VITE_APP_BASE || "/";
+  const base = env.VITE_APP_BASE || "/labeling-app/";
   const googleClientId =
     env.VITE_GOOGLE_CLIENT_ID || env.LABELING_GOOGLE_CLIENT_ID || env.GOOGLE_CLIENT_ID || "";
 
