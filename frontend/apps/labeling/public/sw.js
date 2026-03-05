@@ -37,11 +37,31 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(fetch(event.request));
     return;
   }
+  const isNavigationRequest =
+    event.request.mode === "navigate" || event.request.destination === "document";
 
   event.respondWith(
     (async () => {
+      if (isNavigationRequest) {
+        try {
+          const response = await fetch(event.request);
+          if (response.ok) {
+            const cache = await caches.open(CACHE_NAME);
+            cache.put(event.request, response.clone());
+          }
+          return response;
+        } catch {
+          const cachedNavigation = await caches.match(event.request);
+          if (cachedNavigation) return cachedNavigation;
+          const cachedIndex = await caches.match("./index.html");
+          return cachedIndex ?? Response.error();
+        }
+      }
+
       const cached = await caches.match(event.request);
-      if (cached) return cached;
+      if (cached) {
+        return cached;
+      }
 
       try {
         const response = await fetch(event.request);

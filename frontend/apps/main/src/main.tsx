@@ -4,11 +4,25 @@ import "./index.css";
 
 createRoot(document.getElementById("root")!).render(<App />);
 
-if ("serviceWorker" in navigator) {
+if (import.meta.env.DEV && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.getRegistrations().then((registrations) => {
+      registrations.forEach((registration) => {
+        registration.unregister();
+      });
+    });
+  });
+}
+
+if (!import.meta.env.DEV && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker
-      .register(`${import.meta.env.BASE_URL}sw.js`)
+      .register(`${import.meta.env.BASE_URL}sw.js`, { updateViaCache: "none" })
       .then((registration) => {
+        registration.update().catch(() => {
+          // Ignore update check failures.
+        });
+
         const promptUpdate = (reg: ServiceWorkerRegistration) => {
           if (!reg.waiting) return;
           const shouldUpdate = window.confirm(

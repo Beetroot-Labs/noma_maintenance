@@ -10,4 +10,5 @@ export type { NomaBarcodeValidationResult } from "./barcodes";
 export { deviceKindLabels, getDeviceKindLabel } from "./deviceKinds";
 export type { DeviceKind } from "./deviceKinds";
 export { GoogleSignInButton } from "./googleIdentity";
+export { GoogleLoginScreen } from "./googleLoginScreen";
 export { appColors, theme } from "./theme";

@@ -1,4 +1,4 @@
-import { CssBaseline, GlobalStyles, ThemeProvider } from "@mui/material";
+import { Box, CircularProgress, CssBaseline, GlobalStyles, ThemeProvider } from "@mui/material";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from "react-router-dom";
 import { NotificationProvider } from "@/components/notifications/NotificationProvider";
@@ -18,21 +18,37 @@ const queryClient = new QueryClient();
 
 const RequireDemoUser = () => {
   const { user, isHydrated } = useDemoUser();
-  const location = useLocation();
   if (!isHydrated) {
-    return null;
+    return (
+      <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+        <CircularProgress color="secondary" />
+      </Box>
+    );
   }
   if (!user) {
     return <Navigate to="/login" replace />;
   }
-  if (user.role === "partner") {
-    const isDevicesRoute =
-      location.pathname === "/devices" || location.pathname.startsWith("/devices/");
-    if (!isDevicesRoute) {
-      return <Navigate to="/devices" replace />;
-    }
-  }
   return <Outlet />;
+};
+
+const RedirectAuthenticatedUser = () => {
+  const { user, isHydrated } = useDemoUser();
+  const location = useLocation();
+
+  if (!isHydrated) {
+    return (
+      <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+        <CircularProgress color="secondary" />
+      </Box>
+    );
+  }
+
+  if (user) {
+    const nextPath = location.state?.from?.pathname ?? "/";
+    return <Navigate to={nextPath} replace />;
+  }
+
+  return <LoginPage />;
 };
 
 const App = () => (
@@ -75,7 +91,7 @@ const App = () => (
         <DemoUserProvider>
           <MaintenanceProvider>
             <Routes>
-              <Route path="/login" element={<LoginPage />} />
+              <Route path="/login" element={<RedirectAuthenticatedUser />} />
               <Route element={<RequireDemoUser />}>
                 <Route path="/" element={<OverviewPage />} />
                 <Route path="/scan" element={<ScanPage />} />

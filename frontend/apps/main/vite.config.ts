@@ -34,7 +34,7 @@ export default defineConfig(({ mode }) => {
   const backendUrl = env.VITE_BACKEND_URL || env.BACKEND_URL || "http://127.0.0.1:3000";
   const base = env.VITE_APP_BASE || "/";
   const googleClientId =
-    env.VITE_GOOGLE_CLIENT_ID || env.MAIN_GOOGLE_CLIENT_ID || "";
+    env.VITE_GOOGLE_CLIENT_ID || env.MAIN_GOOGLE_CLIENT_ID || env.GOOGLE_CLIENT_ID || "";
 
   return {
     base,
