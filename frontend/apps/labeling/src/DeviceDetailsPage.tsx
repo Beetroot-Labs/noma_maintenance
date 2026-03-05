@@ -40,7 +40,6 @@ import {
   getCachedDeviceDetails,
   getSelectedCachedBuilding,
   replaceCachedDevicePhoto,
-  syncPendingBarcodeAssignments,
 } from "./lib/offlineCache";
 import { appColors } from "./theme";
 
@@ -225,7 +224,6 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
 
           try {
             await assignCachedDeviceBarcode(id, identifier);
-            await syncPendingBarcodeAssignments();
             await loadDeviceDetails(id);
             setBarcodeDialogOpen(false);
           } catch (error) {
@@ -272,7 +270,6 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
 
     try {
       await deleteCachedDevicePhoto(id);
-      await syncPendingBarcodeAssignments();
       await loadDeviceDetails(id);
     } finally {
       setIsUpdatingPhoto(false);
@@ -299,7 +296,6 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
 
     try {
       await replaceCachedDevicePhoto(id, file);
-      await syncPendingBarcodeAssignments();
       await loadDeviceDetails(id);
     } finally {
       setIsUpdatingPhoto(false);

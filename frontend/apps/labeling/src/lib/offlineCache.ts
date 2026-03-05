@@ -1,5 +1,13 @@
+import {
+  createSyncRunner,
+  isRetryableHttpStatus,
+  summarizeOutboxItems,
+  type OfflineOutboxItem,
+  type OfflineSyncStatusSummary,
+} from "@noma/shared";
+
 const DB_NAME = "noma-labeling";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const BUILDINGS_STORE = "buildings";
 const LOCATIONS_STORE = "locations";
 const DEVICES_STORE = "devices";
@@ -74,23 +82,22 @@ export type CachedDeviceDetails = CachedDeviceListItem & {
   cachedPhotoBlob: Blob | null;
 };
 
-type SyncOutboxRecord = {
+type SyncMutationType = "ASSIGN_DEVICE_BARCODE" | "UPSERT_DEVICE_PHOTO" | "DELETE_DEVICE_PHOTO";
+
+type SyncOutboxPayload = {
+  barcode?: string;
+  contentType?: string | null;
+  sourceUrl?: string | null;
+};
+
+type SyncOutboxRecord = OfflineOutboxItem<SyncOutboxPayload> & {
   id: string;
+  mutation_type: SyncMutationType;
   entity_type: "DEVICE_BARCODE" | "DEVICE_PHOTO";
   entity_id: string;
-  operation: "ASSIGN_BARCODE" | "UPSERT_PHOTO" | "DELETE_PHOTO";
-  payload: {
-    barcode?: string;
-    contentType?: string | null;
-    sourceUrl?: string | null;
-  };
-  status: "PENDING" | "IN_PROGRESS" | "FAILED";
-  retryable: boolean;
-  created_at: string;
-  updated_at: string;
-  last_attempt_at: string | null;
-  attempt_count: number;
-  last_error: string | null;
+  // Legacy compatibility for already-cached local data.
+  operation?: "ASSIGN_BARCODE" | "UPSERT_PHOTO" | "DELETE_PHOTO";
+  payload?: SyncOutboxPayload;
 };
 
 type CachedDevicePhotoRecord = {
@@ -103,6 +110,10 @@ type CachedDevicePhotoRecord = {
 export type SyncStatusSummary = {
   hasRetryableChanges: boolean;
   hasSyncErrors: boolean;
+  pendingCount: number;
+  inProgressCount: number;
+  failedCount: number;
+  retryableCount: number;
 };
 
 const openDb = (): Promise<IDBDatabase> =>
@@ -111,6 +122,7 @@ const openDb = (): Promise<IDBDatabase> =>
     request.onerror = () => reject(request.error);
     request.onupgradeneeded = () => {
       const db = request.result;
+      const tx = request.transaction;
       if (!db.objectStoreNames.contains(BUILDINGS_STORE)) {
         db.createObjectStore(BUILDINGS_STORE, { keyPath: "id" });
       }
@@ -130,6 +142,10 @@ const openDb = (): Promise<IDBDatabase> =>
       }
       if (!db.objectStoreNames.contains(SETTINGS_STORE)) {
         db.createObjectStore(SETTINGS_STORE, { keyPath: "key" });
+      }
+      if (request.oldVersion < 4 && tx && db.objectStoreNames.contains(SYNC_OUTBOX_STORE)) {
+        // Clear legacy outbox rows so every queued mutation follows the unified format.
+        tx.objectStore(SYNC_OUTBOX_STORE).clear();
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -191,6 +207,27 @@ const fetchPhotoBlob = async (url: string): Promise<Blob> => {
 const barcodeOutboxId = (deviceId: string) => `DEVICE_BARCODE:${deviceId}`;
 const photoOutboxId = (deviceId: string) => `DEVICE_PHOTO:${deviceId}`;
 
+const normalizeMutationType = (item: SyncOutboxRecord): SyncMutationType => {
+  if (item.mutation_type) {
+    return item.mutation_type;
+  }
+  if (item.operation === "UPSERT_PHOTO") {
+    return "UPSERT_DEVICE_PHOTO";
+  }
+  if (item.operation === "DELETE_PHOTO") {
+    return "DELETE_DEVICE_PHOTO";
+  }
+  return "ASSIGN_DEVICE_BARCODE";
+};
+
+const getItemPayload = (item: SyncOutboxRecord): SyncOutboxPayload =>
+  item.payload_json ?? item.payload ?? {};
+
+const isPendingSyncItem = (item: Pick<SyncOutboxRecord, "status" | "retryable">) =>
+  item.status === "PENDING" ||
+  item.status === "IN_PROGRESS" ||
+  (item.status === "FAILED" && item.retryable);
+
 const readErrorMessage = async (response: Response) => {
   try {
     const payload = (await response.json()) as { error?: string };
@@ -204,6 +241,26 @@ const readErrorMessage = async (response: Response) => {
   return "Sikertelen szinkronizáció.";
 };
 
+const syncRunner = createSyncRunner({
+  runSync: async () => {
+    await syncPendingBarcodeAssignments();
+  },
+  baseIntervalMs: 60_000,
+  maxIntervalMs: 5 * 60_000,
+});
+
+export const startOfflineSyncRunner = () => {
+  syncRunner.start();
+};
+
+export const stopOfflineSyncRunner = () => {
+  syncRunner.stop();
+};
+
+export const triggerOfflineSyncNow = () => {
+  syncRunner.triggerNow();
+};
+
 export const hasOfflineCache = async (): Promise<boolean> => {
   const [buildingCount, deviceCount] = await Promise.all([
     countStore(BUILDINGS_STORE),
@@ -214,24 +271,20 @@ export const hasOfflineCache = async (): Promise<boolean> => {
 
 export const getPendingSyncChangesCount = async (): Promise<number> => {
   const items = await getAllRecords<SyncOutboxRecord>(SYNC_OUTBOX_STORE);
-  return items.filter(
-    (item) =>
-      item.status === "PENDING" ||
-      item.status === "IN_PROGRESS" ||
-      (item.status === "FAILED" && item.retryable),
-  ).length;
+  const summary = summarizeOutboxItems(items);
+  return summary.retryableCount;
 };
 
 export const getSyncStatusSummary = async (): Promise<SyncStatusSummary> => {
   const items = await getAllRecords<SyncOutboxRecord>(SYNC_OUTBOX_STORE);
+  const summary: OfflineSyncStatusSummary = summarizeOutboxItems(items);
   return {
-    hasRetryableChanges: items.some(
-      (item) =>
-        item.status === "PENDING" ||
-        item.status === "IN_PROGRESS" ||
-        (item.status === "FAILED" && item.retryable),
-    ),
-    hasSyncErrors: items.some((item) => item.status === "FAILED"),
+    hasRetryableChanges: summary.hasRetryableChanges,
+    hasSyncErrors: summary.hasSyncErrors,
+    pendingCount: summary.pendingCount,
+    inProgressCount: summary.inProgressCount,
+    failedCount: summary.failedCount,
+    retryableCount: summary.retryableCount,
   };
 };
 
@@ -261,7 +314,7 @@ export const cacheBuildingData = async (
       .filter(
         (item) =>
           item.entity_type === "DEVICE_BARCODE" &&
-          (item.status === "PENDING" || item.status === "IN_PROGRESS" || item.retryable),
+          isPendingSyncItem(item),
       )
       .map((item) => item.entity_id),
   );
@@ -492,10 +545,10 @@ export const assignCachedDeviceBarcode = async (deviceId: string, code: string):
 
       outboxStore.put({
         id: barcodeOutboxId(deviceId),
+        mutation_type: "ASSIGN_DEVICE_BARCODE",
         entity_type: "DEVICE_BARCODE",
         entity_id: deviceId,
-        operation: "ASSIGN_BARCODE",
-        payload: { barcode: normalizedCode },
+        payload_json: { barcode: normalizedCode },
         status: "PENDING",
         retryable: true,
         created_at: now,
@@ -506,6 +559,8 @@ export const assignCachedDeviceBarcode = async (deviceId: string, code: string):
       } satisfies SyncOutboxRecord);
     };
   });
+
+  triggerOfflineSyncNow();
 };
 
 export const syncPendingBarcodeAssignments = async (): Promise<void> => {
@@ -515,10 +570,7 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
 
   const db = await openDb();
   const items = await getAllRecords<SyncOutboxRecord>(SYNC_OUTBOX_STORE);
-  const pendingItems = items.filter(
-    (item) =>
-      (item.status === "PENDING" || item.status === "IN_PROGRESS" || (item.status === "FAILED" && item.retryable)),
-  );
+  const pendingItems = items.filter((item) => isPendingSyncItem(item));
 
   for (const item of pendingItems) {
     const attemptAt = new Date().toISOString();
@@ -568,15 +620,16 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
       let response: Response;
 
       if (item.entity_type === "DEVICE_BARCODE") {
+        const payload = getItemPayload(item);
         response = await fetch(`/api/labeling/devices/${item.entity_id}/barcode`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           credentials: "include",
-          body: JSON.stringify({ code: item.payload.barcode }),
+          body: JSON.stringify({ code: payload.barcode }),
         });
-      } else if (item.operation === "UPSERT_PHOTO") {
+      } else if (normalizeMutationType(item) === "UPSERT_DEVICE_PHOTO") {
         const photoRecord = await getRecord<CachedDevicePhotoRecord>(DEVICE_PHOTOS_STORE, item.entity_id);
         if (!photoRecord) {
           await new Promise<void>((resolve, reject) => {
@@ -605,7 +658,7 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
 
       if (!response.ok) {
         const errorMessage = await readErrorMessage(response);
-        const retryable = response.status >= 500 || response.status === 429;
+        const retryable = isRetryableHttpStatus(response.status);
 
         await new Promise<void>((resolve, reject) => {
           const tx = db.transaction([DEVICES_STORE, SYNC_OUTBOX_STORE], "readwrite");
@@ -662,8 +715,10 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
         deviceRequest.onsuccess = () => {
           const device = deviceRequest.result as CachedDevice | undefined;
           if (device) {
+            const payload = getItemPayload(item);
             const nextPhotoUrl =
-              item.entity_type === "DEVICE_PHOTO" && item.operation === "UPSERT_PHOTO"
+              item.entity_type === "DEVICE_PHOTO" &&
+              normalizeMutationType(item) === "UPSERT_DEVICE_PHOTO"
                 ? `/api/labeling/devices/${item.entity_id}/photo`
                 : null;
 
@@ -671,7 +726,7 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
               ...device,
               ...(item.entity_type === "DEVICE_BARCODE"
                 ? {
-                    code: item.payload.barcode ?? device.code ?? null,
+                    code: payload.barcode ?? device.code ?? null,
                     code_sync_state: "SYNCED" as const,
                     code_sync_error: null,
                   }
@@ -768,10 +823,10 @@ export const replaceCachedDevicePhoto = async (deviceId: string, file: Blob): Pr
 
       tx.objectStore(SYNC_OUTBOX_STORE).put({
         id: photoOutboxId(deviceId),
+        mutation_type: "UPSERT_DEVICE_PHOTO",
         entity_type: "DEVICE_PHOTO",
         entity_id: deviceId,
-        operation: "UPSERT_PHOTO",
-        payload: {
+        payload_json: {
           contentType: blob.type || null,
           sourceUrl,
         },
@@ -785,6 +840,8 @@ export const replaceCachedDevicePhoto = async (deviceId: string, file: Blob): Pr
       } satisfies SyncOutboxRecord);
     };
   });
+
+  triggerOfflineSyncNow();
 };
 
 export const deleteCachedDevicePhoto = async (deviceId: string): Promise<void> => {
@@ -817,10 +874,10 @@ export const deleteCachedDevicePhoto = async (deviceId: string): Promise<void> =
       tx.objectStore(DEVICE_PHOTOS_STORE).delete(deviceId);
       tx.objectStore(SYNC_OUTBOX_STORE).put({
         id: photoOutboxId(deviceId),
+        mutation_type: "DELETE_DEVICE_PHOTO",
         entity_type: "DEVICE_PHOTO",
         entity_id: deviceId,
-        operation: "DELETE_PHOTO",
-        payload: {},
+        payload_json: {},
         status: "PENDING",
         retryable: true,
         created_at: now,
@@ -831,4 +888,6 @@ export const deleteCachedDevicePhoto = async (deviceId: string): Promise<void> =
       } satisfies SyncOutboxRecord);
     };
   });
+
+  triggerOfflineSyncNow();
 };

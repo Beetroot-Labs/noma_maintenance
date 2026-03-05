@@ -8,7 +8,7 @@ import { useEffect } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { DeviceDetailsPage } from "./DeviceDetailsPage";
 import { LabelingHome } from "./LabelingHome";
-import { syncPendingBarcodeAssignments } from "./lib/offlineCache";
+import { startOfflineSyncRunner, stopOfflineSyncRunner, triggerOfflineSyncNow } from "./lib/offlineCache";
 import { theme } from "./theme";
 
 function BarcodeSyncManager() {
@@ -19,17 +19,11 @@ function BarcodeSyncManager() {
       return;
     }
 
-    const runSync = () => {
-      void syncPendingBarcodeAssignments();
-    };
-
-    runSync();
-    const intervalId = window.setInterval(runSync, 60_000);
-    window.addEventListener("online", runSync);
+    startOfflineSyncRunner();
+    triggerOfflineSyncNow();
 
     return () => {
-      window.clearInterval(intervalId);
-      window.removeEventListener("online", runSync);
+      stopOfflineSyncRunner();
     };
   }, [isHydrated, user]);
 

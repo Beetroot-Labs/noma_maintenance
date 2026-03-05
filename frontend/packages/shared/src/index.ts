@@ -11,4 +11,11 @@ export { deviceKindLabels, getDeviceKindLabel } from "./deviceKinds";
 export type { DeviceKind } from "./deviceKinds";
 export { GoogleSignInButton } from "./googleIdentity";
 export { GoogleLoginScreen } from "./googleLoginScreen";
+export {
+  createSyncRunner,
+  isRetryableHttpStatus,
+  summarizeOutboxItems,
+  useOfflineSyncSummary,
+} from "./offlineSync";
+export type { OfflineOutboxItem, OfflineSyncStatus, OfflineSyncStatusSummary } from "./offlineSync";
 export { appColors, theme } from "./theme";

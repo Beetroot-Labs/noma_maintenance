@@ -8,7 +8,8 @@ import {
 } from "@mui/icons-material";
 import { Alert, AppBar, Box, ButtonBase, Divider, IconButton, Menu, MenuItem, Snackbar, Stack, Toolbar, Tooltip, Typography } from "@mui/material";
 import { LogOut } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { useOfflineSyncSummary } from "@noma/shared";
 import logoWhite from "../../../main/public/Noma_logo_white_horizontal.png";
 import { getSyncStatusSummary } from "../lib/offlineCache";
 
@@ -32,35 +33,15 @@ export function LabelingAppBar({
   onLogout,
 }: LabelingAppBarProps) {
   const [accountMenuAnchor, setAccountMenuAnchor] = useState<null | HTMLElement>(null);
-  const [hasRetryableSyncChanges, setHasRetryableSyncChanges] = useState(false);
-  const [hasSyncErrors, setHasSyncErrors] = useState(false);
   const [isSyncIconHovered, setIsSyncIconHovered] = useState(false);
   const [syncReloadFeedback, setSyncReloadFeedback] = useState<{
     message: string;
     severity: "success" | "error";
   } | null>(null);
 
-  useEffect(() => {
-    let isCancelled = false;
-
-    const refreshSyncIndicator = async () => {
-      const summary = await getSyncStatusSummary();
-      if (!isCancelled) {
-        setHasRetryableSyncChanges(summary.hasRetryableChanges);
-        setHasSyncErrors(summary.hasSyncErrors);
-      }
-    };
-
-    void refreshSyncIndicator();
-    const intervalId = window.setInterval(() => {
-      void refreshSyncIndicator();
-    }, 5000);
-
-    return () => {
-      isCancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, []);
+  const loadSyncSummary = useCallback(() => getSyncStatusSummary(), []);
+  const { hasRetryableChanges: hasRetryableSyncChanges, hasSyncErrors } =
+    useOfflineSyncSummary(loadSyncSummary, 5000);
 
   const handleOpenAccountMenu = (event: React.MouseEvent<HTMLElement>) => {
     setAccountMenuAnchor(event.currentTarget);
