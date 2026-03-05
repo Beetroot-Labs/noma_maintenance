@@ -92,6 +92,7 @@ type SyncOutboxPayload = {
 
 type SyncOutboxRecord = OfflineOutboxItem<SyncOutboxPayload> & {
   id: string;
+  mutation_id?: string;
   mutation_type: SyncMutationType;
   entity_type: "DEVICE_BARCODE" | "DEVICE_PHOTO";
   entity_id: string;
@@ -228,17 +229,35 @@ const isPendingSyncItem = (item: Pick<SyncOutboxRecord, "status" | "retryable">)
   item.status === "IN_PROGRESS" ||
   (item.status === "FAILED" && item.retryable);
 
-const readErrorMessage = async (response: Response) => {
-  try {
-    const payload = (await response.json()) as { error?: string };
-    if (payload.error) {
-      return payload.error;
-    }
-  } catch {
-    // Ignore invalid error payloads.
-  }
+const mutationIdForItem = (item: SyncOutboxRecord) => item.mutation_id ?? item.id;
 
-  return "Sikertelen szinkronizáció.";
+const createMutationId = () => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+
+const readSyncError = async (
+  response: Response,
+): Promise<{ message: string; retryable: boolean | null }> => {
+  const defaultMessage = "Sikertelen szinkronizáció.";
+  const defaultRetryable = isRetryableHttpStatus(response.status);
+  try {
+    const payload = (await response.json()) as {
+      error?: string;
+      retryable?: boolean;
+    };
+    return {
+      message: payload.error ?? defaultMessage,
+      retryable: typeof payload.retryable === "boolean" ? payload.retryable : null,
+    };
+  } catch {
+    return {
+      message: defaultMessage,
+      retryable: null,
+    };
+  }
 };
 
 const syncRunner = createSyncRunner({
@@ -545,6 +564,7 @@ export const assignCachedDeviceBarcode = async (deviceId: string, code: string):
 
       outboxStore.put({
         id: barcodeOutboxId(deviceId),
+        mutation_id: createMutationId(),
         mutation_type: "ASSIGN_DEVICE_BARCODE",
         entity_type: "DEVICE_BARCODE",
         entity_id: deviceId,
@@ -625,6 +645,7 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            "X-Mutation-Id": mutationIdForItem(item),
           },
           credentials: "include",
           body: JSON.stringify({ code: payload.barcode }),
@@ -645,6 +666,7 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
           method: "PUT",
           headers: {
             "Content-Type": photoRecord.contentType ?? "application/octet-stream",
+            "X-Mutation-Id": mutationIdForItem(item),
           },
           credentials: "include",
           body: photoRecord.blob,
@@ -652,13 +674,18 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
       } else {
         response = await fetch(`/api/labeling/devices/${item.entity_id}/photo`, {
           method: "DELETE",
+          headers: {
+            "X-Mutation-Id": mutationIdForItem(item),
+          },
           credentials: "include",
         });
       }
 
       if (!response.ok) {
-        const errorMessage = await readErrorMessage(response);
-        const retryable = isRetryableHttpStatus(response.status);
+        const syncError = await readSyncError(response);
+        const errorMessage = syncError.message;
+        const retryable =
+          syncError.retryable === null ? isRetryableHttpStatus(response.status) : syncError.retryable;
 
         await new Promise<void>((resolve, reject) => {
           const tx = db.transaction([DEVICES_STORE, SYNC_OUTBOX_STORE], "readwrite");
@@ -823,6 +850,7 @@ export const replaceCachedDevicePhoto = async (deviceId: string, file: Blob): Pr
 
       tx.objectStore(SYNC_OUTBOX_STORE).put({
         id: photoOutboxId(deviceId),
+        mutation_id: createMutationId(),
         mutation_type: "UPSERT_DEVICE_PHOTO",
         entity_type: "DEVICE_PHOTO",
         entity_id: deviceId,
@@ -874,6 +902,7 @@ export const deleteCachedDevicePhoto = async (deviceId: string): Promise<void> =
       tx.objectStore(DEVICE_PHOTOS_STORE).delete(deviceId);
       tx.objectStore(SYNC_OUTBOX_STORE).put({
         id: photoOutboxId(deviceId),
+        mutation_id: createMutationId(),
         mutation_type: "DELETE_DEVICE_PHOTO",
         entity_type: "DEVICE_PHOTO",
         entity_id: deviceId,

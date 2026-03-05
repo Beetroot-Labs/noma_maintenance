@@ -172,6 +172,18 @@ CREATE TABLE barcodes (
         ON DELETE RESTRICT
 );
 
+CREATE TABLE processed_mutations (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4() NOT NULL,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    endpoint_key TEXT NOT NULL,
+    mutation_id TEXT NOT NULL,
+    response_status INTEGER NOT NULL,
+    response_body JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+    CONSTRAINT processed_mutations_tenant_endpoint_mutation_unique
+        UNIQUE (tenant_id, endpoint_key, mutation_id)
+);
+
 CREATE TYPE shift_status AS ENUM (
     'INVITING',
     'READY_TO_START',
@@ -331,6 +343,9 @@ WHERE source_device_code IS NOT NULL;
 
 CREATE INDEX barcodes_tenant_device_idx
 ON barcodes (tenant_id, device_id);
+
+CREATE INDEX processed_mutations_tenant_created_idx
+ON processed_mutations (tenant_id, created_at DESC);
 
 CREATE INDEX shifts_tenant_status_idx
 ON shifts (tenant_id, status);

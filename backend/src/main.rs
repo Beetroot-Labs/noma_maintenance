@@ -5,7 +5,7 @@ use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::http::{HeaderValue, header};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use chrono::{DateTime, Duration, Utc};
 use cloud_storage::Object;
@@ -248,6 +248,14 @@ struct AuthResponse {
 #[derive(Serialize)]
 struct ErrorResponse {
     error: String,
+    code: String,
+    retryable: bool,
+}
+
+#[derive(sqlx::FromRow)]
+struct ProcessedMutationResponse {
+    response_status: i32,
+    response_body: Option<serde_json::Value>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -690,7 +698,7 @@ async fn upload_labeling_device_photo(
     headers: HeaderMap,
     Path(device_id): Path<uuid::Uuid>,
     body: Bytes,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Response, ApiError> {
     let pool = state
         .db_pool
         .as_ref()
@@ -700,6 +708,14 @@ async fn upload_labeling_device_photo(
         .as_ref()
         .ok_or_else(|| ApiError::service_unavailable("device photo storage is not configured"))?;
     let user = require_session_user(&state, &headers).await?;
+    let mutation_id = require_mutation_id(&headers)?;
+    let endpoint_key = format!("LABELING_DEVICE_PHOTO_UPSERT:{device_id}");
+
+    if let Some(replayed) =
+        get_processed_mutation_response(pool, user.tenant_id, &endpoint_key, &mutation_id).await?
+    {
+        return Ok(replayed);
+    }
 
     if body.is_empty() {
         return Err(ApiError::bad_request("photo body is required"));
@@ -756,10 +772,22 @@ async fn upload_labeling_device_photo(
     .await
     .map_err(ApiError::internal)?;
 
-    Ok(Json(DevicePhotoResponse {
+    let payload = serde_json::json!(DevicePhotoResponse {
         device_id,
         photo_url: device_photo_api_path(device_id),
-    }))
+    });
+
+    save_processed_mutation_response(
+        pool,
+        user.tenant_id,
+        &endpoint_key,
+        &mutation_id,
+        StatusCode::OK,
+        Some(payload.clone()),
+    )
+    .await?;
+
+    Ok((StatusCode::OK, Json(payload)).into_response())
 }
 
 async fn get_labeling_device_photo(
@@ -812,7 +840,7 @@ async fn delete_labeling_device_photo(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(device_id): Path<uuid::Uuid>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Response, ApiError> {
     let pool = state
         .db_pool
         .as_ref()
@@ -822,6 +850,14 @@ async fn delete_labeling_device_photo(
         .as_ref()
         .ok_or_else(|| ApiError::service_unavailable("device photo storage is not configured"))?;
     let user = require_session_user(&state, &headers).await?;
+    let mutation_id = require_mutation_id(&headers)?;
+    let endpoint_key = format!("LABELING_DEVICE_PHOTO_DELETE:{device_id}");
+
+    if let Some(replayed) =
+        get_processed_mutation_response(pool, user.tenant_id, &endpoint_key, &mutation_id).await?
+    {
+        return Ok(replayed);
+    }
 
     let object_name = sqlx::query_scalar::<_, Option<String>>(
         r#"
@@ -837,7 +873,16 @@ async fn delete_labeling_device_photo(
     .map_err(ApiError::internal)?;
 
     let Some(object_name) = object_name.flatten() else {
-        return Ok(StatusCode::NO_CONTENT);
+        save_processed_mutation_response(
+            pool,
+            user.tenant_id,
+            &endpoint_key,
+            &mutation_id,
+            StatusCode::NO_CONTENT,
+            None,
+        )
+        .await?;
+        return Ok(StatusCode::NO_CONTENT.into_response());
     };
 
     Object::delete(&storage.bucket, &object_name)
@@ -857,7 +902,17 @@ async fn delete_labeling_device_photo(
     .await
     .map_err(ApiError::internal)?;
 
-    Ok(StatusCode::NO_CONTENT)
+    save_processed_mutation_response(
+        pool,
+        user.tenant_id,
+        &endpoint_key,
+        &mutation_id,
+        StatusCode::NO_CONTENT,
+        None,
+    )
+    .await?;
+
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 async fn assign_labeling_device_barcode(
@@ -865,12 +920,14 @@ async fn assign_labeling_device_barcode(
     headers: HeaderMap,
     Path(device_id): Path<uuid::Uuid>,
     Json(payload): Json<AssignBarcodeRequest>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Response, ApiError> {
     let pool = state
         .db_pool
         .as_ref()
         .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
     let user = require_session_user(&state, &headers).await?;
+    let mutation_id = require_mutation_id(&headers)?;
+    let endpoint_key = format!("LABELING_DEVICE_BARCODE_ASSIGN:{device_id}");
 
     let code = payload.code.trim();
     if code.is_empty() {
@@ -878,6 +935,16 @@ async fn assign_labeling_device_barcode(
     }
 
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+    if let Some(replayed) = get_processed_mutation_response_tx(
+        &mut tx,
+        user.tenant_id,
+        &endpoint_key,
+        &mutation_id,
+    )
+    .await?
+    {
+        return Ok(replayed);
+    }
 
     let device_exists: Option<bool> = sqlx::query_scalar(
         r#"
@@ -953,12 +1020,24 @@ async fn assign_labeling_device_barcode(
     .await
     .map_err(ApiError::internal)?;
 
-    tx.commit().await.map_err(ApiError::internal)?;
-
-    Ok(Json(BarcodeAssignmentResponse {
+    let response_payload = serde_json::json!(BarcodeAssignmentResponse {
         device_id,
         code: code.to_string(),
-    }))
+    });
+
+    save_processed_mutation_response_tx(
+        &mut tx,
+        user.tenant_id,
+        &endpoint_key,
+        &mutation_id,
+        StatusCode::OK,
+        Some(response_payload.clone()),
+    )
+    .await?;
+
+    tx.commit().await.map_err(ApiError::internal)?;
+
+    Ok((StatusCode::OK, Json(response_payload)).into_response())
 }
 
 async fn verify_google_id_token(
@@ -1125,10 +1204,151 @@ fn hash_session_token(token: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+fn require_mutation_id(headers: &HeaderMap) -> Result<String, ApiError> {
+    let value = headers
+        .get("x-mutation-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::bad_request("missing X-Mutation-Id header"))?;
+
+    if value.len() > 128 {
+        return Err(ApiError::bad_request("X-Mutation-Id is too long"));
+    }
+
+    Ok(value.to_string())
+}
+
+async fn get_processed_mutation_response(
+    pool: &PgPool,
+    tenant_id: uuid::Uuid,
+    endpoint_key: &str,
+    mutation_id: &str,
+) -> Result<Option<Response>, ApiError> {
+    let processed = sqlx::query_as::<_, ProcessedMutationResponse>(
+        r#"
+        SELECT response_status, response_body
+        FROM processed_mutations
+        WHERE tenant_id = $1
+          AND endpoint_key = $2
+          AND mutation_id = $3
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(endpoint_key)
+    .bind(mutation_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(processed.map(replay_processed_mutation_response))
+}
+
+async fn get_processed_mutation_response_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tenant_id: uuid::Uuid,
+    endpoint_key: &str,
+    mutation_id: &str,
+) -> Result<Option<Response>, ApiError> {
+    let processed = sqlx::query_as::<_, ProcessedMutationResponse>(
+        r#"
+        SELECT response_status, response_body
+        FROM processed_mutations
+        WHERE tenant_id = $1
+          AND endpoint_key = $2
+          AND mutation_id = $3
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(endpoint_key)
+    .bind(mutation_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(processed.map(replay_processed_mutation_response))
+}
+
+fn replay_processed_mutation_response(processed: ProcessedMutationResponse) -> Response {
+    let status = StatusCode::from_u16(processed.response_status as u16).unwrap_or(StatusCode::OK);
+    match processed.response_body {
+        Some(body) => (status, Json(body)).into_response(),
+        None => status.into_response(),
+    }
+}
+
+async fn save_processed_mutation_response(
+    pool: &PgPool,
+    tenant_id: uuid::Uuid,
+    endpoint_key: &str,
+    mutation_id: &str,
+    status: StatusCode,
+    body: Option<serde_json::Value>,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        r#"
+        INSERT INTO processed_mutations (
+            tenant_id,
+            endpoint_key,
+            mutation_id,
+            response_status,
+            response_body
+        )
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (tenant_id, endpoint_key, mutation_id) DO NOTHING
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(endpoint_key)
+    .bind(mutation_id)
+    .bind(status.as_u16() as i32)
+    .bind(body)
+    .execute(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(())
+}
+
+async fn save_processed_mutation_response_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tenant_id: uuid::Uuid,
+    endpoint_key: &str,
+    mutation_id: &str,
+    status: StatusCode,
+    body: Option<serde_json::Value>,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        r#"
+        INSERT INTO processed_mutations (
+            tenant_id,
+            endpoint_key,
+            mutation_id,
+            response_status,
+            response_body
+        )
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (tenant_id, endpoint_key, mutation_id) DO NOTHING
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(endpoint_key)
+    .bind(mutation_id)
+    .bind(status.as_u16() as i32)
+    .bind(body)
+    .execute(&mut **tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(())
+}
+
 #[derive(Debug)]
 struct ApiError {
     status: StatusCode,
     message: String,
+    code: &'static str,
+    retryable: bool,
 }
 
 impl ApiError {
@@ -1136,6 +1356,8 @@ impl ApiError {
         Self {
             status: StatusCode::BAD_REQUEST,
             message: message.into(),
+            code: "BAD_REQUEST",
+            retryable: false,
         }
     }
 
@@ -1143,6 +1365,8 @@ impl ApiError {
         Self {
             status: StatusCode::UNAUTHORIZED,
             message: message.into(),
+            code: "UNAUTHORIZED",
+            retryable: false,
         }
     }
 
@@ -1150,6 +1374,8 @@ impl ApiError {
         Self {
             status: StatusCode::FORBIDDEN,
             message: message.into(),
+            code: "FORBIDDEN",
+            retryable: false,
         }
     }
 
@@ -1157,6 +1383,8 @@ impl ApiError {
         Self {
             status: StatusCode::CONFLICT,
             message: message.into(),
+            code: "CONFLICT",
+            retryable: false,
         }
     }
 
@@ -1164,6 +1392,8 @@ impl ApiError {
         Self {
             status: StatusCode::SERVICE_UNAVAILABLE,
             message: message.into(),
+            code: "SERVICE_UNAVAILABLE",
+            retryable: true,
         }
     }
 
@@ -1172,6 +1402,8 @@ impl ApiError {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: "internal server error".to_string(),
+            code: "INTERNAL",
+            retryable: true,
         }
     }
 }
@@ -1182,6 +1414,8 @@ impl IntoResponse for ApiError {
             self.status,
             Json(ErrorResponse {
                 error: self.message,
+                code: self.code.to_string(),
+                retryable: self.retryable,
             }),
         )
             .into_response()
