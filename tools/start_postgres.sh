@@ -79,12 +79,4 @@ psql \
   -U "${POSTGRES_USER}" \
   -d "${POSTGRES_DB}" \
   -v ON_ERROR_STOP=1 \
-  -f "${SCRIPT_DIR}/../database/dev_data.sql"
-
-psql \
-  -h "${DB_HOST}" \
-  -p "${DB_PORT}" \
-  -U "${POSTGRES_USER}" \
-  -d "${POSTGRES_DB}" \
-  -v ON_ERROR_STOP=1 \
-  -f "${SCRIPT_DIR}/../database/device_data.sql"
+  -f "${SCRIPT_DIR}/../database/prod_setup.sql"

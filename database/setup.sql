@@ -14,36 +14,19 @@ CREATE TABLE tenants (
     created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
 
-/*
-CREATE TABLE roles (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name VARCHAR(50) UNIQUE NOT NULL
-);
-
-CREATE TABLE permissions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name VARCHAR(100) UNIQUE NOT NULL
-);
-
-CREATE TABLE role_permissions (
-    role_id UUID REFERENCES roles(id) ON DELETE CASCADE,
-    permission_id UUID REFERENCES permissions(id) ON DELETE CASCADE,
-    PRIMARY KEY (role_id, permission_id)
-);
-*/
-
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4() NOT NULL,
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     full_name TEXT NOT NULL,
     email CITEXT NOT NULL,
-    --role_id UUID REFERENCES roles(id),
+    role user_role NOT NULL DEFAULT 'TECHNICIAN',
     email_verified_at TIMESTAMPTZ,
     last_login_at TIMESTAMPTZ,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
 
-    CONSTRAINT users_tenant_email_unique UNIQUE (tenant_id, email)
+    CONSTRAINT users_tenant_email_unique UNIQUE (tenant_id, email),
+    CONSTRAINT users_tenant_id_id_unique UNIQUE (tenant_id, id)
 );
 
 CREATE TYPE auth_provider AS ENUM ('PASSWORD', 'GOOGLE');
@@ -189,6 +172,131 @@ CREATE TABLE barcodes (
         ON DELETE RESTRICT
 );
 
+CREATE TYPE shift_status AS ENUM (
+    'INVITING',
+    'READY_TO_START',
+    'IN_PROGRESS',
+    'CLOSE_REQUESTED',
+    'READY_TO_COMMIT',
+    'COMMITTED',
+    'CANCELLED'
+);
+
+CREATE TYPE shift_participant_status AS ENUM (
+    'INVITED',
+    'DECLINED',
+    'ACCEPTED',
+    'CACHE_READY',
+    'CLOSE_CONFIRMED'
+);
+
+CREATE TABLE shifts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4() NOT NULL,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    building_id UUID NOT NULL,
+    lead_user_id UUID NOT NULL,
+    status shift_status NOT NULL DEFAULT 'INVITING',
+    started_at TIMESTAMPTZ,
+    close_requested_at TIMESTAMPTZ,
+    summary_generated_at TIMESTAMPTZ,
+    committed_at TIMESTAMPTZ,
+    referent_name TEXT,
+    referent_signature_url TEXT,
+    referent_signed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+    CONSTRAINT shifts_tenant_building_fk
+        FOREIGN KEY (tenant_id, building_id)
+        REFERENCES buildings (tenant_id, id)
+        ON DELETE RESTRICT,
+    CONSTRAINT shifts_tenant_lead_user_fk
+        FOREIGN KEY (tenant_id, lead_user_id)
+        REFERENCES users (tenant_id, id)
+        ON DELETE RESTRICT,
+    CONSTRAINT shifts_tenant_id_id_unique UNIQUE (tenant_id, id)
+);
+
+CREATE TABLE shift_participants (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4() NOT NULL,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    shift_id UUID NOT NULL,
+    user_id UUID NOT NULL,
+    status shift_participant_status NOT NULL DEFAULT 'INVITED',
+    invited_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+    accepted_at TIMESTAMPTZ,
+    cache_ready_at TIMESTAMPTZ,
+    close_confirmed_at TIMESTAMPTZ,
+    CONSTRAINT shift_participants_tenant_shift_fk
+        FOREIGN KEY (tenant_id, shift_id)
+        REFERENCES shifts (tenant_id, id)
+        ON DELETE CASCADE,
+    CONSTRAINT shift_participants_tenant_user_fk
+        FOREIGN KEY (tenant_id, user_id)
+        REFERENCES users (tenant_id, id)
+        ON DELETE RESTRICT,
+    CONSTRAINT shift_participants_shift_user_unique UNIQUE (shift_id, user_id)
+);
+
+CREATE TYPE maintenance_work_status AS ENUM (
+    'IN_PROGRESS',
+    'FINISHED',
+    'ABORTED'
+);
+
+CREATE TABLE maintenance_works (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4() NOT NULL,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    shift_id UUID NOT NULL,
+    device_id UUID NOT NULL,
+    maintainer_user_id UUID NOT NULL,
+    status maintenance_work_status NOT NULL DEFAULT 'IN_PROGRESS',
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finished_at TIMESTAMPTZ,
+    aborted_at TIMESTAMPTZ,
+    malfunction_description TEXT,
+    note TEXT,
+    CONSTRAINT maintenance_works_tenant_shift_fk
+        FOREIGN KEY (tenant_id, shift_id)
+        REFERENCES shifts (tenant_id, id)
+        ON DELETE RESTRICT,
+    CONSTRAINT maintenance_works_tenant_device_fk
+        FOREIGN KEY (tenant_id, device_id)
+        REFERENCES devices (tenant_id, id)
+        ON DELETE RESTRICT,
+    CONSTRAINT maintenance_works_tenant_user_fk
+        FOREIGN KEY (tenant_id, maintainer_user_id)
+        REFERENCES users (tenant_id, id)
+        ON DELETE RESTRICT,
+    CONSTRAINT maintenance_works_malfunction_description_not_empty CHECK (
+        malfunction_description IS NULL OR NULLIF(BTRIM(malfunction_description), '') IS NOT NULL
+    ),
+    CONSTRAINT maintenance_works_finished_at_required CHECK (
+        status <> 'FINISHED' OR finished_at IS NOT NULL
+    ),
+    CONSTRAINT maintenance_works_aborted_at_required CHECK (
+        status <> 'ABORTED' OR aborted_at IS NOT NULL
+    ),
+    CONSTRAINT maintenance_works_tenant_id_id_unique UNIQUE (tenant_id, id)
+);
+
+CREATE TYPE maintenance_photo_type AS ENUM (
+    'MAINTENANCE',
+    'MALFUNCTION'
+);
+
+CREATE TABLE maintenance_photos (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4() NOT NULL,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    maintenance_work_id UUID NOT NULL,
+    photo_type maintenance_photo_type NOT NULL DEFAULT 'MAINTENANCE',
+    photo_url TEXT NOT NULL,
+    capture_note TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+    CONSTRAINT maintenance_photos_tenant_work_fk
+        FOREIGN KEY (tenant_id, maintenance_work_id)
+        REFERENCES maintenance_works (tenant_id, id)
+        ON DELETE CASCADE
+);
+
 CREATE UNIQUE INDEX barcodes_one_active_per_device_idx
 ON barcodes (device_id)
 WHERE device_id IS NOT NULL AND deactivated_at IS NULL;
@@ -224,22 +332,43 @@ WHERE source_device_code IS NOT NULL;
 CREATE INDEX barcodes_tenant_device_idx
 ON barcodes (tenant_id, device_id);
 
-/*
-CREATE TABLE site_visits (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4() NOT NULL,
-    tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
-    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-    device_id UUID REFERENCES devices(id) ON DELETE SET NULL,
-    visit_start TIMESTAMPTZ NOT NULL,
-    visit_end TIMESTAMPTZ,
-    notes TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
+CREATE INDEX shifts_tenant_status_idx
+ON shifts (tenant_id, status);
 
-CREATE TABLE site_visit_photos (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4() NOT NULL,
-    site_visit_id UUID REFERENCES site_visits(id) ON DELETE CASCADE,
-    photo_url TEXT NOT NULL,
-    uploaded_at TIMESTAMPTZ DEFAULT NOW()
-);
-*/
+CREATE INDEX shifts_tenant_building_idx
+ON shifts (tenant_id, building_id);
+
+CREATE INDEX shifts_tenant_lead_idx
+ON shifts (tenant_id, lead_user_id);
+
+CREATE INDEX shift_participants_tenant_shift_idx
+ON shift_participants (tenant_id, shift_id);
+
+CREATE INDEX shift_participants_tenant_user_idx
+ON shift_participants (tenant_id, user_id);
+
+CREATE INDEX shift_participants_shift_status_idx
+ON shift_participants (shift_id, status);
+
+CREATE INDEX maintenance_works_tenant_shift_idx
+ON maintenance_works (tenant_id, shift_id);
+
+CREATE INDEX maintenance_works_tenant_device_idx
+ON maintenance_works (tenant_id, device_id);
+
+CREATE INDEX maintenance_works_tenant_user_idx
+ON maintenance_works (tenant_id, maintainer_user_id);
+
+CREATE INDEX maintenance_works_tenant_status_idx
+ON maintenance_works (tenant_id, status);
+
+CREATE UNIQUE INDEX maintenance_works_one_active_per_user_idx
+ON maintenance_works (tenant_id, maintainer_user_id)
+WHERE status = 'IN_PROGRESS';
+
+CREATE UNIQUE INDEX maintenance_works_one_active_per_device_idx
+ON maintenance_works (tenant_id, device_id)
+WHERE status = 'IN_PROGRESS';
+
+CREATE INDEX maintenance_photos_tenant_work_idx
+ON maintenance_photos (tenant_id, maintenance_work_id);
