@@ -73,6 +73,18 @@ const tableColumns: Array<{ key: FilterKey; label: string }> = [
 
 const enumFilterKeys: FilterKey[] = ["floor", "wing", "kind", "brand"];
 
+const readApiErrorMessage = async (response: Response, fallback: string) => {
+  try {
+    const payload = (await response.json()) as { error?: string };
+    if (payload.error) {
+      return `${fallback} (${response.status}): ${payload.error}`;
+    }
+  } catch {
+    // Ignore malformed error payloads.
+  }
+  return `${fallback} (${response.status})`;
+};
+
 export function LabelingHome({ googleClientId }: LabelingHomeProps) {
   const { user, clearUser, isHydrated } = useAuth();
   const navigate = useNavigate();
@@ -99,12 +111,34 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
       credentials: "include",
     });
     if (!response.ok) {
-      throw new Error("Nem sikerült betölteni az épületeket.");
+      throw new Error(await readApiErrorMessage(response, "Nem sikerült betölteni az épületeket"));
     }
 
     const payload = (await response.json()) as CachedBuilding[];
     setAvailableBuildings(payload);
+    setSelectedBuildingId((current) => {
+      if (payload.some((building) => building.id === current)) {
+        return current;
+      }
+      return payload[0]?.id ?? "";
+    });
     return payload;
+  };
+
+  const reloadBuildingCache = async (buildingId: string) => {
+    const response = await fetch(`/api/labeling/buildings/${buildingId}/cache`, {
+      credentials: "include",
+    });
+    if (!response.ok) {
+      throw new Error(
+        await readApiErrorMessage(response, "Nem sikerült frissíteni az offline adatokat"),
+      );
+    }
+
+    const payload = (await response.json()) as BuildingCachePayload;
+    await cacheBuildingData(payload, buildingId);
+    setSelectedBuildingName(payload.building.name);
+    setDeviceRows(await getCachedDeviceListItems());
   };
 
   useEffect(() => {
@@ -125,6 +159,13 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
         if (!cancelled) {
           setSelectedBuildingId(selectedBuilding?.id ?? "");
           setSelectedBuildingName(selectedBuilding?.name ?? null);
+        }
+        if (selectedBuilding?.id && !cancelled) {
+          try {
+            await reloadBuildingCache(selectedBuilding.id);
+          } catch {
+            // Keep the existing offline cache if refresh fails right after login.
+          }
         }
         return;
       }
@@ -243,7 +284,9 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
         credentials: "include",
       });
       if (!response.ok) {
-        throw new Error("Nem sikerült letölteni az offline adatokat.");
+        throw new Error(
+          await readApiErrorMessage(response, "Nem sikerült letölteni az offline adatokat"),
+        );
       }
 
       const payload = (await response.json()) as BuildingCachePayload;
@@ -403,6 +446,23 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
     );
   };
 
+  const handleSyncStatusClick = async () => {
+    const selectedBuilding = await getSelectedCachedBuilding();
+    if (!selectedBuilding) {
+      return;
+    }
+
+    setCacheError(null);
+    try {
+      await reloadBuildingCache(selectedBuilding.id);
+    } catch (error) {
+      setCacheError(
+        error instanceof Error ? error.message : "Nem sikerült frissíteni az offline adatokat.",
+      );
+      throw error;
+    }
+  };
+
   return (
     <Box
       sx={{
@@ -416,6 +476,7 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
         userEmail={user.email}
         buildingName={selectedBuildingName}
         onBuildingClick={() => void handleOpenBuildingSelector()}
+        onSyncStatusClick={handleSyncStatusClick}
         onLogout={async () => {
           await clearUser();
         }}

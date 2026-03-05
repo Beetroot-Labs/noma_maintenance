@@ -37,7 +37,31 @@ export default defineConfig(({ mode }) => {
 
   return {
     base,
-    plugins: [react()],
+    plugins: [
+      react(),
+      {
+        name: "labeling-base-slash-redirect",
+        configureServer(server) {
+          const normalizedBase = base.endsWith("/") ? base.slice(0, -1) : base;
+          server.middlewares.use((req, res, next) => {
+            if (!req.url || !normalizedBase || normalizedBase === "/") {
+              next();
+              return;
+            }
+
+            const [pathname, suffix = ""] = req.url.split("?");
+            if (pathname === normalizedBase) {
+              res.statusCode = 302;
+              res.setHeader("Location", `${normalizedBase}/${suffix ? `?${suffix}` : ""}`);
+              res.end();
+              return;
+            }
+
+            next();
+          });
+        },
+      },
+    ],
     define: {
       "import.meta.env.VITE_GOOGLE_CLIENT_ID": JSON.stringify(googleClientId),
     },

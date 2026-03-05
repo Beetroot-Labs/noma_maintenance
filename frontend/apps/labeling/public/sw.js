@@ -32,6 +32,11 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   if (!event.request.url.startsWith(self.location.origin)) return;
+  const url = new URL(event.request.url);
+  if (url.pathname.startsWith("/api/")) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
 
   event.respondWith(
     (async () => {
@@ -40,9 +45,11 @@ self.addEventListener("fetch", (event) => {
 
       try {
         const response = await fetch(event.request);
-        const responseClone = response.clone();
-        const cache = await caches.open(CACHE_NAME);
-        cache.put(event.request, responseClone);
+        if (response.ok) {
+          const responseClone = response.clone();
+          const cache = await caches.open(CACHE_NAME);
+          cache.put(event.request, responseClone);
+        }
         return response;
       } catch {
         return cached ?? Response.error();

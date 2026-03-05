@@ -6,7 +6,7 @@ import {
   SyncOutlined,
   SyncProblemOutlined,
 } from "@mui/icons-material";
-import { AppBar, Box, ButtonBase, Divider, IconButton, Menu, MenuItem, Stack, Toolbar, Tooltip, Typography } from "@mui/material";
+import { Alert, AppBar, Box, ButtonBase, Divider, IconButton, Menu, MenuItem, Snackbar, Stack, Toolbar, Tooltip, Typography } from "@mui/material";
 import { LogOut } from "lucide-react";
 import { useEffect, useState } from "react";
 import logoWhite from "../../../main/public/Noma_logo_white_horizontal.png";
@@ -19,6 +19,7 @@ type LabelingAppBarProps = {
   userEmail: string;
   buildingName: string | null;
   onBuildingClick: () => void;
+  onSyncStatusClick: () => Promise<void> | void;
   onLogout: () => Promise<void> | void;
 };
 
@@ -27,11 +28,17 @@ export function LabelingAppBar({
   userEmail,
   buildingName,
   onBuildingClick,
+  onSyncStatusClick,
   onLogout,
 }: LabelingAppBarProps) {
   const [accountMenuAnchor, setAccountMenuAnchor] = useState<null | HTMLElement>(null);
   const [hasRetryableSyncChanges, setHasRetryableSyncChanges] = useState(false);
   const [hasSyncErrors, setHasSyncErrors] = useState(false);
+  const [isSyncIconHovered, setIsSyncIconHovered] = useState(false);
+  const [syncReloadFeedback, setSyncReloadFeedback] = useState<{
+    message: string;
+    severity: "success" | "error";
+  } | null>(null);
 
   useEffect(() => {
     let isCancelled = false;
@@ -68,27 +75,42 @@ export function LabelingAppBar({
     await onLogout();
   };
 
+  const handleSyncStatusClick = async () => {
+    try {
+      await onSyncStatusClick();
+      setSyncReloadFeedback({
+        message: "Az offline gyorsítótár sikeresen frissült.",
+        severity: "success",
+      });
+    } catch {
+      setSyncReloadFeedback({
+        message: "Nem sikerült frissíteni az offline adatokat.",
+        severity: "error",
+      });
+    }
+  };
+
   const syncIndicatorConfig = hasRetryableSyncChanges
     ? hasSyncErrors
       ? {
-          icon: <SyncProblemOutlined sx={{ fontSize: 19 }} />,
-          color: "error.light",
+          icon: <SyncProblemOutlined sx={{ fontSize: 19, color: "inherit" }} />,
+          color: "#FFB3B3",
           label: "Szinkronizációs hibák vannak, és maradtak függőben lévő változtatások.",
         }
       : {
-          icon: <SyncOutlined sx={{ fontSize: 19 }} />,
-          color: "warning.light",
+          icon: <SyncOutlined sx={{ fontSize: 19, color: "inherit" }} />,
+          color: "#FFE08A",
           label: "Nem mentett változások vannak, szinkronizálás szükséges.",
         }
     : hasSyncErrors
       ? {
-          icon: <PriorityHighOutlined sx={{ fontSize: 19 }} />,
-          color: "error.light",
+          icon: <PriorityHighOutlined sx={{ fontSize: 19, color: "inherit" }} />,
+          color: "#FFB3B3",
           label: "Szinkronizációs hibák vannak. Kérjük ellenőrizd a módosításokat.",
         }
       : {
-          icon: <CloudDoneOutlined sx={{ fontSize: 19 }} />,
-          color: "success.light",
+          icon: <CloudDoneOutlined sx={{ fontSize: 19, color: "inherit" }} />,
+          color: "#FFFFFF",
           label: "Minden változás szinkronizálva.",
         };
 
@@ -169,20 +191,28 @@ export function LabelingAppBar({
             title={syncIndicatorConfig.label}
             arrow
           >
-            <Box
+            <IconButton
+              onClick={() => void handleSyncStatusClick()}
+              onMouseEnter={() => setIsSyncIconHovered(true)}
+              onMouseLeave={() => setIsSyncIconHovered(false)}
               sx={{
                 color: syncIndicatorConfig.color,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
                 width: 32,
                 height: 32,
                 flexShrink: 0,
+                borderRadius: "5px",
+                "&:hover": {
+                  backgroundColor: "rgba(255,255,255,0.08)",
+                },
               }}
               aria-label={syncIndicatorConfig.label}
             >
-              {syncIndicatorConfig.icon}
-            </Box>
+              {isSyncIconHovered ? (
+                <SyncOutlined sx={{ fontSize: 19, color: "common.white" }} />
+              ) : (
+                syncIndicatorConfig.icon
+              )}
+            </IconButton>
           </Tooltip>
 
           <IconButton onClick={handleOpenAccountMenu} sx={{ color: accentColor, mr: -1, flexShrink: 0 }}>
@@ -219,6 +249,27 @@ export function LabelingAppBar({
           Kijelentkezés
         </MenuItem>
       </Menu>
+
+      <Snackbar
+        open={Boolean(syncReloadFeedback)}
+        autoHideDuration={3500}
+        onClose={(_, reason) => {
+          if (reason === "clickaway") {
+            return;
+          }
+          setSyncReloadFeedback(null);
+        }}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert
+          onClose={() => setSyncReloadFeedback(null)}
+          severity={syncReloadFeedback?.severity ?? "success"}
+          variant="filled"
+          sx={{ width: "100%" }}
+        >
+          {syncReloadFeedback?.message}
+        </Alert>
+      </Snackbar>
     </>
   );
 }

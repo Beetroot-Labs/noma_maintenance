@@ -32,6 +32,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import LoginPage from "./LoginPage";
 import { LabelingAppBar } from "./components/LabelingAppBar";
 import {
+  BuildingCachePayload,
+  cacheBuildingData,
   assignCachedDeviceBarcode,
   CachedDeviceDetails,
   deleteCachedDevicePhoto,
@@ -304,6 +306,32 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
     }
   };
 
+  const handleSyncStatusClick = async () => {
+    if (!id) {
+      return;
+    }
+
+    const selectedBuilding = await getSelectedCachedBuilding();
+    if (!selectedBuilding) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/labeling/buildings/${selectedBuilding.id}/cache`, {
+        credentials: "include",
+      });
+      if (!response.ok) {
+        throw new Error("Nem sikerült frissíteni az offline adatokat.");
+      }
+
+      const payload = (await response.json()) as BuildingCachePayload;
+      await cacheBuildingData(payload, selectedBuilding.id);
+      await loadDeviceDetails(id);
+    } catch (error) {
+      throw error;
+    }
+  };
+
   if (!isHydrated) {
     return (
       <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center", px: 2 }}>
@@ -332,6 +360,7 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
         userEmail={user.email}
         buildingName={buildingName}
         onBuildingClick={() => navigate("/")}
+        onSyncStatusClick={handleSyncStatusClick}
         onLogout={async () => {
           await clearUser();
         }}
