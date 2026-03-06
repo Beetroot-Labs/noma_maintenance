@@ -69,6 +69,7 @@ export type CachedDeviceListItem = {
   kind: string;
   brand: string | null;
   model: string | null;
+  serialNumber: string | null;
 };
 
 export type CachedDeviceDetails = CachedDeviceListItem & {
@@ -559,6 +560,7 @@ export const getCachedDeviceListItems = async (): Promise<CachedDeviceListItem[]
       kind: device.kind,
       brand: device.brand,
       model: device.model,
+      serialNumber: device.serial_number ?? null,
     };
   });
 };

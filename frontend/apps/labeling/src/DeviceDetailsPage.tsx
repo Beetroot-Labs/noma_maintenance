@@ -53,6 +53,7 @@ type DeviceDetailsPageProps = {
 
 type ScannerProfileId = "1080P" | "720P";
 type EditableFieldKey = keyof EditableDeviceDetails;
+const locationFieldKeys: EditableFieldKey[] = ["floor", "wing", "room", "locationDescription"];
 
 type DetailRowProps = {
   icon: ReactNode;
@@ -592,12 +593,20 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
   };
 
   const handleOpenFieldEditor = (field: EditableFieldKey) => {
+    if (locationFieldKeys.includes(field)) {
+      return;
+    }
     setEditingField(field);
     setEditingValue(getEditableFieldCurrentValue(field));
   };
 
   const handleSaveField = async () => {
     if (!id || !editingField) {
+      return;
+    }
+    if (locationFieldKeys.includes(editingField)) {
+      setEditingField(null);
+      setEditingValue("");
       return;
     }
 
@@ -820,26 +829,22 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
                         icon={<Height fontSize="small" />}
                         label="Emelet"
                         value={device.floor ?? "Nincs megadva"}
-                        onClick={() => handleOpenFieldEditor("floor")}
                       />
                       <DetailRow
                         icon={<Business fontSize="small" />}
                         label="Szárny"
                         value={device.wing ?? "Nincs megadva"}
-                        onClick={() => handleOpenFieldEditor("wing")}
                       />
                       <DetailRow
                         icon={<SensorDoor fontSize="small" />}
                         label="Helyiség"
                         value={device.room ?? "Nincs megadva"}
-                        onClick={() => handleOpenFieldEditor("room")}
                       />
                       <Box sx={{ gridColumn: { xs: "auto", sm: "1 / -1" } }}>
                         <DetailRow
                           icon={<LocationOnOutlined fontSize="small" />}
                           label="Hely leírása"
                           value={device.locationDescription ?? "Nincs megadva"}
-                          onClick={() => handleOpenFieldEditor("locationDescription")}
                         />
                       </Box>
                     </Box>

@@ -47,7 +47,7 @@ type LabelingHomeProps = {
   googleClientId: string;
 };
 
-type FilterKey = "code" | "floor" | "wing" | "room" | "kind" | "brand" | "model";
+type FilterKey = "code" | "floor" | "wing" | "room" | "kind" | "brand" | "model" | "serialNumber";
 
 type ColumnFilterState = Record<FilterKey, string>;
 
@@ -59,6 +59,7 @@ const emptyFilters: ColumnFilterState = {
   kind: "",
   brand: "",
   model: "",
+  serialNumber: "",
 };
 
 const tableColumns: Array<{ key: FilterKey; label: string }> = [
@@ -69,6 +70,7 @@ const tableColumns: Array<{ key: FilterKey; label: string }> = [
   { key: "kind", label: "Eszköz típusa" },
   { key: "brand", label: "Márka" },
   { key: "model", label: "Modell" },
+  { key: "serialNumber", label: "Gyári szám" },
 ];
 
 const enumFilterKeys: FilterKey[] = ["floor", "wing", "kind", "brand"];
@@ -401,6 +403,7 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
       (left, right) => left.localeCompare(right, "hu-HU"),
     ),
     model: [],
+    serialNumber: [],
   };
 
   const filteredDeviceRows = deviceRows.filter((device) =>
@@ -688,7 +691,7 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
                   <TableBody>
                     {filteredDeviceRows.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={7} sx={{ py: 4, textAlign: "center", color: "text.secondary" }}>
+                        <TableCell colSpan={8} sx={{ py: 4, textAlign: "center", color: "text.secondary" }}>
                           {deviceRows.length === 0
                             ? "Nincs betöltött eszköz a helyi gyorsítótárban."
                             : "Nincs a megadott szűrésnek megfelelő eszköz."}
@@ -711,6 +714,7 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
                           </TableCell>
                           <TableCell>{device.brand ?? "-"}</TableCell>
                           <TableCell>{device.model ?? "-"}</TableCell>
+                          <TableCell>{device.serialNumber ?? "-"}</TableCell>
                         </TableRow>
                       ))
                     )}
