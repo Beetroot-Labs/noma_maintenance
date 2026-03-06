@@ -23,9 +23,8 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import { BarcodeFormat, DecodeHintType } from "@zxing/library";
-import { BrowserMultiFormatReader } from "@zxing/browser";
-import { Barcode, Camera, ImagePlus, ScanBarcode, Trash2, TriangleAlert } from "lucide-react";
+import Quagga, { type QuaggaJSResultObject } from "@ericblade/quagga2";
+import { Barcode, Camera, Flashlight, FlashlightOff, ImagePlus, ScanBarcode, Trash2, TriangleAlert, X } from "lucide-react";
 import { getDeviceKindLabel, useAuth, validateNomaBarcode } from "@noma/shared";
 import { ChangeEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -40,12 +39,15 @@ import {
   getCachedDeviceDetails,
   getSelectedCachedBuilding,
   replaceCachedDevicePhoto,
+  syncPendingBarcodeAssignments,
 } from "./lib/offlineCache";
 import { appColors } from "./theme";
 
 type DeviceDetailsPageProps = {
   googleClientId: string;
 };
+
+type ScannerProfileId = "1080P" | "720P";
 
 type DetailRowProps = {
   icon: ReactNode;
@@ -99,9 +101,19 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
   const [isUpdatingPhoto, setIsUpdatingPhoto] = useState(false);
   const [isAssigningBarcode, setIsAssigningBarcode] = useState(false);
   const [barcodeCameraError, setBarcodeCameraError] = useState<string | null>(null);
+  const [flashlightSupported, setFlashlightSupported] = useState(false);
+  const [flashlightEnabled, setFlashlightEnabled] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
-  const barcodeVideoRef = useRef<HTMLVideoElement | null>(null);
-  const barcodeControlsRef = useRef<{ stop: () => void } | null>(null);
+  const barcodeScannerContainerRef = useRef<HTMLDivElement | null>(null);
+  const barcodeDetectedHandlerRef = useRef<((result: QuaggaJSResultObject) => void) | null>(null);
+  const barcodeProcessedHandlerRef = useRef<((result: QuaggaJSResultObject) => void) | null>(null);
+  const barcodeProcessingRef = useRef(false);
+  const barcodeFeedbackResetTimerRef = useRef<number | null>(null);
+  const barcodeFeedbackStateRef = useRef<"SUCCESS" | "FAILURE" | null>(null);
+  const scannerProfileRef = useRef<ScannerProfileId>("1080P");
+  const scannerFpsSamplesRef = useRef<number[]>([]);
+  const scannerFallbackTriggeredRef = useRef(false);
+  const scannerRestartPendingRef = useRef(false);
   const activeObjectUrlRef = useRef<string | null>(null);
 
   const loadDeviceDetails = async (deviceId: string) => {
@@ -174,74 +186,333 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
   );
 
   const stopBarcodeScanner = () => {
-    barcodeControlsRef.current?.stop();
-    barcodeControlsRef.current = null;
+    const stream = barcodeScannerContainerRef.current
+      ?.querySelector("video")
+      ?.srcObject;
+    const track = stream instanceof MediaStream ? stream.getVideoTracks()[0] : null;
+    if (track && flashlightEnabled) {
+      void track
+        .applyConstraints({ advanced: [{ torch: false } as MediaTrackConstraintSet] })
+        .catch(() => undefined);
+    }
+
+    if (barcodeDetectedHandlerRef.current) {
+      Quagga.offDetected(barcodeDetectedHandlerRef.current);
+      barcodeDetectedHandlerRef.current = null;
+    } else {
+      Quagga.offDetected();
+    }
+    if (barcodeProcessedHandlerRef.current) {
+      Quagga.offProcessed(barcodeProcessedHandlerRef.current);
+      barcodeProcessedHandlerRef.current = null;
+    } else {
+      Quagga.offProcessed();
+    }
+    void Quagga.stop().catch(() => undefined);
+    barcodeProcessingRef.current = false;
+    if (barcodeFeedbackResetTimerRef.current !== null) {
+      window.clearTimeout(barcodeFeedbackResetTimerRef.current);
+      barcodeFeedbackResetTimerRef.current = null;
+    }
+    barcodeFeedbackStateRef.current = null;
+    scannerFpsSamplesRef.current = [];
+
+    if (Quagga.canvas?.ctx?.overlay && Quagga.canvas?.dom?.overlay) {
+      Quagga.canvas.ctx.overlay.clearRect(
+        0,
+        0,
+        Quagga.canvas.dom.overlay.width,
+        Quagga.canvas.dom.overlay.height,
+      );
+    }
+
     setIsAssigningBarcode(false);
+    setFlashlightEnabled(false);
+    setFlashlightSupported(false);
   };
 
-  const startBarcodeScanner = () => {
-    if (!barcodeDialogOpen || !barcodeVideoRef.current) {
+  const scheduleFallbackTo720p = () => {
+    if (scannerRestartPendingRef.current) {
+      return;
+    }
+    scannerRestartPendingRef.current = true;
+    scannerProfileRef.current = "720P";
+    window.setTimeout(() => {
+      scannerRestartPendingRef.current = false;
+      if (barcodeDialogOpen && !barcodeProcessingRef.current) {
+        startBarcodeScanner("720P");
+      }
+    }, 120);
+  };
+
+  const tryBoostTrackToMaxResolution = async () => {
+    const stream = barcodeScannerContainerRef.current
+      ?.querySelector("video")
+      ?.srcObject;
+    const track = stream instanceof MediaStream ? stream.getVideoTracks()[0] : null;
+    if (!track) {
+      return;
+    }
+    const capabilities =
+      typeof track.getCapabilities === "function"
+        ? (track.getCapabilities() as MediaTrackCapabilities & {
+            width?: { max?: number };
+            height?: { max?: number };
+          })
+        : null;
+    const maxWidth = capabilities?.width?.max;
+    const maxHeight = capabilities?.height?.max;
+    if (typeof maxWidth !== "number" || typeof maxHeight !== "number") {
       return;
     }
 
+    await track
+      .applyConstraints({
+        width: { exact: maxWidth },
+        height: { exact: maxHeight },
+      })
+      .catch(() => undefined);
+  };
+
+  const setBarcodeFeedbackState = (state: "SUCCESS" | "FAILURE" | null) => {
+    if (barcodeFeedbackResetTimerRef.current !== null) {
+      window.clearTimeout(barcodeFeedbackResetTimerRef.current);
+      barcodeFeedbackResetTimerRef.current = null;
+    }
+    barcodeFeedbackStateRef.current = state;
+    if (state) {
+      barcodeFeedbackResetTimerRef.current = window.setTimeout(() => {
+        barcodeFeedbackStateRef.current = null;
+        barcodeFeedbackResetTimerRef.current = null;
+      }, 1000);
+    }
+  };
+
+  const detectFlashlightSupport = () => {
+    const stream = barcodeScannerContainerRef.current
+      ?.querySelector("video")
+      ?.srcObject;
+    const track = stream instanceof MediaStream ? stream.getVideoTracks()[0] : null;
+    const capabilities =
+      typeof track?.getCapabilities === "function"
+        ? (track.getCapabilities() as MediaTrackCapabilities & { torch?: boolean })
+        : null;
+    setFlashlightSupported(Boolean(capabilities?.torch));
+
+    const zoomCapabilities = capabilities as MediaTrackCapabilities & {
+      zoom?: { min?: number; max?: number };
+    };
+    const minZoom = zoomCapabilities.zoom?.min;
+    if (track && typeof minZoom === "number") {
+      void track
+        .applyConstraints({ advanced: [{ zoom: minZoom } as MediaTrackConstraintSet] })
+        .catch(() => undefined);
+    }
+
+    if (track) {
+      void track
+        .applyConstraints({
+          advanced: [{ focusMode: "continuous" } as unknown as MediaTrackConstraintSet],
+        })
+        .catch(() => undefined);
+    }
+  };
+
+  const toggleFlashlight = async () => {
+    const stream = barcodeScannerContainerRef.current
+      ?.querySelector("video")
+      ?.srcObject;
+    const track = stream instanceof MediaStream ? stream.getVideoTracks()[0] : null;
+    if (!track) {
+      setBarcodeCameraError("A zseblámpa nem érhető el.");
+      return;
+    }
+
+    const nextState = !flashlightEnabled;
+    try {
+      await track.applyConstraints({
+        advanced: [{ torch: nextState } as MediaTrackConstraintSet],
+      });
+      setFlashlightEnabled(nextState);
+    } catch {
+      setBarcodeCameraError(
+        nextState
+          ? "A zseblámpát nem sikerült bekapcsolni."
+          : "A zseblámpát nem sikerült kikapcsolni.",
+      );
+    }
+  };
+
+  const startBarcodeScanner = (profile: ScannerProfileId = "1080P") => {
+    if (!barcodeDialogOpen || !barcodeScannerContainerRef.current) {
+      return;
+    }
+
+    scannerProfileRef.current = profile;
     stopBarcodeScanner();
     setBarcodeCameraError(null);
     setIsAssigningBarcode(true);
 
-    const hints = new Map();
-    hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_128]);
-    const reader = new BrowserMultiFormatReader(hints, 400);
+    const onDetected = async (result: QuaggaJSResultObject) => {
+      if (!barcodeDialogOpen || !id || barcodeProcessingRef.current) {
+        return;
+      }
 
-    reader
-      .decodeFromVideoDevice(null, barcodeVideoRef.current, async (result, error, controls) => {
-        if (!barcodeDialogOpen) {
-          return;
+      const scannedCode = result.codeResult.code?.trim() ?? "";
+      if (!scannedCode) {
+        return;
+      }
+
+      const validation = validateNomaBarcode(scannedCode);
+      if (validation.error) {
+        if (validation.error === "A detektált kód nem NoMa vonalkód") {
+          console.warn("Scanned non-NoMa barcode:", scannedCode);
         }
+        setBarcodeFeedbackState("FAILURE");
+        setBarcodeCameraError(validation.error);
+        return;
+      }
+      const identifier = validation.identifier;
+      if (!identifier) {
+        return;
+      }
 
-        if (controls && !barcodeControlsRef.current) {
-          barcodeControlsRef.current = controls;
+      barcodeProcessingRef.current = true;
+      setBarcodeFeedbackState("SUCCESS");
+      setIsAssigningBarcode(true);
+
+      try {
+        await assignCachedDeviceBarcode(id, identifier);
+        await syncPendingBarcodeAssignments();
+        await loadDeviceDetails(id);
+        stopBarcodeScanner();
+        setBarcodeDialogOpen(false);
+      } catch (error) {
+        setBarcodeFeedbackState("FAILURE");
+        setBarcodeCameraError(
+          error instanceof Error
+            ? error.message
+            : "Nem sikerült elmenteni a beolvasott vonalkódot.",
+        );
+        barcodeProcessingRef.current = false;
+      } finally {
+        if (barcodeDialogOpen && !barcodeProcessingRef.current) {
           setIsAssigningBarcode(false);
         }
+      }
+    };
 
-        if (result && id) {
-          const scannedCode = result.getText().trim();
-          if (!scannedCode) {
+    const onProcessed = (result: QuaggaJSResultObject) => {
+      const ctx = Quagga.canvas?.ctx?.overlay;
+      const canvas = Quagga.canvas?.dom?.overlay;
+      if (!ctx || !canvas) {
+        return;
+      }
+
+      const now = performance.now();
+      const samples = scannerFpsSamplesRef.current;
+      samples.push(now);
+      if (samples.length > 24) {
+        samples.shift();
+      }
+      if (
+        samples.length >= 10 &&
+        !scannerFallbackTriggeredRef.current &&
+        scannerProfileRef.current !== "720P"
+      ) {
+        const elapsedMs = samples[samples.length - 1] - samples[0];
+        if (elapsedMs > 0) {
+          const fps = ((samples.length - 1) * 1000) / elapsedMs;
+          if (fps < 6) {
+            scannerFallbackTriggeredRef.current = true;
+            scheduleFallbackTo720p();
             return;
-          }
-
-          const validation = validateNomaBarcode(scannedCode);
-          if (validation.error) {
-            setBarcodeCameraError(validation.error);
-            return;
-          }
-          const identifier = validation.identifier;
-          if (!identifier) {
-            return;
-          }
-
-          stopBarcodeScanner();
-          setIsAssigningBarcode(true);
-
-          try {
-            await assignCachedDeviceBarcode(id, identifier);
-            await loadDeviceDetails(id);
-            setBarcodeDialogOpen(false);
-          } catch (error) {
-            setBarcodeCameraError(
-              error instanceof Error
-                ? error.message
-                : "Nem sikerült elmenteni a beolvasott vonalkódot.",
-            );
-          } finally {
-            if (barcodeDialogOpen) {
-              setIsAssigningBarcode(false);
-            }
           }
         }
+      }
 
-        if (error) {
-          // Ignore decode misses while scanning.
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (result?.boxes) {
+        result.boxes
+          .filter((box) => box !== result.box)
+          .forEach((box) => {
+            Quagga.ImageDebug.drawPath(box as unknown[], { x: 0, y: 1 }, ctx, {
+              color: "rgba(255, 255, 255, 0.55)",
+              lineWidth: 1,
+            });
+          });
+      }
+
+      if (result?.box) {
+        const state = barcodeFeedbackStateRef.current;
+        const activeColor =
+          state === "SUCCESS"
+            ? "#22C55E"
+            : state === "FAILURE"
+              ? "#EF4444"
+              : "#EAB308";
+
+        Quagga.ImageDebug.drawPath(result.box as unknown[], { x: 0, y: 1 }, ctx, {
+          color: activeColor,
+          lineWidth: 3,
+        });
+      }
+    };
+
+    barcodeDetectedHandlerRef.current = onDetected;
+    barcodeProcessedHandlerRef.current = onProcessed;
+
+    const constraints =
+      profile === "720P"
+        ? {
+            facingMode: "environment",
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          }
+        : {
+            facingMode: "environment",
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+          };
+
+    void Quagga.init({
+      inputStream: {
+        type: "LiveStream",
+        target: barcodeScannerContainerRef.current,
+        constraints,
+        area: {
+          top: "35%",
+          right: "14%",
+          left: "14%",
+          bottom: "35%",
+        },
+      },
+      decoder: {
+        readers: ["code_128_reader"],
+      },
+      locator: {
+        patchSize: "medium",
+        halfSample: true,
+      },
+      locate: true,
+      numOfWorkers:
+        typeof navigator !== "undefined" && typeof navigator.hardwareConcurrency === "number"
+          ? Math.max(1, Math.min(4, navigator.hardwareConcurrency))
+          : 2,
+      frequency: 10,
+    })
+      .then(() => {
+        Quagga.onDetected(onDetected);
+        Quagga.onProcessed(onProcessed);
+        Quagga.start();
+        setIsAssigningBarcode(false);
+        if (profile === "1080P") {
+          void tryBoostTrackToMaxResolution();
         }
+        window.setTimeout(() => {
+          detectFlashlightSupport();
+        }, 0);
       })
       .catch(() => {
         setBarcodeCameraError("Nem sikerült elindítani a kamerát.");
@@ -253,6 +524,8 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
     if (!barcodeDialogOpen) {
       stopBarcodeScanner();
       setBarcodeCameraError(null);
+      scannerFallbackTriggeredRef.current = false;
+      scannerProfileRef.current = "1080P";
     }
 
     return () => {
@@ -664,58 +937,136 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
             }, 0);
           },
         }}
-        fullWidth
-        maxWidth="sm"
+        fullScreen
         PaperProps={{
           sx: {
-            borderRadius: "5px",
+            borderRadius: 0,
+            backgroundColor: "common.black",
           },
         }}
       >
-        <Box sx={{ px: 3, py: 2.5 }}>
-          <Stack spacing={2}>
-            <Box>
-              <Typography variant="h2">Vonalkód hozzárendelése</Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                Irányítsd a kamerát a CODE 128 NoMa vonalkódra.
-              </Typography>
-            </Box>
+        <Box
+          sx={{
+            position: "relative",
+            width: "100%",
+            height: "100dvh",
+            overflow: "hidden",
+            bgcolor: "common.black",
+          }}
+        >
+          <Box
+            ref={barcodeScannerContainerRef}
+            sx={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              "& video": {
+                position: "absolute",
+                left: "50%",
+                top: "50%",
+                transform: "translate(-50%, -50%)",
+                maxWidth: "100%",
+                maxHeight: "100%",
+                width: "auto",
+                height: "auto",
+              },
+              "& canvas": {
+                position: "absolute",
+                left: "50%",
+                top: "50%",
+                transform: "translate(-50%, -50%)",
+                maxWidth: "100%",
+                maxHeight: "100%",
+                width: "auto",
+                height: "auto",
+                pointerEvents: "none",
+              },
+            }}
+          />
 
+          <Box
+            sx={{
+              position: "absolute",
+              left: "50%",
+              top: "50%",
+              width: { xs: "72%", sm: "60%" },
+              height: { xs: "30%", sm: "28%" },
+              transform: "translate(-50%, -50%)",
+              border: "2px solid rgba(255,255,255,0.9)",
+              borderRadius: "5px",
+              boxShadow: "0 0 0 9999px rgba(0, 0, 0, 0.25)",
+              pointerEvents: "none",
+            }}
+          />
+
+          <Stack
+            direction="row"
+            sx={{
+              position: "absolute",
+              top: "max(12px, env(safe-area-inset-top))",
+              left: 0,
+              right: 0,
+              px: 1.5,
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <IconButton
+              onClick={() => setBarcodeDialogOpen(false)}
+              sx={{
+                color: "common.white",
+                bgcolor: "rgba(0, 0, 0, 0.45)",
+                "&:hover": { bgcolor: "rgba(0, 0, 0, 0.6)" },
+              }}
+              aria-label="Bezárás"
+            >
+              <X size={18} />
+            </IconButton>
+            <IconButton
+              color="secondary"
+              onClick={toggleFlashlight}
+              disabled={!flashlightSupported || isAssigningBarcode}
+              sx={{
+                color: "common.white",
+                bgcolor: "rgba(0, 0, 0, 0.45)",
+                "&:hover": { bgcolor: "rgba(0, 0, 0, 0.6)" },
+                "&.Mui-disabled": {
+                  color: "rgba(255,255,255,0.45)",
+                },
+              }}
+              aria-label="Zseblámpa"
+            >
+              {flashlightEnabled ? <FlashlightOff size={18} /> : <Flashlight size={18} />}
+            </IconButton>
+          </Stack>
+
+          {isAssigningBarcode && !barcodeCameraError && (
             <Box
               sx={{
-                aspectRatio: "16 / 9",
-                bgcolor: "grey.900",
-                borderRadius: "5px",
-                overflow: "hidden",
+                position: "absolute",
+                bottom: "max(20px, env(safe-area-inset-bottom))",
+                left: "50%",
+                transform: "translateX(-50%)",
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "center",
+                gap: 1.25,
+                px: 1.5,
+                py: 0.75,
+                borderRadius: "5px",
+                bgcolor: "rgba(0,0,0,0.55)",
+                color: "common.white",
               }}
             >
-              <Box
-                component="video"
-                ref={barcodeVideoRef}
-                autoPlay
-                playsInline
-                disablePictureInPicture
-                sx={{ width: "100%", height: "100%", objectFit: "cover" }}
-                muted
-              />
+              <CircularProgress size={18} sx={{ color: "common.white" }} />
+              <Typography variant="body2" sx={{ color: "common.white" }}>
+                Kamera indítása...
+              </Typography>
             </Box>
-
-            {isAssigningBarcode && !barcodeCameraError && (
-              <Box sx={{ display: "flex", alignItems: "center", gap: 1.25 }}>
-                <CircularProgress size={18} color="secondary" />
-                <Typography variant="body2" color="text.secondary">
-                  Kamera indítása...
-                </Typography>
-              </Box>
-            )}
-
-            <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
-              <Button onClick={() => setBarcodeDialogOpen(false)}>Bezárás</Button>
-            </Box>
-          </Stack>
+          )}
         </Box>
       </Dialog>
 
