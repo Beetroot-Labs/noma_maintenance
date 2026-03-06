@@ -32,16 +32,13 @@ if (!import.meta.env.DEV && "serviceWorker" in navigator) {
           // Ignore update check failures.
         });
 
-        const promptUpdate = (reg: ServiceWorkerRegistration) => {
+        const activateUpdate = (reg: ServiceWorkerRegistration) => {
           if (!reg.waiting) return;
-          const shouldUpdate = window.confirm("Új verzió érhető el. Frissíti most az alkalmazást?");
-          if (shouldUpdate) {
-            reg.waiting.postMessage({ type: "SKIP_WAITING" });
-          }
+          reg.waiting.postMessage({ type: "SKIP_WAITING" });
         };
 
         if (registration.waiting) {
-          promptUpdate(registration);
+          activateUpdate(registration);
         }
 
         registration.addEventListener("updatefound", () => {
@@ -49,7 +46,7 @@ if (!import.meta.env.DEV && "serviceWorker" in navigator) {
           if (!installing) return;
           installing.addEventListener("statechange", () => {
             if (installing.state === "installed") {
-              promptUpdate(registration);
+              activateUpdate(registration);
             }
           });
         });
