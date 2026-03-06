@@ -7,7 +7,7 @@ import {
 } from "@noma/shared";
 
 const DB_NAME = "noma-labeling";
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const BUILDINGS_STORE = "buildings";
 const LOCATIONS_STORE = "locations";
 const DEVICES_STORE = "devices";
@@ -82,19 +82,37 @@ export type CachedDeviceDetails = CachedDeviceListItem & {
   cachedPhotoBlob: Blob | null;
 };
 
-type SyncMutationType = "ASSIGN_DEVICE_BARCODE" | "UPSERT_DEVICE_PHOTO" | "DELETE_DEVICE_PHOTO";
+export type EditableDeviceDetails = {
+  floor: string | null;
+  wing: string | null;
+  room: string | null;
+  locationDescription: string | null;
+  kind: string;
+  brand: string | null;
+  model: string | null;
+  serialNumber: string | null;
+  sourceDeviceCode: string | null;
+  additionalInfo: string | null;
+};
+
+type SyncMutationType =
+  | "ASSIGN_DEVICE_BARCODE"
+  | "UPSERT_DEVICE_PHOTO"
+  | "DELETE_DEVICE_PHOTO"
+  | "UPSERT_DEVICE_DETAILS";
 
 type SyncOutboxPayload = {
   barcode?: string;
   contentType?: string | null;
   sourceUrl?: string | null;
+  details?: EditableDeviceDetails;
 };
 
 type SyncOutboxRecord = OfflineOutboxItem<SyncOutboxPayload> & {
   id: string;
   mutation_id?: string;
   mutation_type: SyncMutationType;
-  entity_type: "DEVICE_BARCODE" | "DEVICE_PHOTO";
+  entity_type: "DEVICE_BARCODE" | "DEVICE_PHOTO" | "DEVICE_DETAILS";
   entity_id: string;
   // Legacy compatibility for already-cached local data.
   operation?: "ASSIGN_BARCODE" | "UPSERT_PHOTO" | "DELETE_PHOTO";
@@ -144,7 +162,7 @@ const openDb = (): Promise<IDBDatabase> =>
       if (!db.objectStoreNames.contains(SETTINGS_STORE)) {
         db.createObjectStore(SETTINGS_STORE, { keyPath: "key" });
       }
-      if (request.oldVersion < 4 && tx && db.objectStoreNames.contains(SYNC_OUTBOX_STORE)) {
+      if (request.oldVersion < 5 && tx && db.objectStoreNames.contains(SYNC_OUTBOX_STORE)) {
         // Clear legacy outbox rows so every queued mutation follows the unified format.
         tx.objectStore(SYNC_OUTBOX_STORE).clear();
       }
@@ -207,6 +225,7 @@ const fetchPhotoBlob = async (url: string): Promise<Blob> => {
 
 const barcodeOutboxId = (deviceId: string) => `DEVICE_BARCODE:${deviceId}`;
 const photoOutboxId = (deviceId: string) => `DEVICE_PHOTO:${deviceId}`;
+const detailsOutboxId = (deviceId: string) => `DEVICE_DETAILS:${deviceId}`;
 
 const normalizeMutationType = (item: SyncOutboxRecord): SyncMutationType => {
   if (item.mutation_type) {
@@ -217,6 +236,9 @@ const normalizeMutationType = (item: SyncOutboxRecord): SyncMutationType => {
   }
   if (item.operation === "DELETE_PHOTO") {
     return "DELETE_DEVICE_PHOTO";
+  }
+  if (item.entity_type === "DEVICE_DETAILS") {
+    return "UPSERT_DEVICE_DETAILS";
   }
   return "ASSIGN_DEVICE_BARCODE";
 };
@@ -237,6 +259,30 @@ const createMutationId = () => {
   }
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 };
+
+const normalizeNullableText = (value: string | null | undefined): string | null => {
+  if (value == null) {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+};
+
+const toEditableDetails = (
+  device: CachedDevice,
+  location: CachedLocation | null,
+): EditableDeviceDetails => ({
+  floor: location?.floor ?? null,
+  wing: location?.wing ?? null,
+  room: location?.room ?? null,
+  locationDescription: location?.location_description ?? null,
+  kind: device.kind,
+  brand: device.brand ?? null,
+  model: device.model ?? null,
+  serialNumber: device.serial_number ?? null,
+  sourceDeviceCode: device.source_device_code ?? null,
+  additionalInfo: device.additional_info ?? null,
+});
 
 const readSyncError = async (
   response: Response,
@@ -342,6 +388,27 @@ export const cacheBuildingData = async (
       .filter((item) => item.entity_type === "DEVICE_PHOTO")
       .map((item) => item.entity_id),
   );
+  const pendingDetailsDeviceIds = new Set(
+    pendingBarcodeOutbox
+      .filter(
+        (item) =>
+          item.entity_type === "DEVICE_DETAILS" &&
+          isPendingSyncItem(item),
+      )
+      .map((item) => item.entity_id),
+  );
+  const pendingDetailsLocationById = new Map<string, CachedLocation>();
+  const existingLocations = await getAllRecords<CachedLocation>(LOCATIONS_STORE);
+  const existingLocationById = new Map(existingLocations.map((location) => [location.id, location]));
+  existingDevices.forEach((device) => {
+    if (!pendingDetailsDeviceIds.has(device.id) || !device.location_id) {
+      return;
+    }
+    const location = existingLocationById.get(device.location_id);
+    if (location) {
+      pendingDetailsLocationById.set(location.id, location);
+    }
+  });
   const photoRecords = (
     await Promise.all(
       payload.devices.map(async (device) => {
@@ -390,12 +457,14 @@ export const cacheBuildingData = async (
 
     tx.objectStore(BUILDINGS_STORE).put(payload.building);
     payload.locations.forEach((location) => {
-      tx.objectStore(LOCATIONS_STORE).put(location);
+      const nextLocation = pendingDetailsLocationById.get(location.id) ?? location;
+      tx.objectStore(LOCATIONS_STORE).put(nextLocation);
     });
     payload.devices.forEach((device) => {
       const existingDevice = existingDeviceById.get(device.id);
       const preserveLocalBarcode = pendingBarcodeDeviceIds.has(device.id);
       const preserveLocalPhoto = pendingPhotoDeviceIds.has(device.id);
+      const preserveLocalDetails = pendingDetailsDeviceIds.has(device.id);
       const nextCode = preserveLocalBarcode ? existingDevice?.code ?? null : device.code ?? null;
       const nextSyncState = preserveLocalBarcode
         ? existingDevice?.code_sync_state ?? "PENDING"
@@ -423,6 +492,18 @@ export const cacheBuildingData = async (
 
       tx.objectStore(DEVICES_STORE).put({
         ...device,
+        kind: preserveLocalDetails ? existingDevice?.kind ?? device.kind : device.kind,
+        additional_info: preserveLocalDetails
+          ? existingDevice?.additional_info ?? device.additional_info
+          : device.additional_info,
+        brand: preserveLocalDetails ? existingDevice?.brand ?? device.brand : device.brand,
+        model: preserveLocalDetails ? existingDevice?.model ?? device.model : device.model,
+        serial_number: preserveLocalDetails
+          ? existingDevice?.serial_number ?? device.serial_number
+          : device.serial_number,
+        source_device_code: preserveLocalDetails
+          ? existingDevice?.source_device_code ?? device.source_device_code
+          : device.source_device_code,
         code: nextCode,
         code_sync_state: nextSyncState,
         code_sync_error: nextSyncError,
@@ -519,6 +600,113 @@ export const getCachedDeviceDetails = async (
   };
 };
 
+export const updateCachedDeviceDetails = async (
+  deviceId: string,
+  updates: Partial<EditableDeviceDetails>,
+): Promise<void> => {
+  const db = await openDb();
+  const now = new Date().toISOString();
+
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction([DEVICES_STORE, LOCATIONS_STORE, SYNC_OUTBOX_STORE], "readwrite");
+    tx.onerror = () => reject(tx.error);
+    tx.oncomplete = () => resolve();
+
+    const devicesStore = tx.objectStore(DEVICES_STORE);
+    const locationsStore = tx.objectStore(LOCATIONS_STORE);
+    const outboxStore = tx.objectStore(SYNC_OUTBOX_STORE);
+    const deviceRequest = devicesStore.get(deviceId);
+
+    deviceRequest.onerror = () => reject(deviceRequest.error);
+    deviceRequest.onsuccess = () => {
+      const device = deviceRequest.result as CachedDevice | undefined;
+      if (!device) {
+        reject(new Error("device not found"));
+        return;
+      }
+
+      const nextDevice: CachedDevice = {
+        ...device,
+        kind: updates.kind ?? device.kind,
+        brand: updates.brand !== undefined ? normalizeNullableText(updates.brand) : device.brand,
+        model: updates.model !== undefined ? normalizeNullableText(updates.model) : device.model,
+        serial_number:
+          updates.serialNumber !== undefined
+            ? normalizeNullableText(updates.serialNumber)
+            : device.serial_number,
+        source_device_code:
+          updates.sourceDeviceCode !== undefined
+            ? normalizeNullableText(updates.sourceDeviceCode)
+            : device.source_device_code,
+        additional_info:
+          updates.additionalInfo !== undefined
+            ? normalizeNullableText(updates.additionalInfo)
+            : device.additional_info,
+      };
+      devicesStore.put(nextDevice);
+
+      const applyOutboxWithLocation = (nextLocation: CachedLocation | null) => {
+        const snapshot = toEditableDetails(nextDevice, nextLocation);
+        outboxStore.put({
+          id: detailsOutboxId(deviceId),
+          mutation_id: createMutationId(),
+          mutation_type: "UPSERT_DEVICE_DETAILS",
+          entity_type: "DEVICE_DETAILS",
+          entity_id: deviceId,
+          payload_json: { details: snapshot },
+          status: "PENDING",
+          retryable: true,
+          created_at: now,
+          updated_at: now,
+          last_attempt_at: null,
+          attempt_count: 0,
+          last_error: null,
+        } satisfies SyncOutboxRecord);
+      };
+
+      if (!device.location_id) {
+        applyOutboxWithLocation(null);
+        return;
+      }
+
+      const locationRequest = locationsStore.get(device.location_id);
+      locationRequest.onerror = () => reject(locationRequest.error);
+      locationRequest.onsuccess = () => {
+        const location = locationRequest.result as CachedLocation | undefined;
+        const nextLocation = location
+          ? ({
+              ...location,
+              floor:
+                updates.floor !== undefined
+                  ? normalizeNullableText(updates.floor)
+                  : location.floor,
+              wing:
+                updates.wing !== undefined
+                  ? normalizeNullableText(updates.wing)
+                  : location.wing,
+              room:
+                updates.room !== undefined
+                  ? normalizeNullableText(updates.room)
+                  : location.room,
+              location_description:
+                updates.locationDescription !== undefined
+                  ? normalizeNullableText(updates.locationDescription)
+                  : location.location_description,
+            } satisfies CachedLocation)
+          : null;
+
+        if (nextLocation) {
+          locationsStore.put(nextLocation);
+        }
+
+        applyOutboxWithLocation(nextLocation);
+      };
+    };
+  });
+
+  triggerOfflineSyncNow();
+};
+
 export const assignCachedDeviceBarcode = async (deviceId: string, code: string): Promise<void> => {
   const db = await openDb();
   const normalizedCode = code.trim();
@@ -612,18 +800,20 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
           return;
         }
 
-        devicesStore.put({
-          ...device,
-          ...(item.entity_type === "DEVICE_BARCODE"
-            ? {
-                code_sync_state: "PENDING" as const,
-                code_sync_error: null,
-              }
-            : {
-                photo_sync_state: "PENDING" as const,
-                photo_sync_error: null,
-              }),
-        } satisfies CachedDevice);
+        if (item.entity_type === "DEVICE_BARCODE" || item.entity_type === "DEVICE_PHOTO") {
+          devicesStore.put({
+            ...device,
+            ...(item.entity_type === "DEVICE_BARCODE"
+              ? {
+                  code_sync_state: "PENDING" as const,
+                  code_sync_error: null,
+                }
+              : {
+                  photo_sync_state: "PENDING" as const,
+                  photo_sync_error: null,
+                }),
+          } satisfies CachedDevice);
+        }
 
         outboxStore.put({
           ...item,
@@ -649,6 +839,16 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
           },
           credentials: "include",
           body: JSON.stringify({ code: payload.barcode }),
+        });
+      } else if (item.entity_type === "DEVICE_DETAILS") {
+        response = await fetch(`/api/labeling/devices/${item.entity_id}/details`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Mutation-Id": mutationIdForItem(item),
+          },
+          credentials: "include",
+          body: JSON.stringify(getItemPayload(item).details ?? {}),
         });
       } else if (normalizeMutationType(item) === "UPSERT_DEVICE_PHOTO") {
         const photoRecord = await getRecord<CachedDevicePhotoRecord>(DEVICE_PHOTOS_STORE, item.entity_id);
@@ -699,7 +899,7 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
           deviceRequest.onerror = () => reject(deviceRequest.error);
           deviceRequest.onsuccess = () => {
             const device = deviceRequest.result as CachedDevice | undefined;
-            if (device) {
+            if (device && (item.entity_type === "DEVICE_BARCODE" || item.entity_type === "DEVICE_PHOTO")) {
               devicesStore.put({
                 ...device,
                 ...(item.entity_type === "DEVICE_BARCODE"
@@ -730,11 +930,12 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
       }
 
       await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction([DEVICES_STORE, SYNC_OUTBOX_STORE], "readwrite");
+        const tx = db.transaction([DEVICES_STORE, LOCATIONS_STORE, SYNC_OUTBOX_STORE], "readwrite");
         tx.onerror = () => reject(tx.error);
         tx.oncomplete = () => resolve();
 
         const devicesStore = tx.objectStore(DEVICES_STORE);
+        const locationsStore = tx.objectStore(LOCATIONS_STORE);
         const outboxStore = tx.objectStore(SYNC_OUTBOX_STORE);
         const deviceRequest = devicesStore.get(item.entity_id);
 
@@ -749,20 +950,50 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
                 ? `/api/labeling/devices/${item.entity_id}/photo`
                 : null;
 
-            devicesStore.put({
-              ...device,
-              ...(item.entity_type === "DEVICE_BARCODE"
-                ? {
-                    code: payload.barcode ?? device.code ?? null,
-                    code_sync_state: "SYNCED" as const,
-                    code_sync_error: null,
-                  }
-                : {
-                    device_photo_url: nextPhotoUrl,
-                    photo_sync_state: "SYNCED" as const,
-                    photo_sync_error: null,
-                  }),
-            } satisfies CachedDevice);
+            if (item.entity_type === "DEVICE_BARCODE") {
+              devicesStore.put({
+                ...device,
+                code: payload.barcode ?? device.code ?? null,
+                code_sync_state: "SYNCED" as const,
+                code_sync_error: null,
+              } satisfies CachedDevice);
+            } else if (item.entity_type === "DEVICE_PHOTO") {
+              devicesStore.put({
+                ...device,
+                device_photo_url: nextPhotoUrl,
+                photo_sync_state: "SYNCED" as const,
+                photo_sync_error: null,
+              } satisfies CachedDevice);
+            } else if (item.entity_type === "DEVICE_DETAILS") {
+              const details = payload.details;
+              if (details) {
+                devicesStore.put({
+                  ...device,
+                  kind: details.kind,
+                  brand: normalizeNullableText(details.brand),
+                  model: normalizeNullableText(details.model),
+                  serial_number: normalizeNullableText(details.serialNumber),
+                  source_device_code: normalizeNullableText(details.sourceDeviceCode),
+                  additional_info: normalizeNullableText(details.additionalInfo),
+                } satisfies CachedDevice);
+                if (device.location_id) {
+                  const locationReq = locationsStore.get(device.location_id);
+                  locationReq.onsuccess = () => {
+                    const currentLocation = locationReq.result as CachedLocation | undefined;
+                    if (!currentLocation) {
+                      return;
+                    }
+                    locationsStore.put({
+                      ...currentLocation,
+                      floor: normalizeNullableText(details.floor),
+                      wing: normalizeNullableText(details.wing),
+                      room: normalizeNullableText(details.room),
+                      location_description: normalizeNullableText(details.locationDescription),
+                    } satisfies CachedLocation);
+                  };
+                }
+              }
+            }
           }
 
           outboxStore.delete(item.id);
@@ -781,7 +1012,7 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
         deviceRequest.onerror = () => reject(deviceRequest.error);
         deviceRequest.onsuccess = () => {
           const device = deviceRequest.result as CachedDevice | undefined;
-          if (device) {
+          if (device && (item.entity_type === "DEVICE_BARCODE" || item.entity_type === "DEVICE_PHOTO")) {
             devicesStore.put({
               ...device,
               ...(item.entity_type === "DEVICE_BARCODE"

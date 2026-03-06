@@ -18,14 +18,16 @@ import {
   Dialog,
   Fab,
   IconButton,
+  MenuItem,
   Paper,
   Snackbar,
   Stack,
+  TextField,
   Typography,
 } from "@mui/material";
 import Quagga, { type QuaggaJSResultObject } from "@ericblade/quagga2";
-import { Barcode, Camera, Flashlight, FlashlightOff, ImagePlus, ScanBarcode, Trash2, TriangleAlert, X } from "lucide-react";
-import { getDeviceKindLabel, useAuth, validateNomaBarcode } from "@noma/shared";
+import { Barcode, Camera, Flashlight, FlashlightOff, ImagePlus, MessageCircleMore, ScanBarcode, Trash2, TriangleAlert, X } from "lucide-react";
+import { deviceKindLabels, getDeviceKindLabel, useAuth, validateNomaBarcode } from "@noma/shared";
 import { ChangeEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import LoginPage from "./LoginPage";
@@ -36,10 +38,12 @@ import {
   assignCachedDeviceBarcode,
   CachedDeviceDetails,
   deleteCachedDevicePhoto,
+  EditableDeviceDetails,
   getCachedDeviceDetails,
   getSelectedCachedBuilding,
   replaceCachedDevicePhoto,
   syncPendingBarcodeAssignments,
+  updateCachedDeviceDetails,
 } from "./lib/offlineCache";
 import { appColors } from "./theme";
 
@@ -48,6 +52,7 @@ type DeviceDetailsPageProps = {
 };
 
 type ScannerProfileId = "1080P" | "720P";
+type EditableFieldKey = keyof EditableDeviceDetails;
 
 type DetailRowProps = {
   icon: ReactNode;
@@ -56,11 +61,31 @@ type DetailRowProps = {
   valueColor?: string;
   valueAdornment?: ReactNode;
   helperText?: string | null;
+  onClick?: () => void;
 };
 
-function DetailRow({ icon, label, value, valueColor, valueAdornment, helperText }: DetailRowProps) {
+const editableFieldLabels: Record<EditableFieldKey, string> = {
+  floor: "Emelet",
+  wing: "Szárny",
+  room: "Helyiség",
+  locationDescription: "Hely leírása",
+  kind: "Eszköz típusa",
+  brand: "Márka",
+  model: "Modell",
+  serialNumber: "Gyári szám",
+  sourceDeviceCode: "Eszköz azonosító",
+  additionalInfo: "Megjegyzés",
+};
+
+function DetailRow({ icon, label, value, valueColor, valueAdornment, helperText, onClick }: DetailRowProps) {
   return (
-    <Stack direction="row" spacing={1.5} alignItems="flex-start">
+    <Stack
+      direction="row"
+      spacing={1.5}
+      alignItems="flex-start"
+      onClick={onClick}
+      sx={onClick ? { cursor: "pointer", borderRadius: "5px", "&:hover": { bgcolor: "action.hover" }, p: 0.5, m: -0.5 } : undefined}
+    >
       <Box sx={{ color: "secondary.main", mt: "2px" }}>{icon}</Box>
       <Box sx={{ minWidth: 0 }}>
         <Typography variant="caption" color="text.secondary">
@@ -103,6 +128,9 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
   const [barcodeCameraError, setBarcodeCameraError] = useState<string | null>(null);
   const [flashlightSupported, setFlashlightSupported] = useState(false);
   const [flashlightEnabled, setFlashlightEnabled] = useState(false);
+  const [editingField, setEditingField] = useState<EditableFieldKey | null>(null);
+  const [editingValue, setEditingValue] = useState("");
+  const [isSavingField, setIsSavingField] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const barcodeScannerContainerRef = useRef<HTMLDivElement | null>(null);
   const barcodeDetectedHandlerRef = useRef<((result: QuaggaJSResultObject) => void) | null>(null);
@@ -533,6 +561,67 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
     };
   }, [barcodeDialogOpen]);
 
+  const getEditableFieldCurrentValue = (field: EditableFieldKey): string => {
+    if (!device) {
+      return "";
+    }
+    switch (field) {
+      case "floor":
+        return device.floor ?? "";
+      case "wing":
+        return device.wing ?? "";
+      case "room":
+        return device.room ?? "";
+      case "locationDescription":
+        return device.locationDescription ?? "";
+      case "kind":
+        return device.kind;
+      case "brand":
+        return device.brand ?? "";
+      case "model":
+        return device.model ?? "";
+      case "serialNumber":
+        return device.serialNumber ?? "";
+      case "sourceDeviceCode":
+        return device.sourceDeviceCode ?? "";
+      case "additionalInfo":
+        return device.additionalInfo ?? "";
+      default:
+        return "";
+    }
+  };
+
+  const handleOpenFieldEditor = (field: EditableFieldKey) => {
+    setEditingField(field);
+    setEditingValue(getEditableFieldCurrentValue(field));
+  };
+
+  const handleSaveField = async () => {
+    if (!id || !editingField) {
+      return;
+    }
+
+    const partial: Partial<EditableDeviceDetails> = {
+      [editingField]: editingField === "kind" ? editingValue.trim() : editingValue,
+    };
+
+    setIsSavingField(true);
+    try {
+      await updateCachedDeviceDetails(id, partial);
+      await loadDeviceDetails(id);
+      setEditingField(null);
+      setEditingValue("");
+    } catch (error) {
+      setBarcodeCameraError(
+        error instanceof Error
+          ? error.message
+          : "Nem sikerült frissíteni az eszköz adatait.",
+      );
+    } finally {
+      setIsSavingField(false);
+    }
+  };
+
   const handleDeletePhoto = async () => {
     if (!id || !window.confirm("Biztosan törölni akarod az eszköz képét?")) {
       return;
@@ -731,22 +820,26 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
                         icon={<Height fontSize="small" />}
                         label="Emelet"
                         value={device.floor ?? "Nincs megadva"}
+                        onClick={() => handleOpenFieldEditor("floor")}
                       />
                       <DetailRow
                         icon={<Business fontSize="small" />}
                         label="Szárny"
                         value={device.wing ?? "Nincs megadva"}
+                        onClick={() => handleOpenFieldEditor("wing")}
                       />
                       <DetailRow
                         icon={<SensorDoor fontSize="small" />}
                         label="Helyiség"
                         value={device.room ?? "Nincs megadva"}
+                        onClick={() => handleOpenFieldEditor("room")}
                       />
                       <Box sx={{ gridColumn: { xs: "auto", sm: "1 / -1" } }}>
                         <DetailRow
                           icon={<LocationOnOutlined fontSize="small" />}
                           label="Hely leírása"
                           value={device.locationDescription ?? "Nincs megadva"}
+                          onClick={() => handleOpenFieldEditor("locationDescription")}
                         />
                       </Box>
                     </Box>
@@ -784,26 +877,37 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
                         icon={<CategoryOutlined fontSize="small" />}
                         label="Eszköz típusa"
                         value={getDeviceKindLabel(device.kind)}
+                        onClick={() => handleOpenFieldEditor("kind")}
+                      />
+                      <DetailRow
+                        icon={<Inventory2Outlined fontSize="small" />}
+                        label="Modell"
+                        value={device.model ?? "Nincs megadva"}
+                        onClick={() => handleOpenFieldEditor("model")}
                       />
                       <DetailRow
                         icon={<Inventory2Outlined fontSize="small" />}
                         label="Márka"
                         value={device.brand ?? "Nincs megadva"}
+                        onClick={() => handleOpenFieldEditor("brand")}
                       />
                       <DetailRow
                         icon={<InfoOutlined fontSize="small" />}
                         label="Gyári szám"
                         value={device.serialNumber ?? "Nincs megadva"}
+                        onClick={() => handleOpenFieldEditor("serialNumber")}
                       />
                       <DetailRow
                         icon={<InfoOutlined fontSize="small" />}
                         label="Eszköz azonosító"
                         value={device.sourceDeviceCode ?? "Nincs megadva"}
+                        onClick={() => handleOpenFieldEditor("sourceDeviceCode")}
                       />
                       <DetailRow
-                        icon={<InfoOutlined fontSize="small" />}
+                        icon={<MessageCircleMore size={18} />}
                         label="Megjegyzés"
                         value={device.additionalInfo ?? "Nincs megadva"}
+                        onClick={() => handleOpenFieldEditor("additionalInfo")}
                       />
                     </Stack>
 
@@ -922,6 +1026,70 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
           )}
         </Stack>
       )}
+
+      <Dialog
+        open={Boolean(editingField)}
+        onClose={() => {
+          if (!isSavingField) {
+            setEditingField(null);
+            setEditingValue("");
+          }
+        }}
+        fullWidth
+        maxWidth="sm"
+        PaperProps={{ sx: { borderRadius: "5px" } }}
+      >
+        <Box sx={{ px: 3, py: 2.5 }}>
+          <Stack spacing={2}>
+            <Typography variant="h2">
+              {editingField ? `${editableFieldLabels[editingField]} szerkesztése` : "Mező szerkesztése"}
+            </Typography>
+            {editingField === "kind" ? (
+              <TextField
+                select
+                fullWidth
+                label={editableFieldLabels.kind}
+                value={editingValue}
+                onChange={(event) => setEditingValue(event.target.value)}
+              >
+                {Object.entries(deviceKindLabels).map(([value, label]) => (
+                  <MenuItem key={value} value={value}>
+                    {label}
+                  </MenuItem>
+                ))}
+              </TextField>
+            ) : (
+              <TextField
+                fullWidth
+                multiline={editingField === "additionalInfo" || editingField === "locationDescription"}
+                minRows={editingField === "additionalInfo" || editingField === "locationDescription" ? 3 : 1}
+                label={editingField ? editableFieldLabels[editingField] : "Érték"}
+                value={editingValue}
+                onChange={(event) => setEditingValue(event.target.value)}
+                autoFocus
+              />
+            )}
+            <Stack direction="row" justifyContent="flex-end" spacing={1}>
+              <Button
+                onClick={() => {
+                  setEditingField(null);
+                  setEditingValue("");
+                }}
+                disabled={isSavingField}
+              >
+                Mégse
+              </Button>
+              <Button
+                variant="contained"
+                onClick={() => void handleSaveField()}
+                disabled={isSavingField || (editingField === "kind" && !editingValue.trim())}
+              >
+                {isSavingField ? "Mentés..." : "Mentés"}
+              </Button>
+            </Stack>
+          </Stack>
+        </Box>
+      </Dialog>
 
       <Dialog
         open={barcodeDialogOpen}

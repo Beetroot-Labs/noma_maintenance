@@ -2,17 +2,28 @@
 -- Run with:
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/reset_prod.sql
 
--- Drop tables seeded/used by prod setup (and auth/session tables tied to users).
-DROP TABLE IF EXISTS sessions CASCADE;
-DROP TABLE IF EXISTS auth_identities CASCADE;
+-- Drop business-domain tables first.
+DROP TABLE IF EXISTS maintenance_photos CASCADE;
+DROP TABLE IF EXISTS maintenance_works CASCADE;
+DROP TABLE IF EXISTS shift_participants CASCADE;
+DROP TABLE IF EXISTS shifts CASCADE;
+DROP TABLE IF EXISTS processed_mutations CASCADE;
 DROP TABLE IF EXISTS barcodes CASCADE;
 DROP TABLE IF EXISTS devices CASCADE;
 DROP TABLE IF EXISTS site_locations CASCADE;
 DROP TABLE IF EXISTS buildings CASCADE;
+
+-- Drop auth/core tables after business tables.
+DROP TABLE IF EXISTS sessions CASCADE;
+DROP TABLE IF EXISTS auth_identities CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 DROP TABLE IF EXISTS tenants CASCADE;
 
 -- Drop enum types created by setup.sql so setup can be re-applied cleanly.
+DROP TYPE IF EXISTS maintenance_photo_type CASCADE;
+DROP TYPE IF EXISTS maintenance_work_status CASCADE;
+DROP TYPE IF EXISTS shift_participant_status CASCADE;
+DROP TYPE IF EXISTS shift_status CASCADE;
 DROP TYPE IF EXISTS tender_classification CASCADE;
 DROP TYPE IF EXISTS device_kind CASCADE;
 DROP TYPE IF EXISTS auth_provider CASCADE;

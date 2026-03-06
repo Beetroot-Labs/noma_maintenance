@@ -6,7 +6,7 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post, put};
+use axum::routing::{get, patch, post, put};
 use chrono::{DateTime, Duration, Utc};
 use cloud_storage::Object;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
@@ -121,6 +121,10 @@ async fn main() -> anyhow::Result<()> {
                 .delete(delete_labeling_device_photo),
         )
         .route(
+            "/labeling/devices/{device_id}/details",
+            patch(update_labeling_device_details),
+        )
+        .route(
             "/labeling/buildings/{building_id}/cache",
             get(get_labeling_building_cache),
         )
@@ -232,6 +236,24 @@ struct AssignBarcodeRequest {
     code: String,
 }
 
+#[derive(Deserialize)]
+struct UpdateDeviceDetailsRequest {
+    floor: Option<String>,
+    wing: Option<String>,
+    room: Option<String>,
+    #[serde(rename = "locationDescription")]
+    location_description: Option<String>,
+    kind: String,
+    brand: Option<String>,
+    model: Option<String>,
+    #[serde(rename = "serialNumber")]
+    serial_number: Option<String>,
+    #[serde(rename = "sourceDeviceCode")]
+    source_device_code: Option<String>,
+    #[serde(rename = "additionalInfo")]
+    additional_info: Option<String>,
+}
+
 #[derive(Serialize)]
 struct UserResponse {
     id: uuid::Uuid,
@@ -323,6 +345,11 @@ struct BarcodeAssignmentResponse {
 struct DevicePhotoResponse {
     device_id: uuid::Uuid,
     photo_url: String,
+}
+
+#[derive(Serialize)]
+struct DeviceDetailsUpdateResponse {
+    device_id: uuid::Uuid,
 }
 
 #[derive(Deserialize)]
@@ -915,6 +942,117 @@ async fn delete_labeling_device_photo(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
+async fn update_labeling_device_details(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(device_id): Path<uuid::Uuid>,
+    Json(payload): Json<UpdateDeviceDetailsRequest>,
+) -> Result<Response, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    let mutation_id = require_mutation_id(&headers)?;
+    let endpoint_key = format!("LABELING_DEVICE_DETAILS_UPDATE:{device_id}");
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+
+    if let Some(replayed) =
+        get_processed_mutation_response_tx(&mut tx, user.tenant_id, &endpoint_key, &mutation_id)
+            .await?
+    {
+        return Ok(replayed);
+    }
+
+    let kind = payload.kind.trim();
+    if kind.is_empty() {
+        return Err(ApiError::bad_request("device kind is required"));
+    }
+
+    let location_id: Option<Option<uuid::Uuid>> = sqlx::query_scalar(
+        r#"
+        SELECT location_id
+        FROM devices
+        WHERE tenant_id = $1 AND id = $2
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(device_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let Some(location_id) = location_id else {
+        return Err(ApiError::forbidden("device not found for current tenant"));
+    };
+
+    let update_device_result = sqlx::query(
+        r#"
+        UPDATE devices
+        SET
+            kind = $3::device_kind,
+            brand = $4,
+            model = $5,
+            serial_number = $6,
+            source_device_code = $7,
+            additional_info = $8
+        WHERE tenant_id = $1 AND id = $2
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(device_id)
+    .bind(kind)
+    .bind(normalize_optional_text(payload.brand))
+    .bind(normalize_optional_text(payload.model))
+    .bind(normalize_optional_text(payload.serial_number))
+    .bind(normalize_optional_text(payload.source_device_code))
+    .bind(normalize_optional_text(payload.additional_info))
+    .execute(&mut *tx)
+    .await;
+
+    if let Err(err) = update_device_result {
+        return Err(map_device_details_update_error(err));
+    }
+
+    if let Some(location_id) = location_id {
+        sqlx::query(
+            r#"
+            UPDATE site_locations
+            SET
+                floor = $3,
+                wing = $4,
+                room = $5,
+                location_description = $6
+            WHERE tenant_id = $1 AND id = $2
+            "#,
+        )
+        .bind(user.tenant_id)
+        .bind(location_id)
+        .bind(normalize_optional_text(payload.floor))
+        .bind(normalize_optional_text(payload.wing))
+        .bind(normalize_optional_text(payload.room))
+        .bind(normalize_optional_text(payload.location_description))
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    }
+
+    let response_payload = serde_json::json!(DeviceDetailsUpdateResponse { device_id });
+    save_processed_mutation_response_tx(
+        &mut tx,
+        user.tenant_id,
+        &endpoint_key,
+        &mutation_id,
+        StatusCode::OK,
+        Some(response_payload.clone()),
+    )
+    .await?;
+
+    tx.commit().await.map_err(ApiError::internal)?;
+
+    Ok((StatusCode::OK, Json(response_payload)).into_response())
+}
+
 async fn assign_labeling_device_barcode(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1202,6 +1340,26 @@ fn hash_session_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+fn normalize_optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|candidate| candidate.trim().to_string())
+        .and_then(|candidate| if candidate.is_empty() { None } else { Some(candidate) })
+}
+
+fn map_device_details_update_error(err: sqlx::Error) -> ApiError {
+    if let sqlx::Error::Database(db_error) = &err {
+        let message = db_error.message().to_ascii_lowercase();
+        if message.contains("invalid input value for enum device_kind") {
+            return ApiError::bad_request("invalid device kind");
+        }
+        if message.contains("duplicate key value") && message.contains("source_device_code") {
+            return ApiError::conflict("source device code is already used by another device");
+        }
+    }
+
+    ApiError::internal(err)
 }
 
 fn require_mutation_id(headers: &HeaderMap) -> Result<String, ApiError> {
