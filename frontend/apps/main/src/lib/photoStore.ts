@@ -49,47 +49,6 @@ const putRecord = async (photo: StoredPhoto) =>
     store.put(photo);
   });
 
-const fetchAsDataUrl = async (url: string): Promise<string> => {
-  const response = await fetch(url);
-  const blob = await response.blob();
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result as string);
-    reader.readAsDataURL(blob);
-  });
-};
-
-const demoPhotoEntries = [
-  { id: "photo-demo-1000011602", file: "1000011602.jpg", description: "Karbantartási fotó" },
-  { id: "photo-demo-1000011603", file: "1000011603.jpg", description: "Karbantartási fotó" },
-  { id: "photo-demo-1000011604", file: "1000011604.jpg", description: "Karbantartási fotó" },
-  { id: "photo-demo-1000011605", file: "1000011605.webp", description: "Karbantartási fotó" },
-  { id: "photo-demo-1000011606", file: "1000011606.jpg", description: "Karbantartási fotó" },
-  { id: "photo-demo-1000011607", file: "1000011607.jpg", description: "Karbantartási fotó" },
-  { id: "photo-demo-1000011608", file: "1000011608.jpg", description: "Karbantartási fotó" },
-  { id: "photo-demo-fan-01", file: "fan01.jpg", description: "Ventilátor" },
-  { id: "photo-demo-fan-02", file: "fan02.jpg", description: "Ventilátor" },
-  { id: "photo-demo-indoor-01", file: "indoor01.jpg", description: "Beltéri egység" },
-];
-
-export const demoPhotoIds = demoPhotoEntries.map((entry) => entry.id);
-
-export const seedDemoPhotos = async () => {
-  const base = `${import.meta.env.BASE_URL}demo-photos/`;
-
-  for (const entry of demoPhotoEntries) {
-    const existing = await getRecord(entry.id);
-    if (existing) continue;
-    const url = await fetchAsDataUrl(`${base}${entry.file}`);
-    await putRecord({
-      id: entry.id,
-      url,
-      description: entry.description,
-      timestamp: new Date(),
-    });
-  }
-};
-
 export const getPhotosByIds = async (ids: string[]) => {
   const results = await Promise.all(ids.map((id) => getRecord(id)));
   return results.filter((photo): photo is MaintenancePhoto => Boolean(photo));
@@ -103,3 +62,26 @@ export const clearPhotos = async () =>
   withStore<void>("readwrite", (store) => {
     store.clear();
   });
+
+export const purgeDemoPhotos = async () => {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    tx.onerror = () => reject(tx.error);
+    tx.oncomplete = () => resolve();
+    const store = tx.objectStore(STORE_NAME);
+    const request = store.openCursor();
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) {
+        return;
+      }
+      const key = String(cursor.primaryKey);
+      if (key.startsWith("photo-demo-")) {
+        store.delete(cursor.primaryKey);
+      }
+      cursor.continue();
+    };
+  });
+};

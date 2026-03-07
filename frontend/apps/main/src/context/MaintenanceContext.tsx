@@ -1,7 +1,13 @@
-import { createContext, useContext, useEffect, useMemo, useState, ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import type { MaintenancePhoto, MaintenanceWork, ShiftManager } from "@/types/maintenance";
 import { useDemoUser } from "@/context/DemoUserContext";
-import { clearPhotos, demoPhotoIds, getPhotosByIds, savePhoto, seedDemoPhotos } from "@/lib/photoStore";
+import { getCachedBuildingSnapshot } from "@noma/shared";
+import {
+  clearMaintenanceState,
+  loadMaintenanceState,
+  saveMaintenanceState,
+} from "@/lib/maintenanceStore";
+import { clearPhotos, getPhotosByIds, purgeDemoPhotos, savePhoto } from "@/lib/photoStore";
 
 interface MaintenanceContextType {
   currentWork: MaintenanceWork | null;
@@ -9,7 +15,7 @@ interface MaintenanceContextType {
   pastWorks: MaintenanceWork[];
   workdayClosed: boolean;
   shiftManager: ShiftManager;
-  startMaintenance: (hvacId: string) => string;
+  startMaintenance: (hvacId: string) => string | null;
   updateNotes: (workId: string, notes: string) => void;
   addPhoto: (workId: string, photo: MaintenancePhoto) => void;
   toggleMalfunction: (workId: string) => void;
@@ -21,11 +27,8 @@ interface MaintenanceContextType {
 }
 
 const MaintenanceContext = createContext<MaintenanceContextType | undefined>(undefined);
-const maintenanceStorageKey = "noma:maintenance-state";
-const demoWorkPrefix = "MW-PAST-";
+const legacyMaintenanceStorageKey = "noma:maintenance-state";
 const maxPersistedPastWorks = 50;
-
-const isDemoWork = (workId: string) => workId.startsWith(demoWorkPrefix);
 
 type StoredMaintenancePhoto = {
   id: string;
@@ -49,171 +52,12 @@ type StoredMaintenanceState = {
   workdayClosed: boolean;
 };
 
-export const hvacDatabase: Record<
-  string,
-  { model: string; kind: string; address: string; location: string }
-> = {
-  "DEMO-DEVICE-001": {
-    model: "Daikin FXFQ-A",
-    kind: "FAN_COIL_UNIT",
-    address: "Budapest, Váci út 1",
-    location: "2. emelet, 201. szoba",
-  },
-  "DEMO-DEVICE-002": {
-    model: "Mitsubishi MSZ-AP",
-    kind: "INDOOR_UNIT",
-    address: "Budapest, Váci út 1",
-    location: "3. emelet, 305. szoba",
-  },
-  "DEMO-DEVICE-003": {
-    model: "Carrier 38QUS",
-    kind: "CONDENSER",
-    address: "Budapest, Váci út 1",
-    location: "Tető, R1 zóna",
-  },
-  "DEMO-DEVICE-004": {
-    model: "Systemair K-EC",
-    kind: "FAN",
-    address: "Budapest, Váci út 1",
-    location: "1. emelet, 105. gépészet",
-  },
-  "DEMO-DEVICE-005": {
-    model: "Swegon GOLD RX",
-    kind: "AIR_HANDLER_UNIT",
-    address: "Budapest, Váci út 1",
-    location: "Pinceszint, B-12",
-  },
-  "DEMO-DEVICE-006": {
-    model: "Daikin VRV IV",
-    kind: "VRF_OUTDOOR_UNIT",
-    address: "Budapest, Váci út 1",
-    location: "Tető, R2 zóna",
-  },
-  "DEMO-DEVICE-007": {
-    model: "Trane Sintesis",
-    kind: "CHILLER",
-    address: "Budapest, Váci út 1",
-    location: "Pinceszint, B-21",
-  },
-  "DEMO-DEVICE-008": {
-    model: "Daikin FXFQ-A",
-    kind: "FAN_COIL_UNIT",
-    address: "Budapest, Fehérvári út 12",
-    location: "2. emelet, 215. tárgyaló",
-  },
-  "DEMO-DEVICE-009": {
-    model: "Mitsubishi MSZ-AP",
-    kind: "INDOOR_UNIT",
-    address: "Budapest, Fehérvári út 12",
-    location: "4. emelet, 410. iroda",
-  },
-  "DEMO-DEVICE-010": {
-    model: "Carrier 38QUS",
-    kind: "CONDENSER",
-    address: "Budapest, Fehérvári út 12",
-    location: "Tető, R1 zóna",
-  },
-  "DEMO-DEVICE-011": {
-    model: "Systemair K-EC",
-    kind: "FAN",
-    address: "Budapest, Fehérvári út 12",
-    location: "1. emelet, 112. folyosó",
-  },
-  "DEMO-DEVICE-012": {
-    model: "Swegon GOLD RX",
-    kind: "AIR_HANDLER_UNIT",
-    address: "Budapest, Fehérvári út 12",
-    location: "Pinceszint, B-07",
-  },
-  "DEMO-DEVICE-013": {
-    model: "Daikin VRV IV",
-    kind: "VRF_OUTDOOR_UNIT",
-    address: "Budapest, Fehérvári út 12",
-    location: "Tető, R2 zóna",
-  },
-  "DEMO-DEVICE-014": {
-    model: "Trane Sintesis",
-    kind: "CHILLER",
-    address: "Budapest, Fehérvári út 12",
-    location: "Pinceszint, B-19",
-  },
-  "DEMO-DEVICE-015": {
-    model: "Daikin FXFQ-A",
-    kind: "FAN_COIL_UNIT",
-    address: "Szentendre, Ipari út 5",
-    location: "1. emelet, A-03 csarnok",
-  },
-  "DEMO-DEVICE-016": {
-    model: "Mitsubishi MSZ-AP",
-    kind: "INDOOR_UNIT",
-    address: "Szentendre, Ipari út 5",
-    location: "1. emelet, A-08 raktár",
-  },
-  "DEMO-DEVICE-017": {
-    model: "Carrier 38QUS",
-    kind: "CONDENSER",
-    address: "Szentendre, Ipari út 5",
-    location: "Tető, R1 zóna",
-  },
-  "DEMO-DEVICE-018": {
-    model: "Systemair K-EC",
-    kind: "FAN",
-    address: "Szentendre, Ipari út 5",
-    location: "2. emelet, B-12 karbantartás",
-  },
-  "DEMO-DEVICE-019": {
-    model: "Swegon GOLD RX",
-    kind: "AIR_HANDLER_UNIT",
-    address: "Szentendre, Ipari út 5",
-    location: "Pinceszint, B-01",
-  },
-  "DEMO-DEVICE-020": {
-    model: "Daikin VRV IV",
-    kind: "VRF_OUTDOOR_UNIT",
-    address: "Szentendre, Ipari út 5",
-    location: "Tető, R2 zóna",
-  },
+type DeviceCacheLookupEntry = {
+  model: string;
+  kind: string;
+  address: string;
+  location: string;
 };
-
-const generatePastWorks = () => {
-  const works: MaintenanceWork[] = [];
-  const now = new Date();
-  const intervalMonths = 6;
-  const totalIntervals = 6;
-
-  Object.entries(hvacDatabase).forEach(([hvacId, device], deviceIndex) => {
-    for (let i = 1; i <= totalIntervals; i += 1) {
-      const endTime = new Date(now);
-      endTime.setMonth(endTime.getMonth() - intervalMonths * i);
-      const daysInMonth = new Date(endTime.getFullYear(), endTime.getMonth() + 1, 0).getDate();
-      const dayOffset = (deviceIndex * 7 + i * 13) % daysInMonth;
-      endTime.setDate(Math.max(1, dayOffset + 1));
-      endTime.setHours(9 + (deviceIndex % 6), (i * 7) % 60, 0, 0);
-      const startTime = new Date(endTime);
-      startTime.setMinutes(endTime.getMinutes() - 45);
-
-      works.push({
-        id: `MW-PAST-${hvacId}-${i.toString().padStart(2, "0")}`,
-        hvacId,
-        hvacModel: device.model,
-        hvacKind: device.kind,
-        hvacAddress: device.address,
-        hvacLocation: device.location,
-        executorId: "u-tech",
-        status: "completed",
-        isMalfunctioning: false,
-        notes: "Rutin karbantartás.",
-        photos: [],
-        startTime,
-        endTime,
-      });
-    }
-  });
-
-  return works;
-};
-
-const initialPastWorks: MaintenanceWork[] = generatePastWorks();
 
 const serializeWork = (work: MaintenanceWork): StoredMaintenanceWork => ({
   ...work,
@@ -243,66 +87,16 @@ const deserializeWork = (work: StoredMaintenanceWork): MaintenanceWork => ({
   }),
 });
 
-const getInitialState = () => {
-  if (typeof window === "undefined") {
-    return {
-      currentWork: null,
-      todaysWorks: [],
-      pastWorks: initialPastWorks,
-      workdayClosed: false,
-    };
-  }
-
-  const stored = window.localStorage.getItem(maintenanceStorageKey);
-  if (!stored) {
-    return {
-      currentWork: null,
-      todaysWorks: [],
-      pastWorks: initialPastWorks,
-      workdayClosed: false,
-    };
-  }
-
-  try {
-    const parsed = JSON.parse(stored) as StoredMaintenanceState;
-    const hydratedPastWorks = (() => {
-      const merged = new Map<string, MaintenanceWork>();
-      for (const work of initialPastWorks) {
-        merged.set(work.id, work);
-      }
-      for (const work of parsed.pastWorks ?? []) {
-        const hydrated = deserializeWork(work);
-        merged.set(hydrated.id, hydrated);
-      }
-      return Array.from(merged.values());
-    })();
-    return {
-      currentWork: parsed.currentWork ? deserializeWork(parsed.currentWork) : null,
-      todaysWorks: (parsed.todaysWorks ?? []).map(deserializeWork),
-      pastWorks: hydratedPastWorks,
-      workdayClosed: parsed.workdayClosed ?? false,
-    };
-  } catch {
-    return {
-      currentWork: null,
-      todaysWorks: [],
-      pastWorks: initialPastWorks,
-      workdayClosed: false,
-    };
-  }
-};
-
 export function MaintenanceProvider({ children }: { children: ReactNode }) {
   const { user } = useDemoUser();
-  const initialState = useMemo(() => getInitialState(), []);
-  const [currentWork, setCurrentWork] = useState<MaintenanceWork | null>(
-    initialState.currentWork,
+  const [currentWork, setCurrentWork] = useState<MaintenanceWork | null>(null);
+  const [todaysWorks, setTodaysWorks] = useState<MaintenanceWork[]>([]);
+  const [pastWorks, setPastWorks] = useState<MaintenanceWork[]>([]);
+  const [workdayClosed, setWorkdayClosed] = useState(false);
+  const [isMaintenanceStateLoaded, setIsMaintenanceStateLoaded] = useState(false);
+  const [deviceLookup, setDeviceLookup] = useState<Map<string, DeviceCacheLookupEntry>>(
+    new Map(),
   );
-  const [todaysWorks, setTodaysWorks] = useState<MaintenanceWork[]>(
-    initialState.todaysWorks,
-  );
-  const [pastWorks, setPastWorks] = useState<MaintenanceWork[]>(initialState.pastWorks);
-  const [workdayClosed, setWorkdayClosed] = useState(initialState.workdayClosed);
 
   const shiftManager: ShiftManager = {
     name: "Ivanics Károly",
@@ -310,42 +104,183 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    let isActive = true;
+    let cancelled = false;
 
-    const loadDemoPhotos = async () => {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(legacyMaintenanceStorageKey);
+    }
+
+    const loadPersistedMaintenanceState = async () => {
+      if (!user?.tenantId || !user.id) {
+        if (!cancelled) {
+          setCurrentWork(null);
+          setTodaysWorks([]);
+          setPastWorks([]);
+          setWorkdayClosed(false);
+          setIsMaintenanceStateLoaded(true);
+        }
+        return;
+      }
+
       try {
-        await seedDemoPhotos();
-        const demoPhotos = await getPhotosByIds(demoPhotoIds);
+        const persisted = (await loadMaintenanceState(
+          user.tenantId,
+          user.id,
+        )) as StoredMaintenanceState | null;
+        if (cancelled) {
+          return;
+        }
 
-        if (!isActive) return;
-        if (demoPhotos.length === 0) return;
-        setPastWorks((prev) =>
-          prev.map((work, index) => {
-            if (work.photos.length > 0) return work;
-            const primary = demoPhotos[index % demoPhotos.length];
-            const secondary = demoPhotos[(index + 3) % demoPhotos.length];
-            const tertiary = demoPhotos[(index + 5) % demoPhotos.length];
-            const photos = [primary];
-            if (index % 3 === 0 && secondary.id !== primary.id) {
-              photos.push(secondary);
-            }
-            if (index % 5 === 0 && tertiary.id !== primary.id && tertiary.id !== secondary.id) {
-              photos.push(tertiary);
-            }
-            return { ...work, photos };
-          }),
-        );
+        setCurrentWork(persisted?.currentWork ? deserializeWork(persisted.currentWork) : null);
+        setTodaysWorks((persisted?.todaysWorks ?? []).map(deserializeWork));
+        setPastWorks((persisted?.pastWorks ?? []).map(deserializeWork));
+        setWorkdayClosed(persisted?.workdayClosed ?? false);
       } catch (error) {
-        console.warn("Nem sikerült betölteni a demó fotókat.", error);
+        if (!cancelled) {
+          console.warn("Nem sikerült betölteni a karbantartási állapotot.", error);
+          setCurrentWork(null);
+          setTodaysWorks([]);
+          setPastWorks([]);
+          setWorkdayClosed(false);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsMaintenanceStateLoaded(true);
+        }
       }
     };
 
-    loadDemoPhotos();
+    setIsMaintenanceStateLoaded(false);
+    void loadPersistedMaintenanceState();
 
     return () => {
-      isActive = false;
+      cancelled = true;
     };
+  }, [user?.tenantId, user?.id]);
+
+  useEffect(() => {
+    purgeDemoPhotos().catch((error) => {
+      console.warn("Nem sikerült törölni a demó fotókat.", error);
+    });
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const composeLocation = (
+      floor: string | null,
+      wing: string | null,
+      room: string | null,
+      description: string | null,
+    ) => {
+      const primary = [floor, wing, room].map((part) => part?.trim()).filter(Boolean).join(", ");
+      const secondary = description?.trim();
+      if (primary && secondary) {
+        return `${primary} (${secondary})`;
+      }
+      if (primary) {
+        return primary;
+      }
+      if (secondary) {
+        return secondary;
+      }
+      return "Ismeretlen helyszín";
+    };
+
+    const loadDeviceLookup = async () => {
+      if (!user?.tenantId) {
+        if (!cancelled) {
+          setDeviceLookup(new Map());
+        }
+        return;
+      }
+
+      try {
+        const currentShiftResponse = await fetch("/api/shifts/current", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!currentShiftResponse.ok) {
+          if (!cancelled) {
+            setDeviceLookup(new Map());
+          }
+          return;
+        }
+
+        const currentShiftPayload = (await currentShiftResponse.json()) as {
+          shift: { id: string } | null;
+        };
+        const shiftId = currentShiftPayload.shift?.id;
+        if (!shiftId) {
+          if (!cancelled) {
+            setDeviceLookup(new Map());
+          }
+          return;
+        }
+
+        const waitingRoomResponse = await fetch(`/api/shifts/${shiftId}/waiting-room`, {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!waitingRoomResponse.ok) {
+          if (!cancelled) {
+            setDeviceLookup(new Map());
+          }
+          return;
+        }
+
+        const waitingRoomPayload = (await waitingRoomResponse.json()) as { building_id: string };
+        const snapshot = await getCachedBuildingSnapshot(user.tenantId, waitingRoomPayload.building_id);
+        if (!snapshot) {
+          if (!cancelled) {
+            setDeviceLookup(new Map());
+          }
+          return;
+        }
+
+        const locationById = new Map(
+          snapshot.locations.map((location) => [
+            location.id,
+            composeLocation(
+              location.floor,
+              location.wing,
+              location.room,
+              location.location_description,
+            ),
+          ]),
+        );
+
+        const nextLookup = new Map<string, DeviceCacheLookupEntry>();
+        for (const device of snapshot.devices) {
+          const code = device.code?.trim();
+          if (!code) {
+            continue;
+          }
+          nextLookup.set(code, {
+            model: device.model?.trim() || "Ismeretlen modell",
+            kind: device.kind?.trim() || "UNKNOWN",
+            address: snapshot.building.address?.trim() || "Ismeretlen cím",
+            location:
+              (device.location_id ? locationById.get(device.location_id) : null) ||
+              "Ismeretlen helyszín",
+          });
+        }
+
+        if (!cancelled) {
+          setDeviceLookup(nextLookup);
+        }
+      } catch {
+        if (!cancelled) {
+          setDeviceLookup(new Map());
+        }
+      }
+    };
+
+    void loadDeviceLookup();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.tenantId]);
 
   useEffect(() => {
     let isActive = true;
@@ -388,10 +323,10 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     return () => {
       isActive = false;
     };
-  }, []);
+  }, [currentWork, pastWorks, todaysWorks]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    if (!user?.tenantId || !user.id || !isMaintenanceStateLoaded) {
       return;
     }
     const works = [currentWork, ...todaysWorks, ...pastWorks].filter(
@@ -406,7 +341,6 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
       }
     }
     const persistedPastWorks = pastWorks
-      .filter((work) => !isDemoWork(work.id))
       .sort((a, b) => {
         const aTime = a.endTime?.getTime() ?? a.startTime.getTime();
         const bTime = b.endTime?.getTime() ?? b.startTime.getTime();
@@ -419,32 +353,25 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
       pastWorks: persistedPastWorks.map(serializeWork),
       workdayClosed,
     };
-    try {
-      window.localStorage.setItem(maintenanceStorageKey, JSON.stringify(payload));
-    } catch (error) {
-      try {
-        const minimalPayload: StoredMaintenanceState = {
-          currentWork: currentWork ? serializeWork(currentWork) : null,
-          todaysWorks: todaysWorks.map(serializeWork),
-          pastWorks: [],
-          workdayClosed,
-        };
-        window.localStorage.setItem(maintenanceStorageKey, JSON.stringify(minimalPayload));
-      } catch (fallbackError) {
-        window.localStorage.removeItem(maintenanceStorageKey);
-        console.warn("Nem sikerült menteni a karbantartási adatokat.", fallbackError);
-      }
-    }
-  }, [currentWork, pastWorks, todaysWorks, workdayClosed]);
+    saveMaintenanceState(user.tenantId, user.id, payload).catch((error) => {
+      console.warn("Nem sikerült menteni a karbantartási adatokat.", error);
+    });
+  }, [
+    currentWork,
+    pastWorks,
+    todaysWorks,
+    workdayClosed,
+    user?.tenantId,
+    user?.id,
+    isMaintenanceStateLoaded,
+  ]);
 
-  const startMaintenance = (hvacId: string): string => {
+  const startMaintenance = (hvacId: string): string | null => {
     setWorkdayClosed(false);
-    const hvacInfo = hvacDatabase[hvacId] || {
-      model: "Ismeretlen modell",
-      kind: "UNKNOWN",
-      address: "Ismeretlen cím",
-      location: "Ismeretlen helyszín",
-    };
+    const hvacInfo = deviceLookup.get(hvacId);
+    if (!hvacInfo) {
+      return null;
+    }
 
     const newWork: MaintenanceWork = {
       id: `MW-${Date.now()}`,
@@ -585,8 +512,10 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
 
   const resetMaintenance = async () => {
     let didClearPhotos = true;
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem(maintenanceStorageKey);
+    if (user?.tenantId && user.id) {
+      await clearMaintenanceState(user.tenantId, user.id).catch((error) => {
+        console.warn("Nem sikerült törölni a karbantartási állapotot.", error);
+      });
     }
     try {
       await clearPhotos();
@@ -596,7 +525,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     }
     setCurrentWork(null);
     setTodaysWorks([]);
-    setPastWorks(initialPastWorks);
+    setPastWorks([]);
     setWorkdayClosed(false);
     return didClearPhotos;
   };
