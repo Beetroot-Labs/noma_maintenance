@@ -655,26 +655,66 @@ pub async fn cancel_shift(
         .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
     let user = require_session_user(&state, &headers).await?;
 
-    let updated = sqlx::query(
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+
+    let shift_row: Option<(uuid::Uuid, String)> = sqlx::query_as(
         r#"
-        UPDATE shifts
-        SET status = 'CANCELLED'
+        SELECT lead_user_id, status::text AS status
+        FROM shifts
         WHERE tenant_id = $1
           AND id = $2
-          AND lead_user_id = $3
-          AND status IN ('INVITING', 'READY_TO_START')
+        FOR UPDATE
         "#,
     )
     .bind(user.tenant_id)
     .bind(shift_id)
-    .bind(user.id)
-    .execute(pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(ApiError::internal)?;
 
-    if updated.rows_affected() == 0 {
+    let Some((lead_user_id, status)) = shift_row else {
+        return Err(ApiError::forbidden("shift not found or cannot be cancelled"));
+    };
+
+    if lead_user_id != user.id {
         return Err(ApiError::forbidden("shift not found or cannot be cancelled"));
     }
+
+    if matches!(status.as_str(), "CANCELLED" | "COMMITTED") {
+        return Err(ApiError::conflict("shift is already closed and cannot be cancelled"));
+    }
+
+    sqlx::query(
+        r#"
+        DELETE FROM maintenance_works
+        WHERE tenant_id = $1
+          AND shift_id = $2
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(shift_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let deleted_shift = sqlx::query(
+        r#"
+        DELETE FROM shifts
+        WHERE tenant_id = $1
+          AND id = $2
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(shift_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    if deleted_shift.rows_affected() == 0 {
+        return Err(ApiError::forbidden("shift not found or cannot be cancelled"));
+    }
+
+    tx.commit().await.map_err(ApiError::internal)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
