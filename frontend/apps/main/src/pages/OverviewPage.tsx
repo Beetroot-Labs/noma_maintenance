@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import {
+  Alert,
   Box,
   Button,
   Card,
@@ -16,16 +17,67 @@ import { WorkCard } from "@/components/WorkCard";
 import { useMaintenance } from "@/context/MaintenanceContext";
 import { appColors } from "@/theme";
 import { toast } from "@/lib/toast";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useDemoUser } from "@/context/DemoUserContext";
+
+type CurrentShiftSummary = {
+  id: string;
+  status: "INVITING" | "READY_TO_START" | "IN_PROGRESS";
+  building_name: string;
+  lead_user_name: string;
+  lead_user_phone: string | null;
+  my_participant_status: "INVITED" | "ACCEPTED" | "CACHE_READY" | "DECLINED" | "CLOSE_CONFIRMED";
+};
 
 export default function OverviewPage() {
   const navigate = useNavigate();
+  const { user } = useDemoUser();
   const { todaysWorks, shiftManager, closeWorkday } = useMaintenance();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [currentShift, setCurrentShift] = useState<CurrentShiftSummary | null>(null);
+  const [isShiftStateLoading, setIsShiftStateLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadCurrentShiftState = async () => {
+      setIsShiftStateLoading(true);
+      try {
+        const response = await fetch("/api/shifts/current", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          if (!cancelled) {
+            setCurrentShift(null);
+          }
+          return;
+        }
+
+        const payload = (await response.json()) as { shift: CurrentShiftSummary | null };
+        if (!cancelled) {
+          setCurrentShift(payload.shift ?? null);
+        }
+      } catch {
+        if (!cancelled) {
+          setCurrentShift(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsShiftStateLoading(false);
+        }
+      }
+    };
+    void loadCurrentShiftState();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const completedWorks = todaysWorks.filter((work) => work.status === "completed");
   const inProgressWorks = todaysWorks.filter((work) => work.status === "in-progress");
   const malfunctioningCount = todaysWorks.filter((work) => work.isMalfunctioning).length;
+  const canStartShift = user?.role === "admin" || user?.role === "lead_technician";
+  const hasPendingShift = Boolean(currentShift && currentShift.status !== "IN_PROGRESS");
 
   const handleCloseWorkday = () => {
     closeWorkday();
@@ -37,6 +89,40 @@ export default function OverviewPage() {
   return (
     <Layout>
       <Box sx={{ display: "flex", flexDirection: "column", gap: 3, animation: "slideUp 0.3s ease-out" }}>
+        {!isShiftStateLoading && !currentShift ? (
+          <Alert
+            severity="info"
+            action={
+              canStartShift ? (
+                <Button color="inherit" size="small" onClick={() => navigate("/shifts/start")}>
+                  Új műszak indítása
+                </Button>
+              ) : undefined
+            }
+          >
+            Nincs aktív műszakod.
+          </Alert>
+        ) : null}
+
+        {!isShiftStateLoading && hasPendingShift && currentShift ? (
+          <Alert
+            severity={currentShift.my_participant_status === "INVITED" ? "warning" : "info"}
+            action={
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() => navigate(`/shifts/${currentShift.id}/waiting-room`)}
+              >
+                Várószoba megnyitása
+              </Button>
+            }
+          >
+            {currentShift.my_participant_status === "INVITED"
+              ? `Meghívást kaptál a(z) ${currentShift.building_name} épület műszakába.`
+              : `Résztvevője vagy egy indulásra váró műszaknak (${currentShift.building_name}).`}
+          </Alert>
+        ) : null}
+
         <Box
           sx={{
             display: "grid",

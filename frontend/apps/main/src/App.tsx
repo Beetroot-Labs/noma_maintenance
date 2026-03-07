@@ -13,6 +13,10 @@ import OverviewPage from "./pages/OverviewPage";
 import DevicesOverview from "./pages/DevicesOverview";
 import DeviceDetailsPage from "./pages/DeviceDetailsPage";
 import NotFound from "./pages/NotFound";
+import StartShiftPage from "./pages/StartShiftPage";
+import ShiftWaitingRoomPage from "./pages/ShiftWaitingRoomPage";
+import MaintenanceDashboard from "./pages/MaintenanceDashboard";
+import ShiftDetails from "./pages/ShiftDetails";
 
 const queryClient = new QueryClient();
 
@@ -49,6 +53,17 @@ const RedirectAuthenticatedUser = () => {
   }
 
   return <LoginPage />;
+};
+
+const RequireRoles = ({ roles }: { roles: string[] }) => {
+  const { user } = useDemoUser();
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+  if (!roles.includes(user.role)) {
+    return <Navigate to="/" replace />;
+  }
+  return <Outlet />;
 };
 
 const App = () => (
@@ -97,9 +112,15 @@ const App = () => (
                 <Route path="/scan" element={<ScanPage />} />
                 <Route path="/maintenance/:workId" element={<MaintenancePage />} />
                 <Route path="/overview" element={<OverviewPage />} />
+                <Route path="/dashboard" element={<MaintenanceDashboard />} />
+                <Route path="/shift-details" element={<ShiftDetails />} />
                 <Route path="/devices" element={<DevicesOverview />} />
                 <Route path="/devices/:id" element={<DeviceDetailsPage />} />
                 <Route path="/history" element={<MaintenanceHistoryPage />} />
+                <Route path="/shifts/:shiftId/waiting-room" element={<ShiftWaitingRoomPage />} />
+                <Route element={<RequireRoles roles={["admin", "lead_technician"]} />}>
+                  <Route path="/shifts/start" element={<StartShiftPage />} />
+                </Route>
               </Route>
               <Route path="*" element={<NotFound />} />
             </Routes>

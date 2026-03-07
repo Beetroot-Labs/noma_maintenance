@@ -12,6 +12,16 @@ export type { DeviceKind } from "./deviceKinds";
 export { GoogleSignInButton } from "./googleIdentity";
 export { GoogleLoginScreen } from "./googleLoginScreen";
 export {
+  cacheBuildingSnapshot,
+  fetchBuildingCachePayload,
+} from "./buildingCache";
+export type {
+  SharedBuildingCachePayload,
+  SharedCachedBuilding,
+  SharedCachedDevice,
+  SharedCachedLocation,
+} from "./buildingCache";
+export {
   createSyncRunner,
   isRetryableHttpStatus,
   summarizeOutboxItems,

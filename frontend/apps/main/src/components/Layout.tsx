@@ -20,13 +20,12 @@ import {
 import { alpha, useTheme } from "@mui/material/styles";
 import {
   CircleUser,
-  ClipboardList,
-  Cpu,
-  History,
+  HardHat,
   LogOut,
   Menu as MenuIcon,
   Play,
   ScanBarcode,
+  Wrench,
 } from "lucide-react";
 import { appColors } from "@/theme";
 import { useDemoUser } from "@/context/DemoUserContext";
@@ -37,10 +36,9 @@ interface LayoutProps {
 }
 
 const navItems = [
-  { path: "/", label: "Mai munka", icon: ClipboardList },
-  { path: "/history", label: "Előzmények", icon: History },
+  { path: "/shift-details", label: "Műszak", icon: HardHat },
+  { path: "/dashboard", label: "Karbantartás", icon: Wrench },
 ];
-const partnerNavItems = [{ path: "/devices", label: "Eszközök", icon: Cpu }];
 
 export function Layout({ children }: LayoutProps) {
   const theme = useTheme();
@@ -51,12 +49,12 @@ export function Layout({ children }: LayoutProps) {
   const { currentWork } = useMaintenance();
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const isPartner = user?.role === "partner";
-  const visibleNavItems = isPartner ? partnerNavItems : navItems;
 
   const roleLabel = {
     admin: "adminisztrátor",
+    lead_technician: "műszakvezető",
     technician: "technikus",
+    viewer: "megtekintő",
     partner: "partner",
   };
 
@@ -147,7 +145,15 @@ export function Layout({ children }: LayoutProps) {
         maxWidth="lg"
         sx={{ flex: 1, py: 3, pb: { xs: 9, md: 4 } }}
       >
-        {children}
+        <Box
+          key={location.pathname}
+          sx={{
+            animation: "fadeIn 0.22s ease, slideUp 0.22s ease",
+            willChange: "opacity, transform",
+          }}
+        >
+          {children}
+        </Box>
       </Container>
 
       <Paper
@@ -159,7 +165,7 @@ export function Layout({ children }: LayoutProps) {
           borderTop: `1px solid ${appColors.primary}`,
           bgcolor: appColors.primary,
           color: appColors.primaryForeground,
-          display: isPartner ? "none" : { xs: "block", md: "none" },
+          display: { xs: "block", md: "none" },
           borderBottomLeftRadius: 0,
           borderBottomRightRadius: 0,
         }}
@@ -171,7 +177,7 @@ export function Layout({ children }: LayoutProps) {
             py: 0.75,
             pb: 2,
         }}>
-          {visibleNavItems.slice(0, 1).map(({ path, label, icon: Icon }) => {
+          {navItems.slice(0, 1).map(({ path, label, icon: Icon }) => {
             const isActive = location.pathname === path;
             return (
               <Box
@@ -222,7 +228,7 @@ export function Layout({ children }: LayoutProps) {
           >
             {currentWork ? <Play size={20} /> : <ScanBarcode size={22} />}
           </Box>
-          {visibleNavItems.slice(1).map(({ path, label, icon: Icon }) => {
+          {navItems.slice(1).map(({ path, label, icon: Icon }) => {
             const isActive = location.pathname === path;
             return (
               <Box
@@ -274,7 +280,7 @@ export function Layout({ children }: LayoutProps) {
         </Box>
         <Divider sx={{ borderColor: appColors.border }} />
         <List sx={{ px: 1 }}>
-          {visibleNavItems.map(({ path, label, icon: Icon }) => (
+          {navItems.map(({ path, label, icon: Icon }) => (
             <ListItemButton
               key={path}
               component={Link}
@@ -296,32 +302,28 @@ export function Layout({ children }: LayoutProps) {
             </ListItemButton>
           ))}
         </List>
-        {!isPartner && (
-          <>
-            <Divider sx={{ borderColor: appColors.border, mt: 1 }} />
-            <List sx={{ px: 1 }}>
-              <ListItemButton
-                component={Link}
-                to={currentWork ? `/maintenance/${currentWork.id}` : "/scan"}
-                onClick={handleDrawerClose}
-                sx={{
-                  borderRadius: 2,
-                  bgcolor: alpha(appColors.accent, 0.15),
-                  color: appColors.accent,
-                  fontWeight: 700,
-                  "&:hover": {
-                    bgcolor: alpha(appColors.accent, 0.25),
-                  },
-                }}
-              >
-                <ListItemIcon sx={{ minWidth: 36, color: "inherit" }}>
-                  {currentWork ? <Play size={18} /> : <ScanBarcode size={18} />}
-                </ListItemIcon>
-                <ListItemText primary={currentWork ? "Munka folytatása" : "Munka indítása"} />
-              </ListItemButton>
-            </List>
-          </>
-        )}
+        <Divider sx={{ borderColor: appColors.border, mt: 1 }} />
+        <List sx={{ px: 1 }}>
+          <ListItemButton
+            component={Link}
+            to={currentWork ? `/maintenance/${currentWork.id}` : "/scan"}
+            onClick={handleDrawerClose}
+            sx={{
+              borderRadius: 2,
+              bgcolor: alpha(appColors.accent, 0.15),
+              color: appColors.accent,
+              fontWeight: 700,
+              "&:hover": {
+                bgcolor: alpha(appColors.accent, 0.25),
+              },
+            }}
+          >
+            <ListItemIcon sx={{ minWidth: 36, color: "inherit" }}>
+              {currentWork ? <Play size={18} /> : <ScanBarcode size={18} />}
+            </ListItemIcon>
+            <ListItemText primary={currentWork ? "Munka folytatása" : "Munka indítása"} />
+          </ListItemButton>
+        </List>
       </Drawer>
 
       <Menu

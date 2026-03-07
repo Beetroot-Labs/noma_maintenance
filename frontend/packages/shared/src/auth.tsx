@@ -1,6 +1,11 @@
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from "react";
 
-export type AuthUserRole = "admin" | "technician" | "partner";
+export type AuthUserRole =
+  | "admin"
+  | "lead_technician"
+  | "technician"
+  | "viewer"
+  | "partner";
 
 export type AuthUser = {
   id: string;
@@ -29,6 +34,7 @@ type AuthResponse = {
     tenant_id: string;
     full_name: string;
     email: string;
+    role?: string;
   };
 };
 
@@ -46,12 +52,28 @@ const readErrorMessage = async (response: Response) => {
   return "Sikertelen kérés.";
 };
 
+const normalizeRole = (
+  role: string | undefined,
+  defaultRole: AuthUserRole,
+): AuthUserRole => {
+  if (!role) {
+    return defaultRole;
+  }
+  const normalized = role.toLowerCase();
+  if (normalized === "admin") return "admin";
+  if (normalized === "lead_technician") return "lead_technician";
+  if (normalized === "technician") return "technician";
+  if (normalized === "viewer") return "viewer";
+  if (normalized === "partner") return "partner";
+  return defaultRole;
+};
+
 const toAuthUser = (payload: AuthResponse["user"], defaultRole: AuthUserRole): AuthUser => ({
   id: payload.id,
   tenantId: payload.tenant_id,
   name: payload.full_name,
   email: payload.email,
-  role: defaultRole,
+  role: normalizeRole(payload.role, defaultRole),
 });
 
 export function AuthProvider({

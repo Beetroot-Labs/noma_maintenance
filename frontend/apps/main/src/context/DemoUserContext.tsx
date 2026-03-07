@@ -1,7 +1,7 @@
 import { ReactNode } from "react";
-import { AuthProvider, useAuth } from "@noma/shared";
+import { AuthProvider, type AuthUserRole, useAuth } from "@noma/shared";
 
-export type DemoUserRole = "admin" | "technician" | "partner";
+export type DemoUserRole = AuthUserRole;
 
 export type DemoUser = {
   id: string;
