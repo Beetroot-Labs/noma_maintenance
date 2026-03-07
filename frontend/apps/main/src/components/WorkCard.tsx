@@ -1,23 +1,24 @@
 import { Card, CardContent, Typography, Box } from "@mui/material";
 import { Link } from "react-router-dom";
 import { Camera, Clock, MapPin } from "lucide-react";
+import { getDeviceKindLabel } from "@noma/shared";
 import type { MaintenanceWork } from "@/types/maintenance";
 import { StatusBadge } from "./StatusBadge";
 import { formatTime } from "@/lib/date";
-import { deviceKindLabels, getDeviceKindIcon } from "@/lib/deviceKind";
+import { getDeviceKindIcon } from "@/lib/deviceKind";
 
 interface WorkCardProps {
   work: MaintenanceWork;
   to?: string;
   onClick?: () => void;
+  hideAddress?: boolean;
 }
 
-export function WorkCard({ work, to, onClick }: WorkCardProps) {
+export function WorkCard({ work, to, onClick, hideAddress = false }: WorkCardProps) {
   const duration = work.endTime
     ? Math.round((work.endTime.getTime() - work.startTime.getTime()) / 60000)
     : null;
-  const kindLabel =
-    deviceKindLabels[work.hvacKind as keyof typeof deviceKindLabels] ?? work.hvacKind;
+  const kindLabel = getDeviceKindLabel(work.hvacKind);
   const KindIcon = getDeviceKindIcon(work.hvacKind);
   const isClickable = Boolean(to || onClick);
 
@@ -67,12 +68,14 @@ export function WorkCard({ work, to, onClick }: WorkCardProps) {
         </Box>
 
         <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <MapPin size={16} />
-            <Typography variant="body2" color="text.secondary">
-              {work.hvacAddress}
-            </Typography>
-          </Box>
+          {!hideAddress && (
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <MapPin size={16} />
+              <Typography variant="body2" color="text.secondary">
+                {work.hvacAddress}
+              </Typography>
+            </Box>
+          )}
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <MapPin size={16} />
             <Typography variant="body2" color="text.secondary">

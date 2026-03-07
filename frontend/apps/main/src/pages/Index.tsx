@@ -74,7 +74,7 @@ const Index = () => {
           variant="outlined"
           size="large"
           startIcon={<ClipboardList size={18} />}
-          onClick={() => navigate("/overview")}
+          onClick={() => navigate("/dashboard")}
           fullWidth
           sx={{ display: { xs: "flex", md: "none" } }}
         >
@@ -138,7 +138,7 @@ const Index = () => {
             variant="outlined"
             size="large"
             startIcon={<ClipboardList size={18} />}
-            onClick={() => navigate("/overview")}
+            onClick={() => navigate("/dashboard")}
             fullWidth
             sx={{ height: "100%", display: { xs: "none", md: "flex" } }}
           >

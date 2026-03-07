@@ -25,6 +25,7 @@ import {
   MoreVertical,
   Pencil,
 } from "lucide-react";
+import { getDeviceKindLabel } from "@noma/shared";
 import { Layout } from "@/components/Layout";
 import { PhotoGallery } from "@/components/PhotoGallery";
 import { PhotoUpload } from "@/components/PhotoUpload";
@@ -34,7 +35,7 @@ import { useDemoUser } from "@/context/DemoUserContext";
 import { appColors } from "@/theme";
 import { formatDateTime } from "@/lib/date";
 import { toast } from "@/lib/toast";
-import { deviceKindLabels, getDeviceKindIcon } from "@/lib/deviceKind";
+import { getDeviceKindIcon } from "@/lib/deviceKind";
 
 export default function MaintenancePage() {
   const { workId } = useParams<{ workId: string }>();
@@ -81,16 +82,23 @@ export default function MaintenancePage() {
   const canShowMenu =
     isExecutor && (work.status === "in-progress" || (work.status === "completed" && !isEditing));
   const canShowEditOption = !workdayClosed && work.status === "completed" && !isEditing;
+  const hasPhoto = work.photos.length > 0;
+  const hasMalfunctionNote = work.notes.trim().length > 0;
+  const canCompleteMaintenance = hasPhoto && (!work.isMalfunctioning || hasMalfunctionNote);
 
   const handleComplete = () => {
-    if (work.photos.length === 0) {
+    if (!hasPhoto) {
       toast.error("A befejezéshez legalább egy fotót töltsön fel");
+      return;
+    }
+    if (work.isMalfunctioning && !hasMalfunctionNote) {
+      toast.error("Hibás jelölés esetén megjegyzés megadása kötelező");
       return;
     }
 
     completeMaintenance(work.id);
     toast.success("Karbantartás befejezve!");
-    navigate("/overview");
+    navigate("/dashboard");
   };
 
   const handleAbort = () => {
@@ -113,8 +121,7 @@ export default function MaintenancePage() {
     toast.success("Módosítások elmentve.");
   };
 
-  const kindLabel =
-    deviceKindLabels[work.hvacKind as keyof typeof deviceKindLabels] ?? work.hvacKind;
+  const kindLabel = getDeviceKindLabel(work.hvacKind);
   const KindIcon = getDeviceKindIcon(work.hvacKind);
   const lastEditedLabel = useMemo(
     () => (work.lastEdited ? formatDateTime(work.lastEdited) : null),
@@ -427,7 +434,7 @@ export default function MaintenancePage() {
                 size="large"
                 startIcon={<CheckCircle size={18} />}
                 onClick={handleComplete}
-                disabled={work.photos.length === 0}
+                disabled={!canCompleteMaintenance}
                 fullWidth
                 sx={{
                   bgcolor: appColors.success,
@@ -490,9 +497,11 @@ export default function MaintenancePage() {
           </Menu>
         )}
 
-        {work.photos.length === 0 && !isCompleted && (
+        {!isCompleted && (!hasPhoto || (work.isMalfunctioning && !hasMalfunctionNote)) && (
           <Typography variant="body2" color="text.secondary" sx={{ textAlign: "center" }}>
-            A munka lezárásához töltsön fel legalább egy fotót
+            {!hasPhoto
+              ? "A munka lezárásához töltsön fel legalább egy fotót"
+              : "Hibásként jelölt egységnél megjegyzés megadása kötelező a lezáráshoz"}
           </Typography>
         )}
       </Box>

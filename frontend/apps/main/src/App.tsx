@@ -9,7 +9,6 @@ import MaintenanceHistoryPage from "./pages/MaintenanceHistoryPage";
 import LoginPage from "./pages/LoginPage";
 import NewMaintenancePage from "./pages/NewMaintenancePage";
 import MaintenancePage from "./pages/MaintenancePage";
-import OverviewPage from "./pages/OverviewPage";
 import DevicesOverview from "./pages/DevicesOverview";
 import DeviceDetailsPage from "./pages/DeviceDetailsPage";
 import NotFound from "./pages/NotFound";
@@ -108,11 +107,10 @@ const App = () => (
             <Routes>
               <Route path="/login" element={<RedirectAuthenticatedUser />} />
               <Route element={<RequireDemoUser />}>
-                <Route path="/" element={<OverviewPage />} />
+                <Route path="/" element={<MaintenanceDashboard />} />
                 <Route path="/new-maintenance" element={<NewMaintenancePage />} />
                 <Route path="/scan" element={<Navigate to="/new-maintenance" replace />} />
                 <Route path="/maintenance/:workId" element={<MaintenancePage />} />
-                <Route path="/overview" element={<OverviewPage />} />
                 <Route path="/dashboard" element={<MaintenanceDashboard />} />
                 <Route path="/shift-details" element={<ShiftDetails />} />
                 <Route path="/devices" element={<DevicesOverview />} />
