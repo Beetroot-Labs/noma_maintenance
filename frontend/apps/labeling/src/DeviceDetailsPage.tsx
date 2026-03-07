@@ -25,9 +25,8 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import Quagga, { type QuaggaJSResultObject } from "@ericblade/quagga2";
 import { Barcode, Camera, Flashlight, FlashlightOff, ImagePlus, MessageCircleMore, ScanBarcode, Trash2, TriangleAlert, X } from "lucide-react";
-import { deviceKindLabels, getDeviceKindLabel, useAuth, validateNomaBarcode } from "@noma/shared";
+import { deviceKindLabels, getDeviceKindLabel, useAuth, useCode128Scanner, validateNomaBarcode } from "@noma/shared";
 import { ChangeEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import LoginPage from "./LoginPage";
@@ -51,7 +50,6 @@ type DeviceDetailsPageProps = {
   googleClientId: string;
 };
 
-type ScannerProfileId = "1080P" | "720P";
 type EditableFieldKey = keyof EditableDeviceDetails;
 const locationFieldKeys: EditableFieldKey[] = ["floor", "wing", "room", "locationDescription"];
 
@@ -125,25 +123,56 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
   const [photoDialogOpen, setPhotoDialogOpen] = useState(false);
   const [barcodeDialogOpen, setBarcodeDialogOpen] = useState(false);
   const [isUpdatingPhoto, setIsUpdatingPhoto] = useState(false);
-  const [isAssigningBarcode, setIsAssigningBarcode] = useState(false);
-  const [barcodeCameraError, setBarcodeCameraError] = useState<string | null>(null);
-  const [flashlightSupported, setFlashlightSupported] = useState(false);
-  const [flashlightEnabled, setFlashlightEnabled] = useState(false);
   const [editingField, setEditingField] = useState<EditableFieldKey | null>(null);
   const [editingValue, setEditingValue] = useState("");
   const [isSavingField, setIsSavingField] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const barcodeScannerContainerRef = useRef<HTMLDivElement | null>(null);
-  const barcodeDetectedHandlerRef = useRef<((result: QuaggaJSResultObject) => void) | null>(null);
-  const barcodeProcessedHandlerRef = useRef<((result: QuaggaJSResultObject) => void) | null>(null);
-  const barcodeProcessingRef = useRef(false);
-  const barcodeFeedbackResetTimerRef = useRef<number | null>(null);
-  const barcodeFeedbackStateRef = useRef<"SUCCESS" | "FAILURE" | null>(null);
-  const scannerProfileRef = useRef<ScannerProfileId>("1080P");
-  const scannerFpsSamplesRef = useRef<number[]>([]);
-  const scannerFallbackTriggeredRef = useRef(false);
-  const scannerRestartPendingRef = useRef(false);
   const activeObjectUrlRef = useRef<string | null>(null);
+
+  const {
+    isStarting: isAssigningBarcode,
+    cameraError: barcodeCameraError,
+    setCameraError: setBarcodeCameraError,
+    flashlightSupported,
+    flashlightEnabled,
+    start: startBarcodeScanner,
+    stop: stopBarcodeScanner,
+    toggleFlashlight,
+  } = useCode128Scanner({
+    containerRef: barcodeScannerContainerRef,
+    onDetected: async (scannedCode) => {
+      if (!barcodeDialogOpen || !id) {
+        return { status: "ignore" };
+      }
+
+      const validation = validateNomaBarcode(scannedCode);
+      if (validation.error) {
+        console.warn("Barcode validation error:", validation.error, "Scanned barcode:", scannedCode);
+        return { status: "failure", errorMessage: validation.error };
+      }
+      const identifier = validation.identifier;
+      if (!identifier) {
+        return { status: "ignore" };
+      }
+
+      try {
+        await assignCachedDeviceBarcode(id, identifier);
+        await syncPendingBarcodeAssignments();
+        await loadDeviceDetails(id);
+        setBarcodeDialogOpen(false);
+        return { status: "success" };
+      } catch (error) {
+        return {
+          status: "failure",
+          errorMessage:
+            error instanceof Error
+              ? error.message
+              : "Nem sikerült elmenteni a beolvasott vonalkódot.",
+        };
+      }
+    },
+  });
 
   const loadDeviceDetails = async (deviceId: string) => {
     const [selectedBuilding, cachedDevice] = await Promise.all([
@@ -214,353 +243,16 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
     [],
   );
 
-  const stopBarcodeScanner = () => {
-    const stream = barcodeScannerContainerRef.current
-      ?.querySelector("video")
-      ?.srcObject;
-    const track = stream instanceof MediaStream ? stream.getVideoTracks()[0] : null;
-    if (track && flashlightEnabled) {
-      void track
-        .applyConstraints({ advanced: [{ torch: false } as MediaTrackConstraintSet] })
-        .catch(() => undefined);
-    }
-
-    if (barcodeDetectedHandlerRef.current) {
-      Quagga.offDetected(barcodeDetectedHandlerRef.current);
-      barcodeDetectedHandlerRef.current = null;
-    } else {
-      Quagga.offDetected();
-    }
-    if (barcodeProcessedHandlerRef.current) {
-      Quagga.offProcessed(barcodeProcessedHandlerRef.current);
-      barcodeProcessedHandlerRef.current = null;
-    } else {
-      Quagga.offProcessed();
-    }
-    void Quagga.stop().catch(() => undefined);
-    barcodeProcessingRef.current = false;
-    if (barcodeFeedbackResetTimerRef.current !== null) {
-      window.clearTimeout(barcodeFeedbackResetTimerRef.current);
-      barcodeFeedbackResetTimerRef.current = null;
-    }
-    barcodeFeedbackStateRef.current = null;
-    scannerFpsSamplesRef.current = [];
-
-    if (Quagga.canvas?.ctx?.overlay && Quagga.canvas?.dom?.overlay) {
-      Quagga.canvas.ctx.overlay.clearRect(
-        0,
-        0,
-        Quagga.canvas.dom.overlay.width,
-        Quagga.canvas.dom.overlay.height,
-      );
-    }
-
-    setIsAssigningBarcode(false);
-    setFlashlightEnabled(false);
-    setFlashlightSupported(false);
-  };
-
-  const scheduleFallbackTo720p = () => {
-    if (scannerRestartPendingRef.current) {
-      return;
-    }
-    scannerRestartPendingRef.current = true;
-    scannerProfileRef.current = "720P";
-    window.setTimeout(() => {
-      scannerRestartPendingRef.current = false;
-      if (barcodeDialogOpen && !barcodeProcessingRef.current) {
-        startBarcodeScanner("720P");
-      }
-    }, 120);
-  };
-
-  const tryBoostTrackToMaxResolution = async () => {
-    const stream = barcodeScannerContainerRef.current
-      ?.querySelector("video")
-      ?.srcObject;
-    const track = stream instanceof MediaStream ? stream.getVideoTracks()[0] : null;
-    if (!track) {
-      return;
-    }
-    const capabilities =
-      typeof track.getCapabilities === "function"
-        ? (track.getCapabilities() as MediaTrackCapabilities & {
-            width?: { max?: number };
-            height?: { max?: number };
-          })
-        : null;
-    const maxWidth = capabilities?.width?.max;
-    const maxHeight = capabilities?.height?.max;
-    if (typeof maxWidth !== "number" || typeof maxHeight !== "number") {
-      return;
-    }
-
-    await track
-      .applyConstraints({
-        width: { exact: maxWidth },
-        height: { exact: maxHeight },
-      })
-      .catch(() => undefined);
-  };
-
-  const setBarcodeFeedbackState = (state: "SUCCESS" | "FAILURE" | null) => {
-    if (barcodeFeedbackResetTimerRef.current !== null) {
-      window.clearTimeout(barcodeFeedbackResetTimerRef.current);
-      barcodeFeedbackResetTimerRef.current = null;
-    }
-    barcodeFeedbackStateRef.current = state;
-    if (state) {
-      barcodeFeedbackResetTimerRef.current = window.setTimeout(() => {
-        barcodeFeedbackStateRef.current = null;
-        barcodeFeedbackResetTimerRef.current = null;
-      }, 1000);
-    }
-  };
-
-  const detectFlashlightSupport = () => {
-    const stream = barcodeScannerContainerRef.current
-      ?.querySelector("video")
-      ?.srcObject;
-    const track = stream instanceof MediaStream ? stream.getVideoTracks()[0] : null;
-    const capabilities =
-      typeof track?.getCapabilities === "function"
-        ? (track.getCapabilities() as MediaTrackCapabilities & { torch?: boolean })
-        : null;
-    setFlashlightSupported(Boolean(capabilities?.torch));
-
-    const zoomCapabilities = capabilities as MediaTrackCapabilities & {
-      zoom?: { min?: number; max?: number };
-    };
-    const minZoom = zoomCapabilities.zoom?.min;
-    if (track && typeof minZoom === "number") {
-      void track
-        .applyConstraints({ advanced: [{ zoom: minZoom } as MediaTrackConstraintSet] })
-        .catch(() => undefined);
-    }
-
-    if (track) {
-      void track
-        .applyConstraints({
-          advanced: [{ focusMode: "continuous" } as unknown as MediaTrackConstraintSet],
-        })
-        .catch(() => undefined);
-    }
-  };
-
-  const toggleFlashlight = async () => {
-    const stream = barcodeScannerContainerRef.current
-      ?.querySelector("video")
-      ?.srcObject;
-    const track = stream instanceof MediaStream ? stream.getVideoTracks()[0] : null;
-    if (!track) {
-      setBarcodeCameraError("A zseblámpa nem érhető el.");
-      return;
-    }
-
-    const nextState = !flashlightEnabled;
-    try {
-      await track.applyConstraints({
-        advanced: [{ torch: nextState } as MediaTrackConstraintSet],
-      });
-      setFlashlightEnabled(nextState);
-    } catch {
-      setBarcodeCameraError(
-        nextState
-          ? "A zseblámpát nem sikerült bekapcsolni."
-          : "A zseblámpát nem sikerült kikapcsolni.",
-      );
-    }
-  };
-
-  const startBarcodeScanner = (profile: ScannerProfileId = "1080P") => {
-    if (!barcodeDialogOpen || !barcodeScannerContainerRef.current) {
-      return;
-    }
-
-    scannerProfileRef.current = profile;
-    stopBarcodeScanner();
-    setBarcodeCameraError(null);
-    setIsAssigningBarcode(true);
-
-    const onDetected = async (result: QuaggaJSResultObject) => {
-      if (!barcodeDialogOpen || !id || barcodeProcessingRef.current) {
-        return;
-      }
-
-      const scannedCode = result.codeResult.code?.trim() ?? "";
-      if (!scannedCode) {
-        return;
-      }
-
-      const validation = validateNomaBarcode(scannedCode);
-      if (validation.error) {
-        if (validation.error === "A detektált kód nem NoMa vonalkód") {
-          console.warn("Scanned non-NoMa barcode:", scannedCode);
-        }
-        setBarcodeFeedbackState("FAILURE");
-        setBarcodeCameraError(validation.error);
-        return;
-      }
-      const identifier = validation.identifier;
-      if (!identifier) {
-        return;
-      }
-
-      barcodeProcessingRef.current = true;
-      setBarcodeFeedbackState("SUCCESS");
-      setIsAssigningBarcode(true);
-
-      try {
-        await assignCachedDeviceBarcode(id, identifier);
-        await syncPendingBarcodeAssignments();
-        await loadDeviceDetails(id);
-        stopBarcodeScanner();
-        setBarcodeDialogOpen(false);
-      } catch (error) {
-        setBarcodeFeedbackState("FAILURE");
-        setBarcodeCameraError(
-          error instanceof Error
-            ? error.message
-            : "Nem sikerült elmenteni a beolvasott vonalkódot.",
-        );
-        barcodeProcessingRef.current = false;
-      } finally {
-        if (barcodeDialogOpen && !barcodeProcessingRef.current) {
-          setIsAssigningBarcode(false);
-        }
-      }
-    };
-
-    const onProcessed = (result: QuaggaJSResultObject) => {
-      const ctx = Quagga.canvas?.ctx?.overlay;
-      const canvas = Quagga.canvas?.dom?.overlay;
-      if (!ctx || !canvas) {
-        return;
-      }
-
-      const now = performance.now();
-      const samples = scannerFpsSamplesRef.current;
-      samples.push(now);
-      if (samples.length > 24) {
-        samples.shift();
-      }
-      if (
-        samples.length >= 10 &&
-        !scannerFallbackTriggeredRef.current &&
-        scannerProfileRef.current !== "720P"
-      ) {
-        const elapsedMs = samples[samples.length - 1] - samples[0];
-        if (elapsedMs > 0) {
-          const fps = ((samples.length - 1) * 1000) / elapsedMs;
-          if (fps < 6) {
-            scannerFallbackTriggeredRef.current = true;
-            scheduleFallbackTo720p();
-            return;
-          }
-        }
-      }
-
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      if (result?.boxes) {
-        result.boxes
-          .filter((box) => box !== result.box)
-          .forEach((box) => {
-            Quagga.ImageDebug.drawPath(box as unknown[], { x: 0, y: 1 }, ctx, {
-              color: "rgba(255, 255, 255, 0.55)",
-              lineWidth: 1,
-            });
-          });
-      }
-
-      if (result?.box) {
-        const state = barcodeFeedbackStateRef.current;
-        const activeColor =
-          state === "SUCCESS"
-            ? "#22C55E"
-            : state === "FAILURE"
-              ? "#EF4444"
-              : "#EAB308";
-
-        Quagga.ImageDebug.drawPath(result.box as unknown[], { x: 0, y: 1 }, ctx, {
-          color: activeColor,
-          lineWidth: 3,
-        });
-      }
-    };
-
-    barcodeDetectedHandlerRef.current = onDetected;
-    barcodeProcessedHandlerRef.current = onProcessed;
-
-    const constraints =
-      profile === "720P"
-        ? {
-            facingMode: "environment",
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          }
-        : {
-            facingMode: "environment",
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-          };
-
-    void Quagga.init({
-      inputStream: {
-        type: "LiveStream",
-        target: barcodeScannerContainerRef.current,
-        constraints,
-        area: {
-          top: "35%",
-          right: "14%",
-          left: "14%",
-          bottom: "35%",
-        },
-      },
-      decoder: {
-        readers: ["code_128_reader"],
-      },
-      locator: {
-        patchSize: "medium",
-        halfSample: true,
-      },
-      locate: true,
-      numOfWorkers:
-        typeof navigator !== "undefined" && typeof navigator.hardwareConcurrency === "number"
-          ? Math.max(1, Math.min(4, navigator.hardwareConcurrency))
-          : 2,
-      frequency: 10,
-    })
-      .then(() => {
-        Quagga.onDetected(onDetected);
-        Quagga.onProcessed(onProcessed);
-        Quagga.start();
-        setIsAssigningBarcode(false);
-        if (profile === "1080P") {
-          void tryBoostTrackToMaxResolution();
-        }
-        window.setTimeout(() => {
-          detectFlashlightSupport();
-        }, 0);
-      })
-      .catch(() => {
-        setBarcodeCameraError("Nem sikerült elindítani a kamerát.");
-        setIsAssigningBarcode(false);
-      });
-  };
-
   useEffect(() => {
     if (!barcodeDialogOpen) {
       stopBarcodeScanner();
       setBarcodeCameraError(null);
-      scannerFallbackTriggeredRef.current = false;
-      scannerProfileRef.current = "1080P";
     }
 
     return () => {
       stopBarcodeScanner();
     };
-  }, [barcodeDialogOpen]);
+  }, [barcodeDialogOpen, setBarcodeCameraError, stopBarcodeScanner]);
 
   const getEditableFieldCurrentValue = (field: EditableFieldKey): string => {
     if (!device) {

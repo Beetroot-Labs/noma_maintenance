@@ -7,6 +7,8 @@ export { AuthProvider, useAuth } from "./auth";
 export type { AuthUser, AuthUserRole } from "./auth";
 export { validateNomaBarcode } from "./barcodes";
 export type { NomaBarcodeValidationResult } from "./barcodes";
+export { useCode128Scanner } from "./code128Scanner";
+export type { Code128DetectionResult, ScannerProfileId } from "./code128Scanner";
 export { deviceKindLabels, getDeviceKindLabel } from "./deviceKinds";
 export type { DeviceKind } from "./deviceKinds";
 export { GoogleSignInButton } from "./googleIdentity";
@@ -14,6 +16,7 @@ export { GoogleLoginScreen } from "./googleLoginScreen";
 export {
   cacheBuildingSnapshot,
   fetchBuildingCachePayload,
+  getCachedBuildingSnapshot,
 } from "./buildingCache";
 export type {
   SharedBuildingCachePayload,

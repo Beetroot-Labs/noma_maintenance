@@ -3,6 +3,15 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "scripts": {
+    "test": "npm run test:crc",
+    "test:crc": "npm run test:crc:build && npm run test:crc:run",
+    "test:crc:build": "npx tsc -p tsconfig.test.json",
+    "test:crc:run": "node --test dist-test/tests/barcodes.crc.test.js"
+  },
+  "dependencies": {
+    "@ericblade/quagga2": "^1.12.1"
+  },
   "peerDependencies": {
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

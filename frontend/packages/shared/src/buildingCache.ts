@@ -89,3 +89,20 @@ export const cacheBuildingSnapshot = async (
     } satisfies CacheSnapshotRecord);
   });
 };
+
+export const getCachedBuildingSnapshot = async (
+  tenantId: string,
+  buildingId: string,
+): Promise<SharedBuildingCachePayload | null> => {
+  const db = await openCacheDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(SNAPSHOTS_STORE, "readonly");
+    tx.onerror = () => reject(tx.error);
+    const request = tx.objectStore(SNAPSHOTS_STORE).get(`${tenantId}:${buildingId}`);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const record = request.result as CacheSnapshotRecord | undefined;
+      resolve(record?.payload ?? null);
+    };
+  });
+};

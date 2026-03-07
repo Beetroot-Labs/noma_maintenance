@@ -9,8 +9,14 @@ export type NomaBarcodeValidationResult =
     };
 
 const NOMA_BARCODE_PATTERN = /^\d{11}$/;
+const CONTROL_CHARS_PATTERN = /[\u0000-\u001f\u007f]/g;
 
-const crc16Xmodem = (input: string) => {
+const normalizeScannerPayload = (raw: string) =>
+  raw
+    .replace(CONTROL_CHARS_PATTERN, "")
+    .trim();
+
+export const crc16Xmodem = (input: string) => {
   let crc = 0x0000;
 
   for (let i = 0; i < input.length; i += 1) {
@@ -28,15 +34,17 @@ const crc16Xmodem = (input: string) => {
 };
 
 export const validateNomaBarcode = (scannedCode: string): NomaBarcodeValidationResult => {
-  if (!NOMA_BARCODE_PATTERN.test(scannedCode)) {
+  const normalizedCode = normalizeScannerPayload(scannedCode);
+
+  if (!NOMA_BARCODE_PATTERN.test(normalizedCode)) {
     return {
       error: "A detektált kód nem NoMa vonalkód",
       identifier: null,
     };
   }
 
-  const identifier = scannedCode.slice(0, 6);
-  const encodedCrc = scannedCode.slice(6);
+  const identifier = normalizedCode.slice(0, 6);
+  const encodedCrc = normalizedCode.slice(6);
   const computedCrc = crc16Xmodem(identifier).toString(10).padStart(5, "0");
 
   if (computedCrc !== encodedCrc) {
