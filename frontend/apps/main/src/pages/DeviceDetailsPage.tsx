@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   Box,
@@ -10,18 +10,27 @@ import {
   Typography,
 } from "@mui/material";
 import { AlertTriangle, ArrowLeft, Blocks, Cpu, MapPin } from "lucide-react";
+import { getCachedBuildingSnapshot } from "@noma/shared";
 import { Layout } from "@/components/Layout";
 import { PhotoGallery } from "@/components/PhotoGallery";
-import { hvacDatabase, useMaintenance } from "@/context/MaintenanceContext";
+import { useMaintenance } from "@/context/MaintenanceContext";
+import { useDemoUser } from "@/context/DemoUserContext";
 import { getDeviceKindIcon, getDeviceKindLabel } from "@/lib/deviceKind";
 import { appColors } from "@/theme";
+
+type DeviceDetails = {
+  model: string;
+  kind: string;
+  address: string;
+  location: string;
+};
 
 export default function DeviceDetailsPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { todaysWorks, pastWorks } = useMaintenance();
-
-  const device = id ? hvacDatabase[id] : undefined;
+  const { user } = useDemoUser();
+  const [device, setDevice] = useState<DeviceDetails | null>(null);
   const maintenanceFormatter = useMemo(
     () =>
       new Intl.DateTimeFormat("hu-HU", {
@@ -49,6 +58,120 @@ export default function DeviceDetailsPage() {
         return bTime - aTime;
       });
   }, [id, pastWorks, todaysWorks]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const composeLocation = (
+      floor: string | null,
+      wing: string | null,
+      room: string | null,
+      description: string | null,
+    ) => {
+      const primary = [floor, wing, room].map((part) => part?.trim()).filter(Boolean).join(", ");
+      const secondary = description?.trim();
+      if (primary && secondary) {
+        return `${primary} (${secondary})`;
+      }
+      if (primary) {
+        return primary;
+      }
+      if (secondary) {
+        return secondary;
+      }
+      return "Ismeretlen helyszín";
+    };
+
+    const loadDevice = async () => {
+      if (!id || !user?.tenantId) {
+        if (!cancelled) {
+          setDevice(null);
+        }
+        return;
+      }
+
+      try {
+        const currentShiftResponse = await fetch("/api/shifts/current", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!currentShiftResponse.ok) {
+          if (!cancelled) {
+            setDevice(null);
+          }
+          return;
+        }
+        const currentShiftPayload = (await currentShiftResponse.json()) as {
+          shift: { id: string } | null;
+        };
+        const shiftId = currentShiftPayload.shift?.id;
+        if (!shiftId) {
+          if (!cancelled) {
+            setDevice(null);
+          }
+          return;
+        }
+
+        const waitingRoomResponse = await fetch(`/api/shifts/${shiftId}/waiting-room`, {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!waitingRoomResponse.ok) {
+          if (!cancelled) {
+            setDevice(null);
+          }
+          return;
+        }
+        const waitingRoomPayload = (await waitingRoomResponse.json()) as { building_id: string };
+        const snapshot = await getCachedBuildingSnapshot(user.tenantId, waitingRoomPayload.building_id);
+        if (!snapshot) {
+          if (!cancelled) {
+            setDevice(null);
+          }
+          return;
+        }
+
+        const locationById = new Map(
+          snapshot.locations.map((location) => [
+            location.id,
+            composeLocation(
+              location.floor,
+              location.wing,
+              location.room,
+              location.location_description,
+            ),
+          ]),
+        );
+        const cachedDevice = snapshot.devices.find((entry) => entry.code?.trim() === id);
+        if (!cachedDevice) {
+          if (!cancelled) {
+            setDevice(null);
+          }
+          return;
+        }
+
+        if (!cancelled) {
+          setDevice({
+            model: cachedDevice.model?.trim() || "Ismeretlen modell",
+            kind: cachedDevice.kind?.trim() || "UNKNOWN",
+            address: snapshot.building.address?.trim() || "Ismeretlen cím",
+            location:
+              (cachedDevice.location_id ? locationById.get(cachedDevice.location_id) : null) ||
+              "Ismeretlen helyszín",
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setDevice(null);
+        }
+      }
+    };
+
+    void loadDevice();
+    return () => {
+      cancelled = true;
+    };
+  }, [id, user?.tenantId]);
 
   if (!id || !device) {
     return (

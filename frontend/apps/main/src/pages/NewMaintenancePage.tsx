@@ -32,13 +32,24 @@ type ShiftWaitingRoomPayload = {
 export default function NewMaintenancePage() {
   const navigate = useNavigate();
   const { user } = useDemoUser();
-  const { startMaintenance } = useMaintenance();
+  const { startMaintenance, todaysWorks, pastWorks } = useMaintenance();
   const [hvacId, setHvacId] = useState("");
   const [scannerOpen, setScannerOpen] = useState(true);
   const [isLoadingBarcodeOptions, setIsLoadingBarcodeOptions] = useState(true);
   const [barcodeOptions, setBarcodeOptions] = useState<string[]>([]);
   const scannerContainerRef = useRef<HTMLDivElement | null>(null);
   const validBarcodeSet = useMemo(() => new Set(barcodeOptions), [barcodeOptions]);
+  const findLatestMaintenanceForDevice = (hvacId: string) => {
+    const allWorks = [...todaysWorks, ...pastWorks].filter((work) => work.hvacId === hvacId);
+    if (allWorks.length === 0) {
+      return null;
+    }
+    return allWorks.sort((left, right) => {
+      const leftTime = (left.endTime ?? left.startTime).getTime();
+      const rightTime = (right.endTime ?? right.startTime).getTime();
+      return rightTime - leftTime;
+    })[0] ?? null;
+  };
 
   const {
     isStarting: isScannerStarting,
@@ -67,9 +78,23 @@ export default function NewMaintenancePage() {
           errorMessage: "A beolvasott vonalkód nincs hozzárendelve eszközhöz ebben az épületben.",
         };
       }
+      const existingMaintenance = findLatestMaintenanceForDevice(identifier);
+      if (existingMaintenance) {
+        setHvacId(identifier);
+        setScannerOpen(false);
+        toast.info("Ehhez az eszközhöz már van rögzített karbantartás, annak adatlapja nyílik meg.");
+        navigate(`/maintenance/${existingMaintenance.id}`);
+        return { status: "success" };
+      }
       setHvacId(identifier);
       setScannerOpen(false);
       const workId = startMaintenance(identifier);
+      if (!workId) {
+        return {
+          status: "failure",
+          errorMessage: "A beolvasott vonalkódhoz nem található gyorsítótárazott eszközadat.",
+        };
+      }
       toast.success(`Beolvasva: ${identifier}`);
       toast.success("Karbantartás elindítva!");
       navigate(`/maintenance/${workId}`);
@@ -196,8 +221,18 @@ export default function NewMaintenancePage() {
       toast.error("A megadott vonalkód nincs hozzárendelve eszközhöz ebben az épületben.");
       return;
     }
+    const existingMaintenance = findLatestMaintenanceForDevice(normalizedCode);
+    if (existingMaintenance) {
+      toast.info("Ehhez az eszközhöz már van rögzített karbantartás, annak adatlapja nyílik meg.");
+      navigate(`/maintenance/${existingMaintenance.id}`);
+      return;
+    }
 
     const workId = startMaintenance(normalizedCode);
+    if (!workId) {
+      toast.error("A megadott vonalkódhoz nem található gyorsítótárazott eszközadat.");
+      return;
+    }
     toast.success("Karbantartás elindítva!");
     navigate(`/maintenance/${workId}`);
   };
