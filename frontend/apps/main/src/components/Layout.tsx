@@ -209,7 +209,7 @@ export function Layout({ children }: LayoutProps) {
           })}
           <Box
             component={Link}
-            to={currentWork ? `/maintenance/${currentWork.id}` : "/scan"}
+            to={currentWork ? `/maintenance/${currentWork.id}` : "/new-maintenance"}
             sx={{
               width: 54,
               height: 54,
@@ -306,7 +306,7 @@ export function Layout({ children }: LayoutProps) {
         <List sx={{ px: 1 }}>
           <ListItemButton
             component={Link}
-            to={currentWork ? `/maintenance/${currentWork.id}` : "/scan"}
+            to={currentWork ? `/maintenance/${currentWork.id}` : "/new-maintenance"}
             onClick={handleDrawerClose}
             sx={{
               borderRadius: 2,

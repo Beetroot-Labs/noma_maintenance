@@ -8,11 +8,11 @@ export function FloatingActionButton() {
   const { currentWork } = useMaintenance();
   const location = useLocation();
 
-  if (location.pathname === "/scan") return null;
+  if (location.pathname === "/new-maintenance") return null;
   if (currentWork && location.pathname === `/maintenance/${currentWork.id}`) return null;
 
   const isContinue = Boolean(currentWork);
-  const href = isContinue ? `/maintenance/${currentWork?.id}` : "/scan";
+  const href = isContinue ? `/maintenance/${currentWork?.id}` : "/new-maintenance";
 
   return (
     <Box sx={{ position: "fixed", bottom: 76, right: 16, zIndex: 40 }}>

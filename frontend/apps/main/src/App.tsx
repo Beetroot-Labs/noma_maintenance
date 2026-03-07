@@ -7,7 +7,7 @@ import { DemoUserProvider, useDemoUser } from "@/context/DemoUserContext";
 import { theme } from "@/theme";
 import MaintenanceHistoryPage from "./pages/MaintenanceHistoryPage";
 import LoginPage from "./pages/LoginPage";
-import ScanPage from "./pages/ScanPage";
+import NewMaintenancePage from "./pages/NewMaintenancePage";
 import MaintenancePage from "./pages/MaintenancePage";
 import OverviewPage from "./pages/OverviewPage";
 import DevicesOverview from "./pages/DevicesOverview";
@@ -109,7 +109,8 @@ const App = () => (
               <Route path="/login" element={<RedirectAuthenticatedUser />} />
               <Route element={<RequireDemoUser />}>
                 <Route path="/" element={<OverviewPage />} />
-                <Route path="/scan" element={<ScanPage />} />
+                <Route path="/new-maintenance" element={<NewMaintenancePage />} />
+                <Route path="/scan" element={<Navigate to="/new-maintenance" replace />} />
                 <Route path="/maintenance/:workId" element={<MaintenancePage />} />
                 <Route path="/overview" element={<OverviewPage />} />
                 <Route path="/dashboard" element={<MaintenanceDashboard />} />

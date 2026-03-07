@@ -120,7 +120,7 @@ const Index = () => {
               variant="contained"
               size="large"
               startIcon={<Play size={20} />}
-              onClick={() => navigate("/scan")}
+              onClick={() => navigate("/new-maintenance")}
               disabled={inProgress}
               fullWidth
               sx={{

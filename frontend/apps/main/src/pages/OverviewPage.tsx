@@ -237,7 +237,7 @@ export default function OverviewPage() {
                   <Typography variant="body2" color="text.secondary">
                     Ma még nincs karbantartási munka
                   </Typography>
-                  <Button variant="text" onClick={() => navigate("/scan")} sx={{ mt: 1 }}>
+                  <Button variant="text" onClick={() => navigate("/new-maintenance")} sx={{ mt: 1 }}>
                     Kezdje el az első munkát
                   </Button>
                 </CardContent>
