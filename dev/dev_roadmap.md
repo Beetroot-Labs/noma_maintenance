@@ -4,6 +4,8 @@
 [Details](./0_shared_sync_core.md)
 
 ## Phase 1: Shift Skeleton (End-to-End, no maintenance details)
+[Details](./1_shift_skeleton.md)
+
 - DB: `shifts`, `shift_participants`, status enums
 - API: create shift, invite users, accept invite, cache-ready ack, start shift
 - UI: lead invite screen + participant invite/accept flow

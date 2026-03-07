@@ -19,6 +19,7 @@ CREATE TABLE users (
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     full_name TEXT NOT NULL,
     email CITEXT NOT NULL,
+    phone_number TEXT,
     role user_role NOT NULL DEFAULT 'TECHNICIAN',
     email_verified_at TIMESTAMPTZ,
     last_login_at TIMESTAMPTZ,

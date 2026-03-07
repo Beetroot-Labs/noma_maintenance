@@ -7,16 +7,18 @@ WITH upsert_tenant AS (
     SET name = EXCLUDED.name
     RETURNING id
 )
-INSERT INTO users (tenant_id, full_name, email, email_verified_at)
+INSERT INTO users (tenant_id, full_name, email, phone_number, email_verified_at)
 SELECT
     upsert_tenant.id,
     'Surányi Domonkos',
     'floomatik@nomahutes.hu',
+    '0036305865232',
     NOW()
 FROM upsert_tenant
 ON CONFLICT (tenant_id, email) DO UPDATE
 SET
     full_name = EXCLUDED.full_name,
+    phone_number = EXCLUDED.phone_number,
     email_verified_at = EXCLUDED.email_verified_at;
 
 -- Google sign-in requires the real Google "sub" claim as provider_subject.
