@@ -21,7 +21,7 @@ interface MaintenanceContextType {
   pastWorks: MaintenanceWork[];
   workdayClosed: boolean;
   shiftManager: ShiftManager;
-  startMaintenance: (hvacId: string) => string | null;
+  startMaintenance: (hvacId: string) => Promise<string | null>;
   updateNotes: (workId: string, notes: string) => void;
   addPhoto: (workId: string, photo: MaintenancePhoto) => void;
   toggleMalfunction: (workId: string) => void;
@@ -127,6 +127,96 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     phone: "+36301234567",
   };
 
+  const composeLocation = (
+    floor: string | null,
+    wing: string | null,
+    room: string | null,
+    description: string | null,
+  ) => {
+    const primary = [floor, wing, room].map((part) => part?.trim()).filter(Boolean).join(", ");
+    const secondary = description?.trim();
+    if (primary && secondary) {
+      return `${primary} (${secondary})`;
+    }
+    if (primary) {
+      return primary;
+    }
+    if (secondary) {
+      return secondary;
+    }
+    return "Ismeretlen helyszín";
+  };
+
+  const loadCurrentShiftDeviceLookup = async (): Promise<{
+    lookup: Map<string, DeviceCacheLookupEntry>;
+    shiftId: string | null;
+  }> => {
+    if (!user?.tenantId) {
+      return { lookup: new Map(), shiftId: null };
+    }
+
+    const currentShiftResponse = await fetch("/api/shifts/current", {
+      credentials: "include",
+      cache: "no-store",
+    });
+    if (!currentShiftResponse.ok) {
+      return { lookup: new Map(), shiftId: null };
+    }
+
+    const currentShiftPayload = (await currentShiftResponse.json()) as {
+      shift: { id: string } | null;
+    };
+    const shiftId = currentShiftPayload.shift?.id ?? null;
+    if (!shiftId) {
+      return { lookup: new Map(), shiftId: null };
+    }
+
+    const waitingRoomResponse = await fetch(`/api/shifts/${shiftId}/waiting-room`, {
+      credentials: "include",
+      cache: "no-store",
+    });
+    if (!waitingRoomResponse.ok) {
+      return { lookup: new Map(), shiftId: null };
+    }
+
+    const waitingRoomPayload = (await waitingRoomResponse.json()) as { building_id: string };
+    const snapshot = await getCachedBuildingSnapshot(user.tenantId, waitingRoomPayload.building_id);
+    if (!snapshot) {
+      return { lookup: new Map(), shiftId };
+    }
+
+    const locationById = new Map(
+      snapshot.locations.map((location) => [
+        location.id,
+        composeLocation(
+          location.floor,
+          location.wing,
+          location.room,
+          location.location_description,
+        ),
+      ]),
+    );
+
+    const lookup = new Map<string, DeviceCacheLookupEntry>();
+    for (const device of snapshot.devices) {
+      const code = device.code?.trim();
+      if (!code) {
+        continue;
+      }
+      lookup.set(code, {
+        deviceId: device.id,
+        model: device.model?.trim() || "Ismeretlen modell",
+        kind: device.kind?.trim() || "UNKNOWN",
+        address: snapshot.building.address?.trim() || "Ismeretlen cím",
+        location:
+          (device.location_id ? locationById.get(device.location_id) : null) ||
+          "Ismeretlen helyszín",
+      });
+    }
+
+    return { lookup, shiftId };
+  };
+
   useEffect(() => {
     let cancelled = false;
 
@@ -213,26 +303,6 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
 
-    const composeLocation = (
-      floor: string | null,
-      wing: string | null,
-      room: string | null,
-      description: string | null,
-    ) => {
-      const primary = [floor, wing, room].map((part) => part?.trim()).filter(Boolean).join(", ");
-      const secondary = description?.trim();
-      if (primary && secondary) {
-        return `${primary} (${secondary})`;
-      }
-      if (primary) {
-        return primary;
-      }
-      if (secondary) {
-        return secondary;
-      }
-      return "Ismeretlen helyszín";
-    };
-
     const loadDeviceLookup = async () => {
       if (!user?.tenantId) {
         if (!cancelled) {
@@ -243,86 +313,11 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
       }
 
       try {
-        const currentShiftResponse = await fetch("/api/shifts/current", {
-          credentials: "include",
-          cache: "no-store",
-        });
-        if (!currentShiftResponse.ok) {
-          if (!cancelled) {
-            setDeviceLookup(new Map());
-            setCurrentShiftId(null);
-          }
-          return;
-        }
+        const { lookup, shiftId } = await loadCurrentShiftDeviceLookup();
 
-        const currentShiftPayload = (await currentShiftResponse.json()) as {
-          shift: { id: string } | null;
-        };
-        const shiftId = currentShiftPayload.shift?.id;
-        if (!shiftId) {
-          if (!cancelled) {
-            setDeviceLookup(new Map());
-            setCurrentShiftId(null);
-          }
-          return;
-        }
         if (!cancelled) {
+          setDeviceLookup(lookup);
           setCurrentShiftId(shiftId);
-        }
-
-        const waitingRoomResponse = await fetch(`/api/shifts/${shiftId}/waiting-room`, {
-          credentials: "include",
-          cache: "no-store",
-        });
-        if (!waitingRoomResponse.ok) {
-          if (!cancelled) {
-            setDeviceLookup(new Map());
-            setCurrentShiftId(null);
-          }
-          return;
-        }
-
-        const waitingRoomPayload = (await waitingRoomResponse.json()) as { building_id: string };
-        const snapshot = await getCachedBuildingSnapshot(user.tenantId, waitingRoomPayload.building_id);
-        if (!snapshot) {
-          if (!cancelled) {
-            setDeviceLookup(new Map());
-            setCurrentShiftId(null);
-          }
-          return;
-        }
-
-        const locationById = new Map(
-          snapshot.locations.map((location) => [
-            location.id,
-            composeLocation(
-              location.floor,
-              location.wing,
-              location.room,
-              location.location_description,
-            ),
-          ]),
-        );
-
-        const nextLookup = new Map<string, DeviceCacheLookupEntry>();
-        for (const device of snapshot.devices) {
-          const code = device.code?.trim();
-          if (!code) {
-            continue;
-          }
-          nextLookup.set(code, {
-            deviceId: device.id,
-            model: device.model?.trim() || "Ismeretlen modell",
-            kind: device.kind?.trim() || "UNKNOWN",
-            address: snapshot.building.address?.trim() || "Ismeretlen cím",
-            location:
-              (device.location_id ? locationById.get(device.location_id) : null) ||
-              "Ismeretlen helyszín",
-          });
-        }
-
-        if (!cancelled) {
-          setDeviceLookup(nextLookup);
         }
       } catch {
         if (!cancelled) {
@@ -462,16 +457,30 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
       });
   };
 
-  const startMaintenance = (hvacId: string): string | null => {
+  const startMaintenance = async (hvacId: string): Promise<string | null> => {
     setWorkdayClosed(false);
-    const hvacInfo = deviceLookup.get(hvacId);
-    if (!hvacInfo || !currentShiftId) {
+    let resolvedShiftId = currentShiftId;
+    let hvacInfo = deviceLookup.get(hvacId);
+
+    if (!hvacInfo || !resolvedShiftId) {
+      try {
+        const { lookup, shiftId } = await loadCurrentShiftDeviceLookup();
+        setDeviceLookup(lookup);
+        setCurrentShiftId(shiftId);
+        resolvedShiftId = shiftId;
+        hvacInfo = lookup.get(hvacId);
+      } catch {
+        return null;
+      }
+    }
+
+    if (!hvacInfo || !resolvedShiftId) {
       return null;
     }
 
     const newWork: MaintenanceWork = {
       id: createWorkId(),
-      shiftId: currentShiftId,
+      shiftId: resolvedShiftId,
       deviceId: hvacInfo.deviceId,
       hvacId,
       hvacModel: hvacInfo.model,

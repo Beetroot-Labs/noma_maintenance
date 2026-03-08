@@ -88,7 +88,7 @@ export default function NewMaintenancePage() {
       }
       setHvacId(identifier);
       setScannerOpen(false);
-      const workId = startMaintenance(identifier);
+      const workId = await startMaintenance(identifier);
       if (!workId) {
         return {
           status: "failure",
@@ -228,13 +228,15 @@ export default function NewMaintenancePage() {
       return;
     }
 
-    const workId = startMaintenance(normalizedCode);
-    if (!workId) {
-      toast.error("A megadott vonalkódhoz nem található gyorsítótárazott eszközadat.");
-      return;
-    }
-    toast.success("Karbantartás elindítva!");
-    navigate(`/maintenance/${workId}`);
+    void (async () => {
+      const workId = await startMaintenance(normalizedCode);
+      if (!workId) {
+        toast.error("A megadott vonalkódhoz nem található gyorsítótárazott eszközadat.");
+        return;
+      }
+      toast.success("Karbantartás elindítva!");
+      navigate(`/maintenance/${workId}`);
+    })();
   };
 
   return (
