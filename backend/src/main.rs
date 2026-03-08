@@ -1,6 +1,7 @@
 mod auth;
 mod error;
 mod labeling;
+mod maintenance;
 mod shifts;
 mod state;
 mod storage;
@@ -28,6 +29,7 @@ use crate::labeling::{
     get_labeling_device_photo, list_labeling_buildings, update_labeling_device_details,
     upload_labeling_device_photo,
 };
+use crate::maintenance::{sync_maintenance_work, upload_maintenance_photo};
 use crate::shifts::{
     accept_shift_invitation, add_shift_participant, cancel_shift, create_shift,
     get_current_shift_state, get_shift_waiting_room, list_shift_invite_candidates,
@@ -150,6 +152,11 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/labeling/buildings/{building_id}/cache",
             get(get_labeling_building_cache),
+        )
+        .route("/maintenance/works/{work_id}/sync", post(sync_maintenance_work))
+        .route(
+            "/maintenance/works/{work_id}/photos/{photo_id}",
+            put(upload_maintenance_photo),
         )
         .layer(DefaultBodyLimit::max(20 * 1024 * 1024))
         .with_state(app_state);

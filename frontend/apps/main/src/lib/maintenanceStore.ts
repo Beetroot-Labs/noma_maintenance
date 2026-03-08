@@ -1,6 +1,16 @@
+import {
+  createSyncRunner,
+  isRetryableHttpStatus,
+  runOutboxSyncEngine,
+  type OfflineOutboxItem,
+  type OutboxSyncItemResult,
+} from "@noma/shared";
+import { getPhotoById } from "@/lib/photoStore";
+
 const DB_NAME = "noma-maintenance-state";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = "maintenance_state";
+const SYNC_OUTBOX_STORE = "sync_outbox";
 
 type MaintenanceStateRecord = {
   id: string;
@@ -8,6 +18,41 @@ type MaintenanceStateRecord = {
   user_id: string;
   updated_at: string;
   payload: unknown;
+};
+
+type MaintenanceSyncMutationType = "UPSERT_MAINTENANCE_WORK" | "UPSERT_MAINTENANCE_PHOTO";
+
+type MaintenanceSyncPayload = {
+  work?: QueueMaintenanceWorkSyncInput;
+  photo?: QueueMaintenancePhotoSyncInput;
+};
+
+type MaintenanceSyncOutboxRecord = OfflineOutboxItem<MaintenanceSyncPayload> & {
+  id: string;
+  mutation_id: string;
+  mutation_type: MaintenanceSyncMutationType;
+  entity_type: "MAINTENANCE_WORK" | "MAINTENANCE_PHOTO";
+  entity_id: string;
+};
+
+export type QueueMaintenanceWorkSyncInput = {
+  workId: string;
+  shiftId: string;
+  deviceId: string;
+  status: "IN_PROGRESS" | "FINISHED" | "ABORTED";
+  startedAt: string;
+  finishedAt: string | null;
+  abortedAt: string | null;
+  malfunctionDescription: string | null;
+  note: string | null;
+};
+
+export type QueueMaintenancePhotoSyncInput = {
+  workId: string;
+  photoId: string;
+  captureNote: string | null;
+  capturedAt: string;
+  photoType: "MAINTENANCE" | "MALFUNCTION";
 };
 
 const openDb = (): Promise<IDBDatabase> =>
@@ -18,6 +63,11 @@ const openDb = (): Promise<IDBDatabase> =>
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains(SYNC_OUTBOX_STORE)) {
+        const outboxStore = db.createObjectStore(SYNC_OUTBOX_STORE, { keyPath: "id" });
+        outboxStore.createIndex("status", "status", { unique: false });
+        outboxStore.createIndex("updated_at", "updated_at", { unique: false });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -73,4 +123,266 @@ export const clearMaintenanceState = async (
     tx.oncomplete = () => resolve();
     tx.objectStore(STORE_NAME).delete(getKey(tenantId, userId));
   });
+};
+
+const createMutationId = () => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+
+const getAllOutboxRecords = async (): Promise<MaintenanceSyncOutboxRecord[]> => {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(SYNC_OUTBOX_STORE, "readonly");
+    tx.onerror = () => reject(tx.error);
+    const request = tx.objectStore(SYNC_OUTBOX_STORE).getAll();
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () =>
+      resolve((request.result as MaintenanceSyncOutboxRecord[] | undefined) ?? []);
+  });
+};
+
+const isPendingSyncItem = (item: Pick<MaintenanceSyncOutboxRecord, "status" | "retryable">) =>
+  item.status === "PENDING" ||
+  item.status === "IN_PROGRESS" ||
+  (item.status === "FAILED" && item.retryable);
+
+const readSyncError = async (
+  response: Response,
+): Promise<{ message: string; retryable: boolean | null }> => {
+  const defaultMessage = "Sikertelen szinkronizáció.";
+  const defaultRetryable = isRetryableHttpStatus(response.status);
+  try {
+    const payload = (await response.json()) as {
+      error?: string;
+      retryable?: boolean;
+    };
+    return {
+      message: payload.error ?? defaultMessage,
+      retryable: typeof payload.retryable === "boolean" ? payload.retryable : null,
+    };
+  } catch {
+    return {
+      message: defaultMessage,
+      retryable: defaultRetryable,
+    };
+  }
+};
+
+const putOutboxRecord = async (record: MaintenanceSyncOutboxRecord): Promise<void> => {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(SYNC_OUTBOX_STORE, "readwrite");
+    tx.onerror = () => reject(tx.error);
+    tx.oncomplete = () => resolve();
+    tx.objectStore(SYNC_OUTBOX_STORE).put(record);
+  });
+};
+
+export const enqueueMaintenanceWorkSync = async (
+  payload: QueueMaintenanceWorkSyncInput,
+): Promise<void> => {
+  const now = new Date().toISOString();
+  await putOutboxRecord({
+    id: `MAINTENANCE_WORK:${payload.workId}`,
+    mutation_id: createMutationId(),
+    mutation_type: "UPSERT_MAINTENANCE_WORK",
+    entity_type: "MAINTENANCE_WORK",
+    entity_id: payload.workId,
+    payload_json: { work: payload },
+    status: "PENDING",
+    retryable: true,
+    attempt_count: 0,
+    last_attempt_at: null,
+    last_error: null,
+    created_at: now,
+    updated_at: now,
+  });
+};
+
+export const enqueueMaintenancePhotoSync = async (
+  payload: QueueMaintenancePhotoSyncInput,
+): Promise<void> => {
+  const now = new Date().toISOString();
+  await putOutboxRecord({
+    id: `MAINTENANCE_PHOTO:${payload.photoId}`,
+    mutation_id: createMutationId(),
+    mutation_type: "UPSERT_MAINTENANCE_PHOTO",
+    entity_type: "MAINTENANCE_PHOTO",
+    entity_id: payload.photoId,
+    payload_json: { photo: payload },
+    status: "PENDING",
+    retryable: true,
+    attempt_count: 0,
+    last_attempt_at: null,
+    last_error: null,
+    created_at: now,
+    updated_at: now,
+  });
+};
+
+export const syncPendingMaintenanceMutations = async (): Promise<void> => {
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    return;
+  }
+
+  const db = await openDb();
+  await runOutboxSyncEngine<MaintenanceSyncOutboxRecord>({
+    listPendingItems: async () => {
+      const items = await getAllOutboxRecords();
+      return items
+        .filter((item) => isPendingSyncItem(item))
+        .sort((left, right) => left.created_at.localeCompare(right.created_at));
+    },
+    prepareAttempt: async (item, attemptAt) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(SYNC_OUTBOX_STORE, "readwrite");
+        tx.onerror = () => reject(tx.error);
+        tx.oncomplete = () => resolve("proceed");
+        tx.objectStore(SYNC_OUTBOX_STORE).put({
+          ...item,
+          status: "IN_PROGRESS",
+          updated_at: attemptAt,
+          last_attempt_at: attemptAt,
+          attempt_count: item.attempt_count + 1,
+          last_error: null,
+        } satisfies MaintenanceSyncOutboxRecord);
+      }),
+    runItem: async (item): Promise<OutboxSyncItemResult> => {
+      let response: Response;
+
+      try {
+        if (item.mutation_type === "UPSERT_MAINTENANCE_WORK") {
+          const work = item.payload_json?.work;
+          if (!work) {
+            return {
+              status: "failure",
+              errorMessage: "Hiányzó karbantartási szinkron payload.",
+              retryable: false,
+            };
+          }
+          response = await fetch(`/api/maintenance/works/${work.workId}/sync`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Mutation-Id": item.mutation_id,
+            },
+            credentials: "include",
+            body: JSON.stringify({
+              shift_id: work.shiftId,
+              device_id: work.deviceId,
+              status: work.status,
+              started_at: work.startedAt,
+              finished_at: work.finishedAt,
+              aborted_at: work.abortedAt,
+              malfunction_description: work.malfunctionDescription,
+              note: work.note,
+            }),
+          });
+        } else {
+          const photoPayload = item.payload_json?.photo;
+          if (!photoPayload) {
+            return {
+              status: "failure",
+              errorMessage: "Hiányzó fotó szinkron payload.",
+              retryable: false,
+            };
+          }
+          const storedPhoto = await getPhotoById(photoPayload.photoId);
+          if (!storedPhoto) {
+            await new Promise<void>((resolve, reject) => {
+              const tx = db.transaction(SYNC_OUTBOX_STORE, "readwrite");
+              tx.onerror = () => reject(tx.error);
+              tx.oncomplete = () => resolve();
+              tx.objectStore(SYNC_OUTBOX_STORE).delete(item.id);
+            });
+            return { status: "skip" };
+          }
+          const blob = await fetch(storedPhoto.url).then((result) => result.blob());
+          const query = new URLSearchParams();
+          if (photoPayload.captureNote) {
+            query.set("capture_note", photoPayload.captureNote);
+          }
+          query.set("captured_at", photoPayload.capturedAt);
+          query.set("photo_type", photoPayload.photoType);
+          response = await fetch(
+            `/api/maintenance/works/${photoPayload.workId}/photos/${photoPayload.photoId}?${query.toString()}`,
+            {
+              method: "PUT",
+              headers: {
+                "Content-Type": blob.type || "application/octet-stream",
+                "X-Mutation-Id": item.mutation_id,
+              },
+              credentials: "include",
+              body: blob,
+            },
+          );
+        }
+      } catch {
+        return {
+          status: "failure",
+          errorMessage: "A szerver jelenleg nem érhető el.",
+          retryable: true,
+        };
+      }
+
+      if (!response.ok) {
+        const syncError = await readSyncError(response);
+        return {
+          status: "failure",
+          errorMessage: syncError.message,
+          retryable:
+            syncError.retryable === null
+              ? isRetryableHttpStatus(response.status)
+              : syncError.retryable,
+        };
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(SYNC_OUTBOX_STORE, "readwrite");
+        tx.onerror = () => reject(tx.error);
+        tx.oncomplete = () => resolve();
+        tx.objectStore(SYNC_OUTBOX_STORE).delete(item.id);
+      });
+
+      return { status: "success" };
+    },
+    applyFailure: async (item, failure, attemptAt) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(SYNC_OUTBOX_STORE, "readwrite");
+        tx.onerror = () => reject(tx.error);
+        tx.oncomplete = () => resolve();
+        tx.objectStore(SYNC_OUTBOX_STORE).put({
+          ...item,
+          status: "FAILED",
+          retryable: failure.retryable,
+          updated_at: new Date().toISOString(),
+          last_attempt_at: attemptAt,
+          attempt_count: item.attempt_count + 1,
+          last_error: failure.errorMessage,
+        } satisfies MaintenanceSyncOutboxRecord);
+      }),
+  });
+};
+
+const syncRunner = createSyncRunner({
+  runSync: async () => {
+    await syncPendingMaintenanceMutations();
+  },
+  baseIntervalMs: 60_000,
+  maxIntervalMs: 5 * 60_000,
+});
+
+export const startMaintenanceOfflineSyncRunner = () => {
+  syncRunner.start();
+};
+
+export const stopMaintenanceOfflineSyncRunner = () => {
+  syncRunner.stop();
+};
+
+export const triggerMaintenanceOfflineSyncNow = () => {
+  syncRunner.triggerNow();
 };

@@ -14,6 +14,13 @@ export type { DeviceKind } from "./deviceKinds";
 export { GoogleSignInButton } from "./googleIdentity";
 export { GoogleLoginScreen } from "./googleLoginScreen";
 export {
+  runOutboxSyncEngine,
+} from "./outboxSyncEngine";
+export type {
+  OutboxPrepareResult,
+  OutboxSyncItemResult,
+} from "./outboxSyncEngine";
+export {
   cacheBuildingSnapshot,
   fetchBuildingCachePayload,
   getCachedBuildingSnapshot,

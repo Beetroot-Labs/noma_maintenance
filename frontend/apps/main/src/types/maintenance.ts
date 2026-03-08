@@ -7,6 +7,8 @@ export interface MaintenancePhoto {
 
 export interface MaintenanceWork {
   id: string;
+  shiftId: string;
+  deviceId: string;
   hvacId: string;
   hvacModel: string;
   hvacKind: string;

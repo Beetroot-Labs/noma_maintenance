@@ -29,3 +29,15 @@ pub fn device_photo_object_name(
 pub fn device_photo_api_path(device_id: uuid::Uuid) -> String {
     format!("/api/labeling/devices/{device_id}/photo")
 }
+
+pub fn maintenance_photo_object_name(
+    storage: &StorageConfig,
+    tenant_id: uuid::Uuid,
+    maintenance_work_id: uuid::Uuid,
+    photo_id: uuid::Uuid,
+) -> String {
+    format!(
+        "{}/tenants/{}/maintenance-works/{}/photos/{}",
+        storage.device_photo_prefix, tenant_id, maintenance_work_id, photo_id
+    )
+}

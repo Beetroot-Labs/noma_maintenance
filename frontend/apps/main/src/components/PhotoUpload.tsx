@@ -12,6 +12,7 @@ import {
 import { Camera, ImagePlus, X } from "lucide-react";
 import type { MaintenancePhoto } from "@/types/maintenance";
 import { appColors } from "@/theme";
+import { createUuid } from "@/lib/uuid";
 
 interface PhotoUploadProps {
   onPhotoAdd: (photo: MaintenancePhoto) => void;
@@ -47,7 +48,7 @@ export function PhotoUpload({ onPhotoAdd }: PhotoUploadProps) {
   const handleSave = () => {
     if (!preview) return;
     const photo: MaintenancePhoto = {
-      id: `photo-${Date.now()}`,
+      id: createUuid(),
       url: preview,
       description: description.trim(),
       timestamp: new Date(),

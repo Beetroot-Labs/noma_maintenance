@@ -44,6 +44,10 @@ const getRecord = async (id: string): Promise<StoredPhoto | null> => {
   });
 };
 
+export const getPhotoById = async (id: string): Promise<MaintenancePhoto | null> => {
+  return getRecord(id);
+};
+
 const putRecord = async (photo: StoredPhoto) =>
   withStore<void>("readwrite", (store) => {
     store.put(photo);

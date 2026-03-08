@@ -4,10 +4,16 @@ import { useDemoUser } from "@/context/DemoUserContext";
 import { getCachedBuildingSnapshot } from "@noma/shared";
 import {
   clearMaintenanceState,
+  enqueueMaintenancePhotoSync,
+  enqueueMaintenanceWorkSync,
   loadMaintenanceState,
   saveMaintenanceState,
+  startMaintenanceOfflineSyncRunner,
+  stopMaintenanceOfflineSyncRunner,
+  triggerMaintenanceOfflineSyncNow,
 } from "@/lib/maintenanceStore";
 import { clearPhotos, getPhotosByIds, purgeDemoPhotos, savePhoto } from "@/lib/photoStore";
+import { createUuid, isUuid } from "@/lib/uuid";
 
 interface MaintenanceContextType {
   currentWork: MaintenanceWork | null;
@@ -53,10 +59,15 @@ type StoredMaintenanceState = {
 };
 
 type DeviceCacheLookupEntry = {
+  deviceId: string;
   model: string;
   kind: string;
   address: string;
   location: string;
+};
+
+const createWorkId = () => {
+  return createUuid();
 };
 
 const serializeWork = (work: MaintenanceWork): StoredMaintenanceWork => ({
@@ -71,21 +82,33 @@ const serializeWork = (work: MaintenanceWork): StoredMaintenanceWork => ({
   })),
 });
 
-const deserializeWork = (work: StoredMaintenanceWork): MaintenanceWork => ({
-  ...work,
-  startTime: new Date(work.startTime),
-  endTime: work.endTime ? new Date(work.endTime) : undefined,
-  lastEdited: work.lastEdited ? new Date(work.lastEdited) : undefined,
-  photos: (work.photos ?? []).map((photo) => {
-    const legacy = photo as StoredMaintenancePhoto & { url?: string };
-    return {
-      id: legacy.id,
-      url: legacy.url ?? "",
-      description: legacy.description ?? "",
-      timestamp: new Date(legacy.timestamp),
-    };
-  }),
-});
+const deserializeWork = (work: StoredMaintenanceWork): MaintenanceWork | null => {
+  const candidate = work as MaintenanceWork;
+  if (!isUuid(candidate.id) || !isUuid(candidate.shiftId) || !isUuid(candidate.deviceId)) {
+    return null;
+  }
+
+  return {
+    ...candidate,
+    startTime: new Date(work.startTime),
+    endTime: work.endTime ? new Date(work.endTime) : undefined,
+    lastEdited: work.lastEdited ? new Date(work.lastEdited) : undefined,
+    photos: (work.photos ?? [])
+      .map((photo) => {
+        const legacy = photo as StoredMaintenancePhoto & { url?: string };
+        if (!isUuid(legacy.id)) {
+          return null;
+        }
+        return {
+          id: legacy.id,
+          url: legacy.url ?? "",
+          description: legacy.description ?? "",
+          timestamp: new Date(legacy.timestamp),
+        };
+      })
+      .filter((photo): photo is MaintenancePhoto => Boolean(photo)),
+  };
+};
 
 export function MaintenanceProvider({ children }: { children: ReactNode }) {
   const { user } = useDemoUser();
@@ -97,6 +120,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
   const [deviceLookup, setDeviceLookup] = useState<Map<string, DeviceCacheLookupEntry>>(
     new Map(),
   );
+  const [currentShiftId, setCurrentShiftId] = useState<string | null>(null);
 
   const shiftManager: ShiftManager = {
     name: "Ivanics Károly",
@@ -131,9 +155,19 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        setCurrentWork(persisted?.currentWork ? deserializeWork(persisted.currentWork) : null);
-        setTodaysWorks((persisted?.todaysWorks ?? []).map(deserializeWork));
-        setPastWorks((persisted?.pastWorks ?? []).map(deserializeWork));
+        const nextCurrentWork = persisted?.currentWork
+          ? deserializeWork(persisted.currentWork)
+          : null;
+        const nextTodaysWorks = (persisted?.todaysWorks ?? [])
+          .map(deserializeWork)
+          .filter((work): work is MaintenanceWork => Boolean(work));
+        const nextPastWorks = (persisted?.pastWorks ?? [])
+          .map(deserializeWork)
+          .filter((work): work is MaintenanceWork => Boolean(work));
+
+        setCurrentWork(nextCurrentWork);
+        setTodaysWorks(nextTodaysWorks);
+        setPastWorks(nextPastWorks);
         setWorkdayClosed(persisted?.workdayClosed ?? false);
       } catch (error) {
         if (!cancelled) {
@@ -165,6 +199,18 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (!user?.tenantId || !user.id) {
+      stopMaintenanceOfflineSyncRunner();
+      return;
+    }
+    startMaintenanceOfflineSyncRunner();
+    triggerMaintenanceOfflineSyncNow();
+    return () => {
+      stopMaintenanceOfflineSyncRunner();
+    };
+  }, [user?.tenantId, user?.id]);
+
+  useEffect(() => {
     let cancelled = false;
 
     const composeLocation = (
@@ -191,6 +237,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
       if (!user?.tenantId) {
         if (!cancelled) {
           setDeviceLookup(new Map());
+          setCurrentShiftId(null);
         }
         return;
       }
@@ -203,6 +250,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
         if (!currentShiftResponse.ok) {
           if (!cancelled) {
             setDeviceLookup(new Map());
+            setCurrentShiftId(null);
           }
           return;
         }
@@ -214,8 +262,12 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
         if (!shiftId) {
           if (!cancelled) {
             setDeviceLookup(new Map());
+            setCurrentShiftId(null);
           }
           return;
+        }
+        if (!cancelled) {
+          setCurrentShiftId(shiftId);
         }
 
         const waitingRoomResponse = await fetch(`/api/shifts/${shiftId}/waiting-room`, {
@@ -225,6 +277,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
         if (!waitingRoomResponse.ok) {
           if (!cancelled) {
             setDeviceLookup(new Map());
+            setCurrentShiftId(null);
           }
           return;
         }
@@ -234,6 +287,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
         if (!snapshot) {
           if (!cancelled) {
             setDeviceLookup(new Map());
+            setCurrentShiftId(null);
           }
           return;
         }
@@ -257,6 +311,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
             continue;
           }
           nextLookup.set(code, {
+            deviceId: device.id,
             model: device.model?.trim() || "Ismeretlen modell",
             kind: device.kind?.trim() || "UNKNOWN",
             address: snapshot.building.address?.trim() || "Ismeretlen cím",
@@ -272,6 +327,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
       } catch {
         if (!cancelled) {
           setDeviceLookup(new Map());
+          setCurrentShiftId(null);
         }
       }
     };
@@ -366,15 +422,57 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     isMaintenanceStateLoaded,
   ]);
 
+  const queueWorkSync = (work: MaintenanceWork) => {
+    const status = work.status === "completed" ? "FINISHED" : "IN_PROGRESS";
+    const malfunctionDescription = work.isMalfunctioning
+      ? work.notes.trim() || null
+      : null;
+    enqueueMaintenanceWorkSync({
+      workId: work.id,
+      shiftId: work.shiftId,
+      deviceId: work.deviceId,
+      status,
+      startedAt: work.startTime.toISOString(),
+      finishedAt: status === "FINISHED" ? (work.endTime?.toISOString() ?? null) : null,
+      abortedAt: null,
+      malfunctionDescription,
+      note: work.notes.trim() || null,
+    })
+      .then(() => {
+        triggerMaintenanceOfflineSyncNow();
+      })
+      .catch((error) => {
+        console.warn("Nem sikerült sorba állítani a karbantartás szinkronizációját.", error);
+      });
+  };
+
+  const queuePhotoSync = (work: MaintenanceWork, photo: MaintenancePhoto) => {
+    enqueueMaintenancePhotoSync({
+      workId: work.id,
+      photoId: photo.id,
+      captureNote: photo.description.trim() || null,
+      capturedAt: photo.timestamp.toISOString(),
+      photoType: work.isMalfunctioning ? "MALFUNCTION" : "MAINTENANCE",
+    })
+      .then(() => {
+        triggerMaintenanceOfflineSyncNow();
+      })
+      .catch((error) => {
+        console.warn("Nem sikerült sorba állítani a fotó szinkronizációját.", error);
+      });
+  };
+
   const startMaintenance = (hvacId: string): string | null => {
     setWorkdayClosed(false);
     const hvacInfo = deviceLookup.get(hvacId);
-    if (!hvacInfo) {
+    if (!hvacInfo || !currentShiftId) {
       return null;
     }
 
     const newWork: MaintenanceWork = {
-      id: `MW-${Date.now()}`,
+      id: createWorkId(),
+      shiftId: currentShiftId,
+      deviceId: hvacInfo.deviceId,
       hvacId,
       hvacModel: hvacInfo.model,
       hvacKind: hvacInfo.kind,
@@ -390,38 +488,58 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
 
     setCurrentWork(newWork);
     setTodaysWorks((prev) => [...prev, newWork]);
+    queueWorkSync(newWork);
 
     return newWork.id;
   };
 
   const updateNotes = (workId: string, notes: string) => {
+    let updatedWork: MaintenanceWork | null = null;
     if (currentWork?.id === workId) {
-      setCurrentWork({ ...currentWork, notes });
+      updatedWork = { ...currentWork, notes };
+      setCurrentWork(updatedWork);
     }
     setTodaysWorks((prev) =>
-      prev.map((work) => (work.id === workId ? { ...work, notes } : work)),
+      prev.map((work) => {
+        if (work.id !== workId) {
+          return work;
+        }
+        const nextWork = { ...work, notes };
+        updatedWork = nextWork;
+        return nextWork;
+      }),
     );
     setPastWorks((prev) =>
       prev.map((work) =>
         work.id === workId && work.status === "completed" ? { ...work, notes } : work,
       ),
     );
+    if (updatedWork) {
+      queueWorkSync(updatedWork);
+    }
   };
 
   const addPhoto = (workId: string, photo: MaintenancePhoto) => {
     savePhoto(photo).catch((error) => {
       console.warn("Nem sikerült a fotót tárolni.", error);
     });
+    let updatedWork: MaintenanceWork | null = null;
     if (currentWork?.id === workId) {
-      setCurrentWork({
+      updatedWork = {
         ...currentWork,
         photos: [...currentWork.photos, photo],
-      });
+      };
+      setCurrentWork(updatedWork);
     }
     setTodaysWorks((prev) =>
-      prev.map((work) =>
-        work.id === workId ? { ...work, photos: [...work.photos, photo] } : work,
-      ),
+      prev.map((work) => {
+        if (work.id !== workId) {
+          return work;
+        }
+        const nextWork = { ...work, photos: [...work.photos, photo] };
+        updatedWork = nextWork;
+        return nextWork;
+      }),
     );
     setPastWorks((prev) =>
       prev.map((work) =>
@@ -430,21 +548,32 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
           : work,
       ),
     );
+    if (updatedWork) {
+      queuePhotoSync(updatedWork, photo);
+    }
   };
 
   const toggleMalfunction = (workId: string) => {
+    let updatedWork: MaintenanceWork | null = null;
     if (currentWork?.id === workId) {
-      setCurrentWork({
+      updatedWork = {
         ...currentWork,
         isMalfunctioning: !currentWork.isMalfunctioning,
-      });
+      };
+      setCurrentWork(updatedWork);
     }
     setTodaysWorks((prev) =>
-      prev.map((work) =>
-        work.id === workId
-          ? { ...work, isMalfunctioning: !work.isMalfunctioning }
-          : work,
-      ),
+      prev.map((work) => {
+        if (work.id !== workId) {
+          return work;
+        }
+        const nextWork = {
+          ...work,
+          isMalfunctioning: !work.isMalfunctioning,
+        };
+        updatedWork = nextWork;
+        return nextWork;
+      }),
     );
     setPastWorks((prev) =>
       prev.map((work) =>
@@ -453,14 +582,27 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
           : work,
       ),
     );
+    if (updatedWork) {
+      queueWorkSync(updatedWork);
+    }
   };
 
   const completeMaintenance = (workId: string) => {
     const endTime = new Date();
-    const workToArchive =
+    const workToArchiveBase =
       currentWork?.id === workId
         ? currentWork
         : todaysWorks.find((work) => work.id === workId);
+    const workToArchive = workToArchiveBase
+      ? { ...workToArchiveBase, status: "completed" as const, endTime }
+      : null;
+
+    if (workToArchive) {
+      queueWorkSync(workToArchive);
+      for (const photo of workToArchive.photos) {
+        queuePhotoSync(workToArchive, photo);
+      }
+    }
 
     if (currentWork?.id === workId) {
       setCurrentWork({ ...currentWork, status: "completed", endTime });
