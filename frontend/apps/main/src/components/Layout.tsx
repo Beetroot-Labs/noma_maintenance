@@ -30,6 +30,7 @@ import {
 import { appColors } from "@/theme";
 import { useDemoUser } from "@/context/DemoUserContext";
 import { useMaintenance } from "@/context/MaintenanceContext";
+import { useShift } from "@/context/ShiftContext";
 
 interface LayoutProps {
   children: ReactNode;
@@ -47,8 +48,10 @@ export function Layout({ children }: LayoutProps) {
   const isDesktop = useMediaQuery(theme.breakpoints.up("md"));
   const { user, clearUser } = useDemoUser();
   const { currentWork } = useMaintenance();
+  const { currentShift } = useShift();
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const showBottomBar = Boolean(currentShift);
 
   const roleLabel = {
     admin: "adminisztrátor",
@@ -143,7 +146,7 @@ export function Layout({ children }: LayoutProps) {
       <Container
         component="main"
         maxWidth="lg"
-        sx={{ flex: 1, py: 3, pb: { xs: 9, md: 4 } }}
+        sx={{ flex: 1, py: 3, pb: { xs: showBottomBar ? 9 : 3, md: 4 } }}
       >
         <Box
           key={location.pathname}
@@ -156,110 +159,112 @@ export function Layout({ children }: LayoutProps) {
         </Box>
       </Container>
 
-      <Paper
-        component="nav"
-        elevation={8}
-        sx={{
-          position: "sticky",
-          bottom: 0,
-          borderTop: `1px solid ${appColors.primary}`,
-          bgcolor: appColors.primary,
-          color: appColors.primaryForeground,
-          display: { xs: "block", md: "none" },
-          borderBottomLeftRadius: 0,
-          borderBottomRightRadius: 0,
-        }}
-      >
-        <Container maxWidth="md" sx={{
-            display: "flex",
-            alignItems: "center",
-            gap: 1,
-            py: 0.75,
-            pb: 2,
-        }}>
-          {navItems.slice(0, 1).map(({ path, label, icon: Icon }) => {
-            const isActive = location.pathname === path;
-            return (
-              <Box
-                key={path}
-                component={Link}
-                to={path}
-                sx={{
-                  flex: 1,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  gap: 0.5,
-                  py: 1,
-                  borderRadius: 2,
-                  color: isActive ? appColors.accent : appColors.primaryForeground,
-                  bgcolor: "transparent",
-                  transition: "background-color 0.2s ease, color 0.2s ease",
-                  "&:hover": {
-                    color: appColors.accent,
-                  },
-                }}
-              >
-                <Icon size={20} />
-                <Typography variant="caption" sx={{ fontWeight: 600 }}>
-                  {label}
-                </Typography>
-              </Box>
-            );
-          })}
-          <Box
-            component={Link}
-            to={currentWork ? `/maintenance/${currentWork.id}` : "/new-maintenance"}
-            sx={{
-              width: 54,
-              height: 54,
+      {showBottomBar ? (
+        <Paper
+          component="nav"
+          elevation={8}
+          sx={{
+            position: "sticky",
+            bottom: 0,
+            borderTop: `1px solid ${appColors.primary}`,
+            bgcolor: appColors.primary,
+            color: appColors.primaryForeground,
+            display: { xs: "block", md: "none" },
+            borderBottomLeftRadius: 0,
+            borderBottomRightRadius: 0,
+          }}
+        >
+          <Container maxWidth="md" sx={{
               display: "flex",
               alignItems: "center",
-              justifyContent: "center",
-              borderRadius: "50%",
-              bgcolor: appColors.accent,
-              color: appColors.foreground,
-              boxShadow: "0 10px 24px rgba(15, 23, 42, 0.2)",
-              "&:hover": {
+              gap: 1,
+              py: 0.75,
+              pb: 2,
+          }}>
+            {navItems.slice(0, 1).map(({ path, label, icon: Icon }) => {
+              const isActive = location.pathname === path;
+              return (
+                <Box
+                  key={path}
+                  component={Link}
+                  to={path}
+                  sx={{
+                    flex: 1,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 0.5,
+                    py: 1,
+                    borderRadius: 2,
+                    color: isActive ? appColors.accent : appColors.primaryForeground,
+                    bgcolor: "transparent",
+                    transition: "background-color 0.2s ease, color 0.2s ease",
+                    "&:hover": {
+                      color: appColors.accent,
+                    },
+                  }}
+                >
+                  <Icon size={20} />
+                  <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                    {label}
+                  </Typography>
+                </Box>
+              );
+            })}
+            <Box
+              component={Link}
+              to={currentWork ? `/maintenance/${currentWork.id}` : "/new-maintenance"}
+              sx={{
+                width: 54,
+                height: 54,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: "50%",
                 bgcolor: appColors.accent,
-              },
-            }}
-            aria-label={currentWork ? "Munka folytatása" : "Munka indítása"}
-          >
-            {currentWork ? <Play size={20} /> : <ScanBarcode size={22} />}
-          </Box>
-          {navItems.slice(1).map(({ path, label, icon: Icon }) => {
-            const isActive = location.pathname === path;
-            return (
-              <Box
-                key={path}
-                component={Link}
-                to={path}
-                sx={{
-                  flex: 1,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  gap: 0.5,
-                  py: 1,
-                  borderRadius: 2,
-                  color: isActive ? appColors.accent : appColors.primaryForeground,
-                  bgcolor: "transparent",
-                  transition: "background-color 0.2s ease, color 0.2s ease",
-                  "&:hover": {
-                    color: appColors.accent,
-                  },
-                }}
-              >
-                <Icon size={20} />
-                <Typography variant="caption" sx={{ fontWeight: 600 }}>
-                  {label}
-                </Typography>
-              </Box>
-            );
-          })}
-        </Container>
-      </Paper>
+                color: appColors.foreground,
+                boxShadow: "0 10px 24px rgba(15, 23, 42, 0.2)",
+                "&:hover": {
+                  bgcolor: appColors.accent,
+                },
+              }}
+              aria-label={currentWork ? "Munka folytatása" : "Munka indítása"}
+            >
+              {currentWork ? <Play size={20} /> : <ScanBarcode size={22} />}
+            </Box>
+            {navItems.slice(1).map(({ path, label, icon: Icon }) => {
+              const isActive = location.pathname === path;
+              return (
+                <Box
+                  key={path}
+                  component={Link}
+                  to={path}
+                  sx={{
+                    flex: 1,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 0.5,
+                    py: 1,
+                    borderRadius: 2,
+                    color: isActive ? appColors.accent : appColors.primaryForeground,
+                    bgcolor: "transparent",
+                    transition: "background-color 0.2s ease, color 0.2s ease",
+                    "&:hover": {
+                      color: appColors.accent,
+                    },
+                  }}
+                >
+                  <Icon size={20} />
+                  <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                    {label}
+                  </Typography>
+                </Box>
+              );
+            })}
+          </Container>
+        </Paper>
+      ) : null}
 
       <Drawer
         anchor="left"

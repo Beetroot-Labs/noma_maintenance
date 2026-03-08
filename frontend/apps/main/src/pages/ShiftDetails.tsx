@@ -25,6 +25,7 @@ import { ArrowLeft, Building2, CloudDownload, EllipsisVertical, HardHat, LoaderC
 import { useNavigate } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { useDemoUser } from "@/context/DemoUserContext";
+import { useShift } from "@/context/ShiftContext";
 import { toast } from "@/lib/toast";
 import { appColors } from "@/theme";
 
@@ -134,6 +135,7 @@ const toActionErrorMessage = (err: unknown, fallback: string) => {
 export default function ShiftDetails() {
   const navigate = useNavigate();
   const { user } = useDemoUser();
+  const { refreshCurrentShift } = useShift();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [payload, setPayload] = useState<ShiftWaitingRoomPayload | null>(null);
@@ -307,6 +309,7 @@ export default function ShiftDetails() {
       if (!response.ok) {
         throw new Error(await readApiErrorMessage(response, "Nem sikerült megszakítani a műszakot."));
       }
+      await refreshCurrentShift();
       toast.success("A műszak megszakítása sikeres.");
       navigate("/");
     } catch (err) {

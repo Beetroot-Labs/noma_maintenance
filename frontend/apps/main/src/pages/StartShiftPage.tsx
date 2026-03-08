@@ -12,6 +12,7 @@ import {
   Typography,
 } from "@mui/material";
 import { Layout } from "@/components/Layout";
+import { useShift } from "@/context/ShiftContext";
 
 type BuildingOption = {
   id: string;
@@ -37,6 +38,7 @@ const readApiErrorMessage = async (response: Response, fallback: string) => {
 
 export default function StartShiftPage() {
   const navigate = useNavigate();
+  const { refreshCurrentShift } = useShift();
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,6 +97,7 @@ export default function StartShiftPage() {
       }
 
       const payload = (await response.json()) as CreateShiftResponse;
+      await refreshCurrentShift();
       navigate(`/shifts/${payload.shift_id}/waiting-room`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Nem sikerült létrehozni a műszakot.");

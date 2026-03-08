@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   Alert,
@@ -25,6 +25,7 @@ import { Check, CloudDownload, LoaderCircle, Plus, Trash, UserPlus, X } from "lu
 import { cacheBuildingSnapshot, fetchBuildingCachePayload } from "@noma/shared";
 import { Layout } from "@/components/Layout";
 import { useDemoUser } from "@/context/DemoUserContext";
+import { useShift } from "@/context/ShiftContext";
 
 type ShiftParticipant = {
   user_id: string;
@@ -120,6 +121,7 @@ export default function ShiftWaitingRoomPage() {
   const navigate = useNavigate();
   const { shiftId } = useParams<{ shiftId: string }>();
   const { user } = useDemoUser();
+  const { refreshCurrentShift } = useShift();
   const [payload, setPayload] = useState<ShiftWaitingRoomPayload | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isAccepting, setIsAccepting] = useState(false);
@@ -134,7 +136,7 @@ export default function ShiftWaitingRoomPage() {
   const [error, setError] = useState<string | null>(null);
   const autoCacheTriggeredRef = useRef(false);
 
-  const loadWaitingRoom = async () => {
+  const loadWaitingRoom = useCallback(async () => {
     if (!shiftId) {
       return;
     }
@@ -147,7 +149,7 @@ export default function ShiftWaitingRoomPage() {
     }
     const nextPayload = (await response.json()) as ShiftWaitingRoomPayload;
     setPayload(nextPayload);
-  };
+  }, [shiftId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -170,14 +172,16 @@ export default function ShiftWaitingRoomPage() {
     return () => {
       cancelled = true;
     };
-  }, [shiftId]);
+  }, [loadWaitingRoom]);
 
   useEffect(() => {
     if (!payload || !user) {
       return;
     }
     if (payload.status === "IN_PROGRESS") {
-      navigate("/");
+      void refreshCurrentShift().finally(() => {
+        navigate("/dashboard");
+      });
       return;
     }
     if (payload.my_participant_status !== "ACCEPTED") {
@@ -218,7 +222,7 @@ export default function ShiftWaitingRoomPage() {
     };
 
     void run();
-  }, [isCaching, navigate, payload, user]);
+  }, [isCaching, loadWaitingRoom, navigate, payload, refreshCurrentShift, user]);
 
   const handleAccept = async () => {
     if (!shiftId) {
@@ -234,6 +238,7 @@ export default function ShiftWaitingRoomPage() {
       if (!response.ok) {
         throw new Error(await readApiErrorMessage(response, "Nem sikerült elfogadni a meghívást."));
       }
+      await refreshCurrentShift();
       await loadWaitingRoom();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Nem sikerült elfogadni a meghívást.");
@@ -256,6 +261,7 @@ export default function ShiftWaitingRoomPage() {
       if (!response.ok) {
         throw new Error(await readApiErrorMessage(response, "Nem sikerült elindítani a műszakot."));
       }
+      await refreshCurrentShift();
       await loadWaitingRoom();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Nem sikerült elindítani a műszakot.");
@@ -278,6 +284,7 @@ export default function ShiftWaitingRoomPage() {
       if (!response.ok) {
         throw new Error(await readApiErrorMessage(response, "Nem sikerült megszakítani a műszakot."));
       }
+      await refreshCurrentShift();
       navigate("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Nem sikerült megszakítani a műszakot.");
