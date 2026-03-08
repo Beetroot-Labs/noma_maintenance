@@ -180,8 +180,8 @@ export default function DeviceDetailsPage() {
           <Typography variant="body2" color="text.secondary">
             Az eszköz nem található
           </Typography>
-          <Button variant="text" onClick={() => navigate("/devices")}>
-            Vissza az eszközökhöz
+          <Button variant="text" onClick={() => navigate("/dashboard")}>
+            Vissza a műszerfalra
           </Button>
         </Box>
       </Layout>
@@ -195,7 +195,7 @@ export default function DeviceDetailsPage() {
     <Layout>
       <Box sx={{ display: "flex", flexDirection: "column", gap: 3, animation: "slideUp 0.3s ease-out" }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <IconButton onClick={() => navigate("/devices")}>
+          <IconButton onClick={() => navigate("/dashboard")}>
             <ArrowLeft size={18} />
           </IconButton>
           <Box sx={{ flex: 1 }}>
