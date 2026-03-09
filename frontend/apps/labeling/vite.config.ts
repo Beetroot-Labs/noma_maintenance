@@ -50,6 +50,21 @@ export default defineConfig(({ mode }) => {
             }
 
             const [pathname, suffix = ""] = req.url.split("?");
+
+            // Vite serves `public/` files from the root in dev. Rewrite requests
+            // under the app base so `/labeling-app/manifest.json` resolves.
+            if (
+              pathname.startsWith(`${normalizedBase}/`) &&
+              !pathname.startsWith(`${normalizedBase}/@`) &&
+              !pathname.startsWith(`${normalizedBase}/src/`) &&
+              !pathname.startsWith(`${normalizedBase}/node_modules/`) &&
+              /\.[a-zA-Z0-9]+$/.test(pathname)
+            ) {
+              req.url = `${pathname.slice(normalizedBase.length)}${suffix ? `?${suffix}` : ""}`;
+              next();
+              return;
+            }
+
             if (pathname === normalizedBase) {
               res.statusCode = 302;
               res.setHeader("Location", `${normalizedBase}/${suffix ? `?${suffix}` : ""}`);
