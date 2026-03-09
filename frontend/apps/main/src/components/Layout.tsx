@@ -52,6 +52,9 @@ export function Layout({ children }: LayoutProps) {
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const showBottomBar = Boolean(currentShift);
+  const canStartNewMaintenance =
+    currentShift?.status !== "CLOSE_REQUESTED" && currentShift?.status !== "READY_TO_COMMIT";
+  const startActionDisabled = !currentWork && !canStartNewMaintenance;
 
   const roleLabel = {
     admin: "adminisztrátor",
@@ -212,8 +215,8 @@ export function Layout({ children }: LayoutProps) {
               );
             })}
             <Box
-              component={Link}
-              to={currentWork ? `/maintenance/${currentWork.id}` : "/new-maintenance"}
+              component={startActionDisabled ? "div" : Link}
+              to={startActionDisabled ? undefined : currentWork ? `/maintenance/${currentWork.id}` : "/new-maintenance"}
               sx={{
                 width: 54,
                 height: 54,
@@ -224,6 +227,7 @@ export function Layout({ children }: LayoutProps) {
                 bgcolor: appColors.accent,
                 color: appColors.foreground,
                 boxShadow: "0 10px 24px rgba(15, 23, 42, 0.2)",
+                opacity: startActionDisabled ? 0.45 : 1,
                 "&:hover": {
                   bgcolor: appColors.accent,
                 },
@@ -310,9 +314,10 @@ export function Layout({ children }: LayoutProps) {
         <Divider sx={{ borderColor: appColors.border, mt: 1 }} />
         <List sx={{ px: 1 }}>
           <ListItemButton
-            component={Link}
-            to={currentWork ? `/maintenance/${currentWork.id}` : "/new-maintenance"}
-            onClick={handleDrawerClose}
+            component={startActionDisabled ? "div" : Link}
+            to={startActionDisabled ? undefined : currentWork ? `/maintenance/${currentWork.id}` : "/new-maintenance"}
+            onClick={startActionDisabled ? undefined : handleDrawerClose}
+            disabled={startActionDisabled}
             sx={{
               borderRadius: 2,
               bgcolor: alpha(appColors.accent, 0.15),

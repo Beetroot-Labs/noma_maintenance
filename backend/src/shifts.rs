@@ -74,6 +74,7 @@ pub struct ShiftWaitingRoomResponse {
 pub struct CurrentShiftSummary {
     id: uuid::Uuid,
     status: String,
+    building_id: uuid::Uuid,
     building_name: String,
     lead_user_name: String,
     lead_user_phone: Option<String>,
@@ -83,6 +84,42 @@ pub struct CurrentShiftSummary {
 #[derive(Serialize)]
 pub struct CurrentShiftResponse {
     shift: Option<CurrentShiftSummary>,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct ShiftMaintenanceSummaryRow {
+    maintenance_id: uuid::Uuid,
+    maintainer_user_name: String,
+    maintenance_status: String,
+    started_at: DateTime<Utc>,
+    finished_at: Option<DateTime<Utc>>,
+    aborted_at: Option<DateTime<Utc>>,
+    malfunction_description: Option<String>,
+    note: Option<String>,
+    device_id: uuid::Uuid,
+    device_code: Option<String>,
+    device_kind: String,
+    device_additional_info: Option<String>,
+    device_brand: Option<String>,
+    device_model: Option<String>,
+    device_serial_number: Option<String>,
+    source_device_code: Option<String>,
+    building_name: String,
+    building_address: String,
+    floor: Option<String>,
+    wing: Option<String>,
+    room: Option<String>,
+    location_description: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ShiftMaintenanceSummaryResponse {
+    shift_id: uuid::Uuid,
+    shift_status: String,
+    building_name: String,
+    lead_user_id: uuid::Uuid,
+    lead_user_name: String,
+    maintenances: Vec<ShiftMaintenanceSummaryRow>,
 }
 
 pub async fn list_shift_invite_candidates(
@@ -129,6 +166,7 @@ pub async fn get_current_shift_state(
         SELECT
             s.id,
             s.status::text AS status,
+            s.building_id,
             b.name AS building_name,
             lu.full_name AS lead_user_name,
             lu.phone_number AS lead_user_phone,
@@ -145,9 +183,12 @@ pub async fn get_current_shift_state(
          AND lu.id = s.lead_user_id
         WHERE sp.tenant_id = $1
           AND sp.user_id = $2
-          AND s.status IN ('INVITING', 'READY_TO_START', 'IN_PROGRESS')
+          AND s.status IN ('INVITING', 'READY_TO_START', 'IN_PROGRESS', 'CLOSE_REQUESTED', 'READY_TO_COMMIT')
         ORDER BY
-          CASE WHEN s.status = 'IN_PROGRESS' THEN 0 ELSE 1 END,
+          CASE
+            WHEN s.status IN ('IN_PROGRESS', 'CLOSE_REQUESTED', 'READY_TO_COMMIT') THEN 0
+            ELSE 1
+          END,
           s.created_at DESC
         LIMIT 1
         "#,
@@ -159,6 +200,122 @@ pub async fn get_current_shift_state(
     .map_err(ApiError::internal)?;
 
     Ok(Json(CurrentShiftResponse { shift }))
+}
+
+pub async fn get_shift_maintenance_summary(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(shift_id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+
+    let shift_core = sqlx::query_as::<_, (String, String, uuid::Uuid, String)>(
+        r#"
+        SELECT
+            s.status::text AS status,
+            b.name AS building_name,
+            s.lead_user_id,
+            lu.full_name AS lead_user_name
+        FROM shifts s
+        JOIN shift_participants sp
+          ON sp.tenant_id = s.tenant_id
+         AND sp.shift_id = s.id
+         AND sp.user_id = $3
+        JOIN buildings b
+          ON b.tenant_id = s.tenant_id
+         AND b.id = s.building_id
+        JOIN users lu
+          ON lu.tenant_id = s.tenant_id
+         AND lu.id = s.lead_user_id
+        WHERE s.tenant_id = $1
+          AND s.id = $2
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(shift_id)
+    .bind(user.id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let Some((shift_status, building_name, lead_user_id, lead_user_name)) = shift_core else {
+        return Err(ApiError::forbidden("shift not found for current user"));
+    };
+
+    if lead_user_id != user.id {
+        return Err(ApiError::forbidden(
+            "only the shift lead can view the maintenance summary",
+        ));
+    }
+
+    let maintenances = sqlx::query_as::<_, ShiftMaintenanceSummaryRow>(
+        r#"
+        SELECT
+            mw.id AS maintenance_id,
+            mu.full_name AS maintainer_user_name,
+            mw.status::text AS maintenance_status,
+            mw.started_at,
+            mw.finished_at,
+            mw.aborted_at,
+            mw.malfunction_description,
+            mw.note,
+            d.id AS device_id,
+            bc.code AS device_code,
+            d.kind::text AS device_kind,
+            d.additional_info AS device_additional_info,
+            d.brand AS device_brand,
+            d.model AS device_model,
+            d.serial_number AS device_serial_number,
+            d.source_device_code,
+            b.name AS building_name,
+            b.address AS building_address,
+            l.floor,
+            l.wing,
+            l.room,
+            l.location_description
+        FROM maintenance_works mw
+        JOIN shifts s
+          ON s.tenant_id = mw.tenant_id
+         AND s.id = mw.shift_id
+        JOIN devices d
+          ON d.tenant_id = mw.tenant_id
+         AND d.id = mw.device_id
+        LEFT JOIN site_locations l
+          ON l.tenant_id = d.tenant_id
+         AND l.id = d.location_id
+        LEFT JOIN barcodes bc
+          ON bc.tenant_id = d.tenant_id
+         AND bc.device_id = d.id
+         AND bc.deactivated_at IS NULL
+        JOIN buildings b
+          ON b.tenant_id = s.tenant_id
+         AND b.id = s.building_id
+        JOIN users mu
+          ON mu.tenant_id = mw.tenant_id
+         AND mu.id = mw.maintainer_user_id
+        WHERE mw.tenant_id = $1
+          AND mw.shift_id = $2
+        ORDER BY mw.started_at ASC, mw.id ASC
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(shift_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(Json(ShiftMaintenanceSummaryResponse {
+        shift_id,
+        shift_status,
+        building_name,
+        lead_user_id,
+        lead_user_name,
+        maintenances,
+    }))
 }
 
 pub async fn create_shift(
@@ -644,6 +801,156 @@ pub async fn start_shift(
     Ok(StatusCode::NO_CONTENT)
 }
 
+pub async fn request_shift_close(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(shift_id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+
+    let shift_row: Option<(uuid::Uuid, String)> = sqlx::query_as(
+        r#"
+        SELECT lead_user_id, status::text AS status
+        FROM shifts
+        WHERE tenant_id = $1
+          AND id = $2
+        FOR UPDATE
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(shift_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let Some((lead_user_id, status)) = shift_row else {
+        return Err(ApiError::forbidden("shift not found or cannot be closed"));
+    };
+
+    if lead_user_id != user.id {
+        return Err(ApiError::forbidden("only the shift lead can request close"));
+    }
+
+    if status != "IN_PROGRESS" {
+        return Err(ApiError::conflict(
+            "shift close can only be requested while shift is in progress",
+        ));
+    }
+
+    sqlx::query(
+        r#"
+        UPDATE shifts
+        SET status = 'CLOSE_REQUESTED',
+            close_requested_at = COALESCE(close_requested_at, NOW())
+        WHERE tenant_id = $1
+          AND id = $2
+          AND status = 'IN_PROGRESS'
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(shift_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    tx.commit().await.map_err(ApiError::internal)?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn confirm_shift_close(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(shift_id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+
+    let shift_status: Option<String> = sqlx::query_scalar(
+        r#"
+        SELECT status::text
+        FROM shifts
+        WHERE tenant_id = $1
+          AND id = $2
+        FOR UPDATE
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(shift_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let Some(shift_status) = shift_status else {
+        return Err(ApiError::forbidden("shift not found for current tenant"));
+    };
+
+    if !matches!(shift_status.as_str(), "CLOSE_REQUESTED" | "READY_TO_COMMIT") {
+        return Err(ApiError::conflict(
+            "shift close confirmation is only allowed after close request",
+        ));
+    }
+
+    let open_work_count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM maintenance_works
+        WHERE tenant_id = $1
+          AND shift_id = $2
+          AND maintainer_user_id = $3
+          AND status = 'IN_PROGRESS'
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(shift_id)
+    .bind(user.id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    if open_work_count > 0 {
+        return Err(ApiError::conflict(
+            "all ongoing maintenance must be finished before close confirmation",
+        ));
+    }
+
+    let updated = sqlx::query(
+        r#"
+        UPDATE shift_participants
+        SET status = 'CLOSE_CONFIRMED',
+            close_confirmed_at = COALESCE(close_confirmed_at, NOW())
+        WHERE tenant_id = $1
+          AND shift_id = $2
+          AND user_id = $3
+          AND status IN ('CACHE_READY', 'CLOSE_CONFIRMED')
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(shift_id)
+    .bind(user.id)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    if updated.rows_affected() == 0 {
+        return Err(ApiError::forbidden("shift participant not eligible for close confirmation"));
+    }
+
+    refresh_shift_close_state_tx(&mut tx, user.tenant_id, shift_id).await?;
+    tx.commit().await.map_err(ApiError::internal)?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub async fn cancel_shift(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -752,6 +1059,52 @@ async fn refresh_shift_ready_state_tx(
         WHERE tenant_id = $1
           AND id = $2
           AND status IN ('INVITING', 'READY_TO_START')
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(shift_id)
+    .bind(next_status)
+    .execute(&mut **tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(())
+}
+
+async fn refresh_shift_close_state_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tenant_id: uuid::Uuid,
+    shift_id: uuid::Uuid,
+) -> Result<(), ApiError> {
+    let remaining_count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM shift_participants
+        WHERE tenant_id = $1
+          AND shift_id = $2
+          AND status <> 'DECLINED'
+          AND status <> 'CLOSE_CONFIRMED'
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(shift_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let next_status = if remaining_count == 0 {
+        "READY_TO_COMMIT"
+    } else {
+        "CLOSE_REQUESTED"
+    };
+
+    sqlx::query(
+        r#"
+        UPDATE shifts
+        SET status = $3::shift_status
+        WHERE tenant_id = $1
+          AND id = $2
+          AND status IN ('CLOSE_REQUESTED', 'READY_TO_COMMIT')
         "#,
     )
     .bind(tenant_id)

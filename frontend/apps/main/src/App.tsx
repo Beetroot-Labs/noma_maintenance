@@ -16,6 +16,7 @@ import ShiftWaitingRoomPage from "./pages/ShiftWaitingRoomPage";
 import MaintenanceDashboard from "./pages/MaintenanceDashboard";
 import ShiftDetails from "./pages/ShiftDetails";
 import ShiftHomePage from "./pages/ShiftHomePage";
+import ShiftSummaryPage from "./pages/ShiftSummaryPage";
 
 const queryClient = new QueryClient();
 
@@ -80,11 +81,32 @@ const ShiftDashboardRoute = () => {
     return <Navigate to="/" replace />;
   }
 
-  if (currentShift.status !== "IN_PROGRESS") {
+  if (currentShift.status === "INVITING" || currentShift.status === "READY_TO_START") {
     return <Navigate to={`/shifts/${currentShift.id}/waiting-room`} replace />;
   }
 
   return <MaintenanceDashboard />;
+};
+
+const RequireMaintenanceStartAllowed = () => {
+  const { currentShift, isLoading } = useShift();
+
+  if (isLoading) {
+    return (
+      <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+        <CircularProgress color="secondary" />
+      </Box>
+    );
+  }
+
+  if (
+    currentShift &&
+    (currentShift.status === "CLOSE_REQUESTED" || currentShift.status === "READY_TO_COMMIT")
+  ) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return <Outlet />;
 };
 
 const RequireActiveShift = () => {
@@ -152,10 +174,13 @@ const App = () => (
                   <Route path="/dashboard" element={<ShiftDashboardRoute />} />
                   <Route path="/shifts/:shiftId/waiting-room" element={<ShiftWaitingRoomPage />} />
                   <Route element={<RequireActiveShift />}>
-                    <Route path="/new-maintenance" element={<NewMaintenancePage />} />
-                    <Route path="/scan" element={<Navigate to="/new-maintenance" replace />} />
+                    <Route element={<RequireMaintenanceStartAllowed />}>
+                      <Route path="/new-maintenance" element={<NewMaintenancePage />} />
+                      <Route path="/scan" element={<Navigate to="/new-maintenance" replace />} />
+                    </Route>
                     <Route path="/maintenance/:workId" element={<MaintenancePage />} />
                     <Route path="/shift-details" element={<ShiftDetails />} />
+                    <Route path="/shift-summary" element={<ShiftSummaryPage />} />
                     <Route path="/devices/:id" element={<DeviceDetailsPage />} />
                   </Route>
                   <Route element={<RequireRoles roles={["admin", "lead_technician"]} />}>

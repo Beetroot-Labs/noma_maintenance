@@ -29,7 +29,11 @@ export default function ShiftHomePage() {
     );
   }
 
-  if (currentShift?.status === "IN_PROGRESS") {
+  if (
+    currentShift?.status === "IN_PROGRESS" ||
+    currentShift?.status === "CLOSE_REQUESTED" ||
+    currentShift?.status === "READY_TO_COMMIT"
+  ) {
     return <Navigate to="/dashboard" replace />;
   }
 

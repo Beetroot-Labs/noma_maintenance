@@ -31,9 +31,10 @@ use crate::labeling::{
 };
 use crate::maintenance::{sync_maintenance_work, upload_maintenance_photo};
 use crate::shifts::{
-    accept_shift_invitation, add_shift_participant, cancel_shift, create_shift,
-    get_current_shift_state, get_shift_waiting_room, list_shift_invite_candidates,
-    mark_shift_cache_ready, remove_shift_participant, start_shift,
+    accept_shift_invitation, add_shift_participant, cancel_shift, confirm_shift_close,
+    create_shift, get_current_shift_state, get_shift_maintenance_summary, get_shift_waiting_room,
+    list_shift_invite_candidates, mark_shift_cache_ready, remove_shift_participant,
+    request_shift_close, start_shift,
 };
 use crate::state::{AppState, AuthConfig, load_google_client_ids, load_storage_config};
 
@@ -61,6 +62,9 @@ async fn main() -> anyhow::Result<()> {
     let index_file = static_root.join("index.html");
     let labeling_assets_root = labeling_static_root.join("assets");
     let labeling_index_file = labeling_static_root.join("index.html");
+    let labeling_manifest_file = labeling_static_root.join("manifest.json");
+    let labeling_sw_file = labeling_static_root.join("sw.js");
+    let labeling_favicon_file = labeling_static_root.join("favicon.ico");
     log::info!("Serving main frontend from {}", static_root.display());
     log::info!(
         "Serving labeling frontend from {} at /labeling-app",
@@ -132,8 +136,14 @@ async fn main() -> anyhow::Result<()> {
         .route("/shifts/{shift_id}/accept", post(accept_shift_invitation))
         .route("/shifts/{shift_id}/cache-ready", post(mark_shift_cache_ready))
         .route("/shifts/{shift_id}/start", post(start_shift))
+        .route("/shifts/{shift_id}/close-request", post(request_shift_close))
+        .route("/shifts/{shift_id}/close-confirm", post(confirm_shift_close))
         .route("/shifts/{shift_id}/cancel", post(cancel_shift))
         .route("/shifts/{shift_id}/waiting-room", get(get_shift_waiting_room))
+        .route(
+            "/shifts/{shift_id}/maintenance-summary",
+            get(get_shift_maintenance_summary),
+        )
         .route("/labeling/buildings", get(list_labeling_buildings))
         .route(
             "/labeling/devices/{device_id}/barcode",
@@ -200,6 +210,27 @@ async fn main() -> anyhow::Result<()> {
         ))
         .service(ServeFile::new(labeling_index_file.clone()));
 
+    let labeling_manifest_service = ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-cache, no-store, must-revalidate"),
+        ))
+        .service(ServeFile::new(labeling_manifest_file));
+
+    let labeling_sw_service = ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-cache, no-store, must-revalidate"),
+        ))
+        .service(ServeFile::new(labeling_sw_file));
+
+    let labeling_favicon_service = ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
+        ))
+        .service(ServeFile::new(labeling_favicon_file));
+
     let labeling_root_service = ServiceBuilder::new()
         .layer(SetResponseHeaderLayer::if_not_present(
             header::CACHE_CONTROL,
@@ -213,6 +244,9 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .nest("/api", api)
+        .nest_service("/labeling-app/manifest.json", labeling_manifest_service)
+        .nest_service("/labeling-app/sw.js", labeling_sw_service)
+        .nest_service("/labeling-app/favicon.ico", labeling_favicon_service)
         .nest_service("/labeling-app/assets", labeling_assets_service)
         .nest_service("/labeling-app", labeling_root_service)
         .nest_service("/assets", assets_service)
