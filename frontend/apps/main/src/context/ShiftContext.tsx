@@ -3,7 +3,13 @@ import { useDemoUser } from "@/context/DemoUserContext";
 
 export type CurrentShiftSummary = {
   id: string;
-  status: "INVITING" | "READY_TO_START" | "IN_PROGRESS";
+  status:
+    | "INVITING"
+    | "READY_TO_START"
+    | "IN_PROGRESS"
+    | "CLOSE_REQUESTED"
+    | "READY_TO_COMMIT";
+  building_id: string;
   building_name: string;
   lead_user_name: string;
   lead_user_phone: string | null;
@@ -22,6 +28,36 @@ type ShiftContextValue = {
 };
 
 const ShiftContext = createContext<ShiftContextValue | undefined>(undefined);
+const shiftStorageKey = (userId: string) => `noma:current-shift:${userId}`;
+
+const loadStoredShift = (userId: string): CurrentShiftSummary | null => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(shiftStorageKey(userId));
+    if (!raw) {
+      return null;
+    }
+    return JSON.parse(raw) as CurrentShiftSummary;
+  } catch {
+    return null;
+  }
+};
+
+const storeShift = (userId: string, shift: CurrentShiftSummary | null) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (!shift) {
+    window.localStorage.removeItem(shiftStorageKey(userId));
+    return;
+  }
+
+  window.localStorage.setItem(shiftStorageKey(userId), JSON.stringify(shift));
+};
 
 export function ShiftProvider({ children }: { children: ReactNode }) {
   const { user, isHydrated } = useDemoUser();
@@ -47,6 +83,7 @@ export function ShiftProvider({ children }: { children: ReactNode }) {
       shift: CurrentShiftSummary | null;
     };
     setCurrentShift(payload.shift);
+    storeShift(user.id, payload.shift);
     return payload.shift;
   }, [user]);
 
@@ -64,6 +101,12 @@ export function ShiftProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     const load = async () => {
+      const storedShift = loadStoredShift(user.id);
+      if (!cancelled && storedShift) {
+        setCurrentShift(storedShift);
+        setIsLoading(false);
+      }
+
       setIsLoading(true);
       try {
         const shift = await refreshCurrentShift();
@@ -72,9 +115,7 @@ export function ShiftProvider({ children }: { children: ReactNode }) {
         }
         setCurrentShift(shift);
       } catch {
-        if (!cancelled) {
-          setCurrentShift(null);
-        }
+        // Keep the last known shift while offline.
       } finally {
         if (!cancelled) {
           setIsLoading(false);
@@ -86,17 +127,13 @@ export function ShiftProvider({ children }: { children: ReactNode }) {
 
     const intervalId = window.setInterval(() => {
       void refreshCurrentShift().catch(() => {
-        if (!cancelled) {
-          setCurrentShift(null);
-        }
+        // Keep the last known shift while offline.
       });
     }, 15_000);
 
     const handleFocus = () => {
       void refreshCurrentShift().catch(() => {
-        if (!cancelled) {
-          setCurrentShift(null);
-        }
+        // Keep the last known shift while offline.
       });
     };
 

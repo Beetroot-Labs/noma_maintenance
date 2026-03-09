@@ -39,6 +39,7 @@ type AuthResponse = {
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+const AUTH_USER_STORAGE_KEY = "noma:auth-user";
 
 const readErrorMessage = async (response: Response) => {
   try {
@@ -76,11 +77,40 @@ const toAuthUser = (payload: AuthResponse["user"], defaultRole: AuthUserRole): A
   role: normalizeRole(payload.role, defaultRole),
 });
 
+const loadStoredUser = (): AuthUser | null => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(AUTH_USER_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    return JSON.parse(raw) as AuthUser;
+  } catch {
+    return null;
+  }
+};
+
+const storeUser = (user: AuthUser | null) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (!user) {
+    window.localStorage.removeItem(AUTH_USER_STORAGE_KEY);
+    return;
+  }
+
+  window.localStorage.setItem(AUTH_USER_STORAGE_KEY, JSON.stringify(user));
+};
+
 export function AuthProvider({
   children,
   defaultRole = "technician",
 }: AuthProviderProps) {
-  const [user, setUser] = useState<AuthUser | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(() => loadStoredUser());
   const [isHydrated, setIsHydrated] = useState(false);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
 
@@ -88,6 +118,12 @@ export function AuthProvider({
     let ignore = false;
 
     const loadCurrentUser = async () => {
+      const storedUser = loadStoredUser();
+      if (!ignore && storedUser) {
+        setUser(storedUser);
+        setIsHydrated(true);
+      }
+
       try {
         const response = await fetch("/api/auth/me", {
           credentials: "include",
@@ -96,18 +132,19 @@ export function AuthProvider({
         if (!response.ok) {
           if (!ignore) {
             setUser(null);
+            storeUser(null);
           }
           return;
         }
 
         const payload = (await response.json()) as AuthResponse;
         if (!ignore) {
-          setUser(toAuthUser(payload.user, defaultRole));
+          const nextUser = toAuthUser(payload.user, defaultRole);
+          setUser(nextUser);
+          storeUser(nextUser);
         }
       } catch {
-        if (!ignore) {
-          setUser(null);
-        }
+        // Keep the last known authenticated user while offline.
       } finally {
         if (!ignore) {
           setIsHydrated(true);
@@ -133,6 +170,7 @@ export function AuthProvider({
           });
         } finally {
           setUser(null);
+          storeUser(null);
         }
       },
       loginWithGoogle: async (credential: string) => {
@@ -152,7 +190,9 @@ export function AuthProvider({
           }
 
           const payload = (await response.json()) as AuthResponse;
-          setUser(toAuthUser(payload.user, defaultRole));
+          const nextUser = toAuthUser(payload.user, defaultRole);
+          setUser(nextUser);
+          storeUser(nextUser);
         } finally {
           setIsAuthenticating(false);
         }
