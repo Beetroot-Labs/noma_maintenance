@@ -20,11 +20,15 @@ type MaintenanceStateRecord = {
   payload: unknown;
 };
 
-type MaintenanceSyncMutationType = "UPSERT_MAINTENANCE_WORK" | "UPSERT_MAINTENANCE_PHOTO";
+type MaintenanceSyncMutationType =
+  | "UPSERT_MAINTENANCE_WORK"
+  | "UPSERT_MAINTENANCE_PHOTO"
+  | "FINALIZE_MAINTENANCE_WORK";
 
 type MaintenanceSyncPayload = {
   work?: QueueMaintenanceWorkSyncInput;
   photo?: QueueMaintenancePhotoSyncInput;
+  finalize?: QueueMaintenanceFinalizeSyncInput;
 };
 
 type MaintenanceSyncOutboxRecord = OfflineOutboxItem<MaintenanceSyncPayload> & {
@@ -53,6 +57,11 @@ export type QueueMaintenancePhotoSyncInput = {
   captureNote: string | null;
   capturedAt: string;
   photoType: "MAINTENANCE" | "MALFUNCTION";
+};
+
+export type QueueMaintenanceFinalizeSyncInput = {
+  work: QueueMaintenanceWorkSyncInput;
+  photos: QueueMaintenancePhotoSyncInput[];
 };
 
 const openDb = (): Promise<IDBDatabase> =>
@@ -149,6 +158,11 @@ const isPendingSyncItem = (item: Pick<MaintenanceSyncOutboxRecord, "status" | "r
   item.status === "IN_PROGRESS" ||
   (item.status === "FAILED" && item.retryable);
 
+export const hasPendingMaintenanceSyncItems = async (): Promise<boolean> => {
+  const items = await getAllOutboxRecords();
+  return items.some((item) => isPendingSyncItem(item));
+};
+
 const readSyncError = async (
   response: Response,
 ): Promise<{ message: string; retryable: boolean | null }> => {
@@ -178,6 +192,15 @@ const putOutboxRecord = async (record: MaintenanceSyncOutboxRecord): Promise<voi
     tx.onerror = () => reject(tx.error);
     tx.oncomplete = () => resolve();
     tx.objectStore(SYNC_OUTBOX_STORE).put(record);
+  });
+};
+
+const deleteOutboxRecord = async (db: IDBDatabase, id: string): Promise<void> => {
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(SYNC_OUTBOX_STORE, "readwrite");
+    tx.onerror = () => reject(tx.error);
+    tx.oncomplete = () => resolve();
+    tx.objectStore(SYNC_OUTBOX_STORE).delete(id);
   });
 };
 
@@ -213,6 +236,27 @@ export const enqueueMaintenancePhotoSync = async (
     entity_type: "MAINTENANCE_PHOTO",
     entity_id: payload.photoId,
     payload_json: { photo: payload },
+    status: "PENDING",
+    retryable: true,
+    attempt_count: 0,
+    last_attempt_at: null,
+    last_error: null,
+    created_at: now,
+    updated_at: now,
+  });
+};
+
+export const enqueueMaintenanceFinalizeSync = async (
+  payload: QueueMaintenanceFinalizeSyncInput,
+): Promise<void> => {
+  const now = new Date().toISOString();
+  await putOutboxRecord({
+    id: `MAINTENANCE_FINALIZE:${payload.work.workId}`,
+    mutation_id: createMutationId(),
+    mutation_type: "FINALIZE_MAINTENANCE_WORK",
+    entity_type: "MAINTENANCE_WORK",
+    entity_id: payload.work.workId,
+    payload_json: { finalize: payload },
     status: "PENDING",
     retryable: true,
     attempt_count: 0,
@@ -281,7 +325,7 @@ export const syncPendingMaintenanceMutations = async (): Promise<void> => {
               note: work.note,
             }),
           });
-        } else {
+        } else if (item.mutation_type === "UPSERT_MAINTENANCE_PHOTO") {
           const photoPayload = item.payload_json?.photo;
           if (!photoPayload) {
             return {
@@ -292,12 +336,7 @@ export const syncPendingMaintenanceMutations = async (): Promise<void> => {
           }
           const storedPhoto = await getPhotoById(photoPayload.photoId);
           if (!storedPhoto) {
-            await new Promise<void>((resolve, reject) => {
-              const tx = db.transaction(SYNC_OUTBOX_STORE, "readwrite");
-              tx.onerror = () => reject(tx.error);
-              tx.oncomplete = () => resolve();
-              tx.objectStore(SYNC_OUTBOX_STORE).delete(item.id);
-            });
+            await deleteOutboxRecord(db, item.id);
             return { status: "skip" };
           }
           const blob = await fetch(storedPhoto.url).then((result) => result.blob());
@@ -319,6 +358,90 @@ export const syncPendingMaintenanceMutations = async (): Promise<void> => {
               body: blob,
             },
           );
+        } else {
+          const finalizePayload = item.payload_json?.finalize;
+          if (!finalizePayload) {
+            return {
+              status: "failure",
+              errorMessage: "Hiányzó karbantartás lezárási payload.",
+              retryable: false,
+            };
+          }
+
+          const work = finalizePayload.work;
+          response = await fetch(`/api/maintenance/works/${work.workId}/sync`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Mutation-Id": item.mutation_id,
+            },
+            credentials: "include",
+            body: JSON.stringify({
+              shift_id: work.shiftId,
+              device_id: work.deviceId,
+              status: work.status,
+              started_at: work.startedAt,
+              finished_at: work.finishedAt,
+              aborted_at: work.abortedAt,
+              malfunction_description: work.malfunctionDescription,
+              note: work.note,
+            }),
+          });
+
+          if (!response.ok) {
+            const syncError = await readSyncError(response);
+            return {
+              status: "failure",
+              errorMessage: syncError.message,
+              retryable:
+                syncError.retryable === null
+                  ? isRetryableHttpStatus(response.status)
+                  : syncError.retryable,
+            };
+          }
+
+          for (const photoPayload of finalizePayload.photos) {
+            const storedPhoto = await getPhotoById(photoPayload.photoId);
+            if (!storedPhoto) {
+              continue;
+            }
+
+            const blob = await fetch(storedPhoto.url).then((result) => result.blob());
+            const query = new URLSearchParams();
+            if (photoPayload.captureNote) {
+              query.set("capture_note", photoPayload.captureNote);
+            }
+            query.set("captured_at", photoPayload.capturedAt);
+            query.set("photo_type", photoPayload.photoType);
+
+            response = await fetch(
+              `/api/maintenance/works/${photoPayload.workId}/photos/${photoPayload.photoId}?${query.toString()}`,
+              {
+                method: "PUT",
+                headers: {
+                  "Content-Type": blob.type || "application/octet-stream",
+                  "X-Mutation-Id": `${item.mutation_id}:${photoPayload.photoId}`,
+                },
+                credentials: "include",
+                body: blob,
+              },
+            );
+
+            if (!response.ok) {
+              const syncError = await readSyncError(response);
+              return {
+                status: "failure",
+                errorMessage: syncError.message,
+                retryable:
+                  syncError.retryable === null
+                    ? isRetryableHttpStatus(response.status)
+                    : syncError.retryable,
+              };
+            }
+          }
+
+          await deleteOutboxRecord(db, item.id);
+          return { status: "success" };
         }
       } catch {
         return {
@@ -340,12 +463,7 @@ export const syncPendingMaintenanceMutations = async (): Promise<void> => {
         };
       }
 
-      await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction(SYNC_OUTBOX_STORE, "readwrite");
-        tx.onerror = () => reject(tx.error);
-        tx.oncomplete = () => resolve();
-        tx.objectStore(SYNC_OUTBOX_STORE).delete(item.id);
-      });
+      await deleteOutboxRecord(db, item.id);
 
       return { status: "success" };
     },

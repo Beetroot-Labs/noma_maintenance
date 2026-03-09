@@ -14,24 +14,23 @@ import {
   Typography,
 } from "@mui/material";
 import { ArrowLeft, ArrowRight, Flashlight, FlashlightOff, Keyboard, ScanBarcode, X } from "lucide-react";
-import { getCachedBuildingSnapshot, useCode128Scanner, validateNomaBarcode } from "@noma/shared";
+import {
+  getCachedBuildingSnapshot,
+  getLatestCachedBuildingSnapshotForTenant,
+  useCode128Scanner,
+  validateNomaBarcode,
+} from "@noma/shared";
 import { Layout } from "@/components/Layout";
+import { useShift } from "@/context/ShiftContext";
 import { appColors } from "@/theme";
 import { useMaintenance } from "@/context/MaintenanceContext";
 import { toast } from "@/lib/toast";
 import { useDemoUser } from "@/context/DemoUserContext";
 
-type CurrentShiftSummary = {
-  id: string;
-};
-
-type ShiftWaitingRoomPayload = {
-  building_id: string;
-};
-
 export default function NewMaintenancePage() {
   const navigate = useNavigate();
   const { user } = useDemoUser();
+  const { currentShift } = useShift();
   const { startMaintenance, todaysWorks, pastWorks } = useMaintenance();
   const [hvacId, setHvacId] = useState("");
   const [scannerOpen, setScannerOpen] = useState(true);
@@ -124,41 +123,9 @@ export default function NewMaintenancePage() {
 
       setIsLoadingBarcodeOptions(true);
       try {
-        const currentShiftResponse = await fetch("/api/shifts/current", {
-          credentials: "include",
-          cache: "no-store",
-        });
-        if (!currentShiftResponse.ok) {
-          if (!cancelled) {
-            setBarcodeOptions([]);
-          }
-          return;
-        }
-        const currentShiftPayload = (await currentShiftResponse.json()) as {
-          shift: CurrentShiftSummary | null;
-        };
-        if (!currentShiftPayload.shift?.id) {
-          if (!cancelled) {
-            setBarcodeOptions([]);
-          }
-          return;
-        }
-
-        const waitingRoomResponse = await fetch(
-          `/api/shifts/${currentShiftPayload.shift.id}/waiting-room`,
-          {
-            credentials: "include",
-            cache: "no-store",
-          },
-        );
-        if (!waitingRoomResponse.ok) {
-          if (!cancelled) {
-            setBarcodeOptions([]);
-          }
-          return;
-        }
-        const waitingRoomPayload = (await waitingRoomResponse.json()) as ShiftWaitingRoomPayload;
-        const snapshot = await getCachedBuildingSnapshot(user.tenantId, waitingRoomPayload.building_id);
+        const snapshot = currentShift?.building_id
+          ? await getCachedBuildingSnapshot(user.tenantId, currentShift.building_id)
+          : await getLatestCachedBuildingSnapshotForTenant(user.tenantId);
         const codes = Array.from(
           new Set(
             (snapshot?.devices ?? [])
@@ -181,7 +148,7 @@ export default function NewMaintenancePage() {
     return () => {
       cancelled = true;
     };
-  }, [user?.tenantId]);
+  }, [currentShift?.building_id, user?.tenantId]);
 
   useEffect(() => {
     if (!scannerOpen) {

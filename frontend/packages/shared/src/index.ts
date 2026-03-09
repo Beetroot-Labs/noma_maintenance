@@ -24,6 +24,7 @@ export {
   cacheBuildingSnapshot,
   fetchBuildingCachePayload,
   getCachedBuildingSnapshot,
+  getLatestCachedBuildingSnapshotForTenant,
 } from "./buildingCache";
 export type {
   SharedBuildingCachePayload,

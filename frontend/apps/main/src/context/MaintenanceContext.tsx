@@ -4,8 +4,8 @@ import { useDemoUser } from "@/context/DemoUserContext";
 import { getCachedBuildingSnapshot } from "@noma/shared";
 import {
   clearMaintenanceState,
-  enqueueMaintenancePhotoSync,
-  enqueueMaintenanceWorkSync,
+  enqueueMaintenanceFinalizeSync,
+  hasPendingMaintenanceSyncItems,
   loadMaintenanceState,
   saveMaintenanceState,
   startMaintenanceOfflineSyncRunner,
@@ -22,6 +22,7 @@ interface MaintenanceContextType {
   workdayClosed: boolean;
   shiftManager: ShiftManager;
   startMaintenance: (hvacId: string) => Promise<string | null>;
+  canConfirmShiftClose: boolean;
   updateNotes: (workId: string, notes: string) => void;
   addPhoto: (workId: string, photo: MaintenancePhoto) => void;
   toggleMalfunction: (workId: string) => void;
@@ -117,6 +118,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
   const [pastWorks, setPastWorks] = useState<MaintenanceWork[]>([]);
   const [workdayClosed, setWorkdayClosed] = useState(false);
   const [isMaintenanceStateLoaded, setIsMaintenanceStateLoaded] = useState(false);
+  const [hasPendingSync, setHasPendingSync] = useState(false);
   const [deviceLookup, setDeviceLookup] = useState<Map<string, DeviceCacheLookupEntry>>(
     new Map(),
   );
@@ -303,6 +305,33 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
 
+    const refreshPendingSync = async () => {
+      try {
+        const nextHasPendingSync = await hasPendingMaintenanceSyncItems();
+        if (!cancelled) {
+          setHasPendingSync(nextHasPendingSync);
+        }
+      } catch {
+        if (!cancelled) {
+          setHasPendingSync(false);
+        }
+      }
+    };
+
+    void refreshPendingSync();
+    const intervalId = window.setInterval(() => {
+      void refreshPendingSync();
+    }, 3_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [user?.tenantId, user?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+
     const loadDeviceLookup = async () => {
       if (!user?.tenantId) {
         if (!cancelled) {
@@ -417,43 +446,33 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     isMaintenanceStateLoaded,
   ]);
 
-  const queueWorkSync = (work: MaintenanceWork) => {
-    const status = work.status === "completed" ? "FINISHED" : "IN_PROGRESS";
-    const malfunctionDescription = work.isMalfunctioning
-      ? work.notes.trim() || null
-      : null;
-    enqueueMaintenanceWorkSync({
-      workId: work.id,
-      shiftId: work.shiftId,
-      deviceId: work.deviceId,
-      status,
-      startedAt: work.startTime.toISOString(),
-      finishedAt: status === "FINISHED" ? (work.endTime?.toISOString() ?? null) : null,
-      abortedAt: null,
-      malfunctionDescription,
-      note: work.notes.trim() || null,
+  const queueMaintenanceFinalizeSync = (work: MaintenanceWork) => {
+    const malfunctionDescription = work.isMalfunctioning ? work.notes.trim() || null : null;
+    enqueueMaintenanceFinalizeSync({
+      work: {
+        workId: work.id,
+        shiftId: work.shiftId,
+        deviceId: work.deviceId,
+        status: "FINISHED",
+        startedAt: work.startTime.toISOString(),
+        finishedAt: work.endTime?.toISOString() ?? null,
+        abortedAt: null,
+        malfunctionDescription,
+        note: work.notes.trim() || null,
+      },
+      photos: work.photos.map((photo) => ({
+        workId: work.id,
+        photoId: photo.id,
+        captureNote: photo.description.trim() || null,
+        capturedAt: photo.timestamp.toISOString(),
+        photoType: work.isMalfunctioning ? "MALFUNCTION" : "MAINTENANCE",
+      })),
     })
       .then(() => {
         triggerMaintenanceOfflineSyncNow();
       })
       .catch((error) => {
-        console.warn("Nem sikerült sorba állítani a karbantartás szinkronizációját.", error);
-      });
-  };
-
-  const queuePhotoSync = (work: MaintenanceWork, photo: MaintenancePhoto) => {
-    enqueueMaintenancePhotoSync({
-      workId: work.id,
-      photoId: photo.id,
-      captureNote: photo.description.trim() || null,
-      capturedAt: photo.timestamp.toISOString(),
-      photoType: work.isMalfunctioning ? "MALFUNCTION" : "MAINTENANCE",
-    })
-      .then(() => {
-        triggerMaintenanceOfflineSyncNow();
-      })
-      .catch((error) => {
-        console.warn("Nem sikerült sorba állítani a fotó szinkronizációját.", error);
+        console.warn("Nem sikerült sorba állítani a karbantartás lezárási szinkronizációját.", error);
       });
   };
 
@@ -497,7 +516,6 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
 
     setCurrentWork(newWork);
     setTodaysWorks((prev) => [...prev, newWork]);
-    queueWorkSync(newWork);
 
     return newWork.id;
   };
@@ -523,9 +541,6 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
         work.id === workId && work.status === "completed" ? { ...work, notes } : work,
       ),
     );
-    if (updatedWork) {
-      queueWorkSync(updatedWork);
-    }
   };
 
   const addPhoto = (workId: string, photo: MaintenancePhoto) => {
@@ -557,9 +572,6 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
           : work,
       ),
     );
-    if (updatedWork) {
-      queuePhotoSync(updatedWork, photo);
-    }
   };
 
   const toggleMalfunction = (workId: string) => {
@@ -591,9 +603,6 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
           : work,
       ),
     );
-    if (updatedWork) {
-      queueWorkSync(updatedWork);
-    }
   };
 
   const completeMaintenance = (workId: string) => {
@@ -607,10 +616,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
       : null;
 
     if (workToArchive) {
-      queueWorkSync(workToArchive);
-      for (const photo of workToArchive.photos) {
-        queuePhotoSync(workToArchive, photo);
-      }
+      queueMaintenanceFinalizeSync(workToArchive);
     }
 
     if (currentWork?.id === workId) {
@@ -681,6 +687,10 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     return didClearPhotos;
   };
 
+  const hasOpenMaintenance =
+    Boolean(currentWork) || todaysWorks.some((work) => work.status === "in-progress");
+  const canConfirmShiftClose = !hasOpenMaintenance && !hasPendingSync;
+
   return (
     <MaintenanceContext.Provider
       value={{
@@ -690,6 +700,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
         workdayClosed,
         shiftManager,
         startMaintenance,
+        canConfirmShiftClose,
         updateNotes,
         addPhoto,
         toggleMalfunction,

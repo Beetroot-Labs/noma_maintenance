@@ -106,3 +106,21 @@ export const getCachedBuildingSnapshot = async (
     };
   });
 };
+
+export const getLatestCachedBuildingSnapshotForTenant = async (
+  tenantId: string,
+): Promise<SharedBuildingCachePayload | null> => {
+  const db = await openCacheDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(SNAPSHOTS_STORE, "readonly");
+    tx.onerror = () => reject(tx.error);
+    const request = tx.objectStore(SNAPSHOTS_STORE).getAll();
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const records = (request.result as CacheSnapshotRecord[])
+        .filter((record) => record.tenant_id === tenantId)
+        .sort((left, right) => right.cached_at.localeCompare(left.cached_at));
+      resolve(records[0]?.payload ?? null);
+    };
+  });
+};
