@@ -21,22 +21,25 @@ import {
   Typography,
 } from "@mui/material";
 import { cacheBuildingSnapshot, fetchBuildingCachePayload, getCachedBuildingSnapshot } from "@noma/shared";
-import { ArrowLeft, Building2, CloudDownload, EllipsisVertical, HardHat, LoaderCircle, Phone, UserPlus, X } from "lucide-react";
+import {
+  ArrowLeft,
+  Building2,
+  Check,
+  CloudDownload,
+  CloudUpload,
+  EllipsisVertical,
+  HardHat,
+  LoaderCircle,
+  Phone,
+  UserPlus,
+  X,
+} from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { useDemoUser } from "@/context/DemoUserContext";
 import { useShift } from "@/context/ShiftContext";
 import { toast } from "@/lib/toast";
 import { appColors } from "@/theme";
-
-type CurrentShiftSummary = {
-  id: string;
-  status: "INVITING" | "READY_TO_START" | "IN_PROGRESS";
-  building_name: string;
-  lead_user_name: string;
-  lead_user_phone: string | null;
-  my_participant_status: "INVITED" | "ACCEPTED" | "CACHE_READY" | "DECLINED" | "CLOSE_CONFIRMED";
-};
 
 type ShiftParticipant = {
   user_id: string;
@@ -64,6 +67,37 @@ type ShiftWaitingRoomPayload = {
   lead_user_phone: string | null;
   my_participant_status: string;
   participants: ShiftParticipant[];
+};
+
+const shiftDetailsStorageKey = (userId: string) => `noma:shift-details:${userId}`;
+
+const loadStoredShiftDetails = (userId: string): ShiftWaitingRoomPayload | null => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(shiftDetailsStorageKey(userId));
+    if (!raw) {
+      return null;
+    }
+    return JSON.parse(raw) as ShiftWaitingRoomPayload;
+  } catch {
+    return null;
+  }
+};
+
+const storeShiftDetails = (userId: string, payload: ShiftWaitingRoomPayload | null) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (!payload) {
+    window.localStorage.removeItem(shiftDetailsStorageKey(userId));
+    return;
+  }
+
+  window.localStorage.setItem(shiftDetailsStorageKey(userId), JSON.stringify(payload));
 };
 
 const readApiErrorMessage = async (response: Response, fallback: string) => {
@@ -120,6 +154,33 @@ const participantStatusIcon = (status: string) => {
   }
 };
 
+const participantSyncIcon = (shiftStatus: string, participantStatus: string) => {
+  if (shiftStatus !== "CLOSE_REQUESTED" && shiftStatus !== "READY_TO_COMMIT") {
+    return null;
+  }
+
+  const normalizedStatus = participantStatus.trim().toUpperCase();
+  if (normalizedStatus === "CLOSE_CONFIRMED") {
+    return (
+      <Box
+        aria-label="Szinkron megerősítve"
+        sx={{ display: "inline-flex", color: "success.main" }}
+      >
+        <Check size={18} />
+      </Box>
+    );
+  }
+
+  return (
+    <Box
+      aria-label="Szinkron megerősítésre vár"
+      sx={{ display: "inline-flex", color: "text.secondary" }}
+    >
+      <CloudUpload size={18} />
+    </Box>
+  );
+};
+
 const backendUnavailableMessage = "A backend jelenleg nem elérhető, ezért a művelet nem hajtható végre.";
 
 const toActionErrorMessage = (err: unknown, fallback: string) => {
@@ -135,7 +196,7 @@ const toActionErrorMessage = (err: unknown, fallback: string) => {
 export default function ShiftDetails() {
   const navigate = useNavigate();
   const { user } = useDemoUser();
-  const { refreshCurrentShift } = useShift();
+  const { currentShift, refreshCurrentShift } = useShift();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [payload, setPayload] = useState<ShiftWaitingRoomPayload | null>(null);
@@ -151,6 +212,12 @@ export default function ShiftDetails() {
 
   const isShiftLead = Boolean(user && payload && user.id === payload.lead_user_id);
   const isActionsMenuOpen = Boolean(actionsMenuAnchor);
+  const areAllParticipantsConfirmed = Boolean(
+    payload &&
+      payload.participants
+        .filter((participant) => participant.status !== "DECLINED")
+        .every((participant) => participant.status === "CLOSE_CONFIRMED"),
+  );
 
   useEffect(() => {
     const markOnline = () => setIsOnline(true);
@@ -164,25 +231,13 @@ export default function ShiftDetails() {
   }, []);
 
   const loadShiftDetails = async (): Promise<ShiftWaitingRoomPayload | null> => {
-    const currentShiftResponse = await fetch("/api/shifts/current", {
-      credentials: "include",
-      cache: "no-store",
-    });
-    if (!currentShiftResponse.ok) {
-      throw new Error(
-        await readApiErrorMessage(currentShiftResponse, "Nem sikerült betölteni a műszakot."),
-      );
-    }
-    const currentShiftPayload = (await currentShiftResponse.json()) as {
-      shift: CurrentShiftSummary | null;
-    };
-
-    if (!currentShiftPayload.shift) {
+    const shiftId = currentShift?.id;
+    if (!shiftId) {
       return null;
     }
 
     const waitingRoomResponse = await fetch(
-      `/api/shifts/${currentShiftPayload.shift.id}/waiting-room`,
+      `/api/shifts/${shiftId}/waiting-room`,
       {
         credentials: "include",
         cache: "no-store",
@@ -197,6 +252,9 @@ export default function ShiftDetails() {
       );
     }
     const waitingRoomPayload = (await waitingRoomResponse.json()) as ShiftWaitingRoomPayload;
+    if (user?.id) {
+      storeShiftDetails(user.id, waitingRoomPayload);
+    }
     return waitingRoomPayload;
   };
 
@@ -204,6 +262,15 @@ export default function ShiftDetails() {
     let cancelled = false;
 
     const load = async () => {
+      if (user?.id) {
+        const storedPayload = loadStoredShiftDetails(user.id);
+        if (!cancelled && storedPayload && currentShift?.id === storedPayload.id) {
+          setPayload(storedPayload);
+          setError(null);
+          setIsLoading(false);
+        }
+      }
+
       setIsLoading(true);
       setError(null);
       try {
@@ -214,9 +281,15 @@ export default function ShiftDetails() {
         }
       } catch (err) {
         if (!cancelled) {
-          setError(
-            err instanceof Error ? err.message : "Nem sikerült betölteni a műszak részleteit.",
-          );
+          const storedPayload = user?.id ? loadStoredShiftDetails(user.id) : null;
+          if (storedPayload && currentShift?.id === storedPayload.id) {
+            setPayload(storedPayload);
+            setError(null);
+          } else {
+            setError(
+              err instanceof Error ? err.message : "Nem sikerült betölteni a műszak részleteit.",
+            );
+          }
         }
       } finally {
         if (!cancelled) {
@@ -229,7 +302,7 @@ export default function ShiftDetails() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [currentShift?.id, user?.id]);
 
   const loadInviteCandidates = async () => {
     const response = await fetch("/api/users/invite-candidates", {
@@ -283,6 +356,9 @@ export default function ShiftDetails() {
       setSelectedCandidate(null);
       const nextPayload = await loadShiftDetails();
       setPayload(nextPayload);
+      if (user?.id) {
+        storeShiftDetails(user.id, nextPayload);
+      }
     } catch (err) {
       const message = toActionErrorMessage(err, backendUnavailableMessage);
       toast.error(message);
@@ -357,6 +433,30 @@ export default function ShiftDetails() {
       toast.error(message);
     } finally {
       setIsReloadingCache(false);
+    }
+  };
+
+  const handleCloseShift = async () => {
+    if (!payload || !isShiftLead || !isOnline) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/shifts/${payload.id}/close-request`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!response.ok) {
+        throw new Error(await readApiErrorMessage(response, "Nem sikerült lezárni a műszakot."));
+      }
+      await refreshCurrentShift();
+      const nextPayload = await loadShiftDetails();
+      setPayload(nextPayload);
+      toast.success("A műszak lezárása kezdeményezve.");
+      navigate("/dashboard");
+    } catch (err) {
+      const message = toActionErrorMessage(err, backendUnavailableMessage);
+      toast.error(message);
     }
   };
 
@@ -491,6 +591,7 @@ export default function ShiftDetails() {
                         primary={
                           <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.75 }}>
                             {participantStatusIcon(participant.status)}
+                            {participantSyncIcon(payload.status, participant.status)}
                             {isLead ? <HardHat size={16} color={appColors.primary} /> : null}
                             <Typography
                               component="span"
@@ -528,6 +629,29 @@ export default function ShiftDetails() {
                 </>
               );
             })()}
+            {isShiftLead && payload.status === "IN_PROGRESS" ? (
+              <Button
+                variant="contained"
+                color="primary"
+                fullWidth
+                onClick={() => void handleCloseShift()}
+                disabled={!isOnline}
+                sx={{ mt: 1 }}
+              >
+                Műszak lezárása
+              </Button>
+            ) : null}
+            {isShiftLead && areAllParticipantsConfirmed ? (
+              <Button
+                variant="contained"
+                color="primary"
+                fullWidth
+                onClick={() => navigate("/shift-summary")}
+                disabled={!isOnline}
+              >
+                Műszak összegzése
+              </Button>
+            ) : null}
           </Box>
         )}
       </Box>
