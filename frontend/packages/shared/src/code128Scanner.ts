@@ -44,6 +44,9 @@ export const useCode128Scanner = ({
   const fpsSamplesRef = useRef<number[]>([]);
   const fallbackTriggeredRef = useRef(false);
   const restartPendingRef = useRef(false);
+  const flashlightWantedRef = useRef(false);
+  const flashlightVerificationTimerRef = useRef<number | null>(null);
+  const flashlightEnabledRef = useRef(false);
 
   const setFeedbackState = useCallback((state: ScannerFeedbackState) => {
     if (feedbackResetTimerRef.current !== null) {
@@ -59,14 +62,49 @@ export const useCode128Scanner = ({
     }
   }, []);
 
-  const stop = useCallback(() => {
+  const clearFlashlightVerificationTimer = useCallback(() => {
+    if (flashlightVerificationTimerRef.current !== null) {
+      window.clearTimeout(flashlightVerificationTimerRef.current);
+      flashlightVerificationTimerRef.current = null;
+    }
+  }, []);
+
+  const readTorchSetting = useCallback((track: MediaStreamTrack | null) => {
+    if (!track || typeof track.getSettings !== "function") {
+      return null;
+    }
+
+    const settings = track.getSettings() as MediaTrackSettings & { torch?: boolean };
+    return typeof settings.torch === "boolean" ? settings.torch : null;
+  }, []);
+
+  const formatFlashlightError = useCallback((nextState: boolean, error: unknown) => {
+    const baseMessage = nextState
+      ? "A zseblámpát nem sikerült bekapcsolni."
+      : "A zseblámpát nem sikerült kikapcsolni.";
+
+    if (!(error instanceof Error) || !error.message) {
+      return baseMessage;
+    }
+
+    return `${baseMessage} Részlet: ${error.name}: ${error.message}`;
+  }, []);
+
+  const updateFlashlightEnabled = useCallback((nextState: boolean) => {
+    flashlightEnabledRef.current = nextState;
+    setFlashlightEnabled(nextState);
+  }, []);
+
+  const stop = useCallback((options?: { preserveFlashlightPreference?: boolean }) => {
+    const preserveFlashlightPreference = options?.preserveFlashlightPreference ?? false;
     const stream = containerRef.current?.querySelector("video")?.srcObject;
     const track = stream instanceof MediaStream ? stream.getVideoTracks()[0] : null;
-    if (track && flashlightEnabled) {
+    if (track && (flashlightEnabledRef.current || flashlightWantedRef.current)) {
       void track
         .applyConstraints({ advanced: [{ torch: false } as MediaTrackConstraintSet] })
         .catch(() => undefined);
     }
+    clearFlashlightVerificationTimer();
 
     if (detectedHandlerRef.current) {
       Quagga.offDetected(detectedHandlerRef.current);
@@ -100,9 +138,83 @@ export const useCode128Scanner = ({
     }
 
     setIsStarting(false);
-    setFlashlightEnabled(false);
+    updateFlashlightEnabled(false);
     setFlashlightSupported(false);
-  }, [containerRef, flashlightEnabled]);
+    if (!preserveFlashlightPreference) {
+      flashlightWantedRef.current = false;
+    }
+  }, [clearFlashlightVerificationTimer, containerRef, updateFlashlightEnabled]);
+
+  const applyFlashlightState = useCallback(
+    async (nextState: boolean) => {
+      const stream = containerRef.current?.querySelector("video")?.srcObject;
+      const track = stream instanceof MediaStream ? stream.getVideoTracks()[0] : null;
+      if (!track) {
+        updateFlashlightEnabled(false);
+        return {
+          ok: false,
+          actualState: false,
+          errorMessage: "A zseblámpa nem érhető el.",
+        };
+      }
+
+      try {
+        clearFlashlightVerificationTimer();
+        await track.applyConstraints({
+          advanced: [{ torch: nextState } as MediaTrackConstraintSet],
+        });
+
+        const currentTorchSetting = readTorchSetting(track);
+        const actualState = currentTorchSetting ?? nextState;
+        updateFlashlightEnabled(actualState);
+
+        if (nextState) {
+          flashlightVerificationTimerRef.current = window.setTimeout(() => {
+            flashlightVerificationTimerRef.current = null;
+            const verifiedTorchSetting = readTorchSetting(track);
+            if (verifiedTorchSetting === false) {
+              flashlightWantedRef.current = false;
+              updateFlashlightEnabled(false);
+              setCameraError(
+                "A zseblámpa bekapcsolt, de az eszköz vagy a böngésző azonnal kikapcsolta.",
+              );
+              console.warn("Flashlight was enabled but reverted immediately.", {
+                profile: scannerProfileRef.current,
+                trackSettings:
+                  typeof track.getSettings === "function" ? track.getSettings() : undefined,
+              });
+            }
+          }, 450);
+        }
+
+        return {
+          ok: actualState === nextState,
+          actualState,
+          errorMessage:
+            actualState === nextState
+              ? null
+              : nextState
+                ? "A zseblámpa bekapcsolt, de az eszköz vagy a böngésző nem tartotta aktívan."
+                : "A zseblámpa kikapcsolási állapota nem erősíthető meg.",
+        };
+      } catch (error) {
+        console.warn("Failed to change flashlight state.", error);
+        updateFlashlightEnabled(false);
+        return {
+          ok: false,
+          actualState: false,
+          errorMessage: formatFlashlightError(nextState, error),
+        };
+      }
+    },
+    [
+      clearFlashlightVerificationTimer,
+      containerRef,
+      formatFlashlightError,
+      readTorchSetting,
+      updateFlashlightEnabled,
+    ],
+  );
 
   const detectFlashlightSupport = useCallback(() => {
     const stream = containerRef.current?.querySelector("video")?.srcObject;
@@ -166,7 +278,7 @@ export const useCode128Scanner = ({
       }
 
       scannerProfileRef.current = profile;
-      stop();
+      stop({ preserveFlashlightPreference: true });
       setCameraError(null);
       setIsStarting(true);
 
@@ -364,6 +476,14 @@ export const useCode128Scanner = ({
           }
           window.setTimeout(() => {
             detectFlashlightSupport();
+            if (flashlightWantedRef.current) {
+              void applyFlashlightState(true).then((result) => {
+                if (!result.ok && result.errorMessage) {
+                  setCameraError(result.errorMessage);
+                }
+                flashlightWantedRef.current = result.actualState;
+              });
+            }
           }, 0);
         })
         .catch(async () => {
@@ -376,6 +496,14 @@ export const useCode128Scanner = ({
             setIsStarting(false);
             window.setTimeout(() => {
               detectFlashlightSupport();
+              if (flashlightWantedRef.current) {
+                void applyFlashlightState(true).then((result) => {
+                  if (!result.ok && result.errorMessage) {
+                    setCameraError(result.errorMessage);
+                  }
+                  flashlightWantedRef.current = result.actualState;
+                });
+              }
             }, 0);
           } catch {
             setCameraError("Nem sikerült elindítani a kamerát.");
@@ -383,31 +511,25 @@ export const useCode128Scanner = ({
           }
         });
     },
-    [containerRef, detectFlashlightSupport, setFeedbackState, stop, tryBoostTrackToMaxResolution],
+    [
+      applyFlashlightState,
+      containerRef,
+      detectFlashlightSupport,
+      setFeedbackState,
+      stop,
+      tryBoostTrackToMaxResolution,
+    ],
   );
 
   const toggleFlashlight = useCallback(async () => {
-    const stream = containerRef.current?.querySelector("video")?.srcObject;
-    const track = stream instanceof MediaStream ? stream.getVideoTracks()[0] : null;
-    if (!track) {
-      setCameraError("A zseblámpa nem érhető el.");
-      return;
-    }
-
     const nextState = !flashlightEnabled;
-    try {
-      await track.applyConstraints({
-        advanced: [{ torch: nextState } as MediaTrackConstraintSet],
-      });
-      setFlashlightEnabled(nextState);
-    } catch {
-      setCameraError(
-        nextState
-          ? "A zseblámpát nem sikerült bekapcsolni."
-          : "A zseblámpát nem sikerült kikapcsolni.",
-      );
+    flashlightWantedRef.current = nextState;
+    const result = await applyFlashlightState(nextState);
+    flashlightWantedRef.current = result.actualState;
+    if (!result.ok && result.errorMessage) {
+      setCameraError(result.errorMessage);
     }
-  }, [containerRef, flashlightEnabled]);
+  }, [applyFlashlightState, flashlightEnabled]);
 
   return {
     isStarting,
