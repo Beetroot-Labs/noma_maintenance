@@ -1,13 +1,16 @@
 use axum::Json;
+use axum::body::Bytes;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::IntoResponse;
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
+use cloud_storage::Object;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::{require_lead_or_admin, require_session_user};
 use crate::error::ApiError;
 use crate::state::AppState;
+use crate::storage::{image_content_type, shift_signature_object_name};
 
 #[derive(Serialize, sqlx::FromRow)]
 pub struct InviteCandidate {
@@ -25,6 +28,25 @@ pub struct CreateShiftRequest {
 #[derive(Deserialize)]
 pub struct AddShiftParticipantRequest {
     user_id: uuid::Uuid,
+}
+
+#[derive(Deserialize)]
+pub struct CommitShiftRequest {
+    reference_person_name: String,
+    reference_person_role: String,
+    signature_strokes: Vec<Vec<SignaturePoint>>,
+    signature_image_url: String,
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct SignaturePoint {
+    x: f64,
+    y: f64,
+}
+
+#[derive(Serialize)]
+pub struct UploadShiftSignatureResponse {
+    signature_image_url: String,
 }
 
 #[derive(Serialize)]
@@ -386,6 +408,211 @@ pub async fn create_shift(
     tx.commit().await.map_err(ApiError::internal)?;
 
     Ok(Json(CreateShiftResponse { shift_id }))
+}
+
+pub async fn upload_shift_signature(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(shift_id): Path<uuid::Uuid>,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let storage = state
+        .storage
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("signature storage is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+
+    if body.is_empty() {
+        return Err(ApiError::bad_request("signature image body is required"));
+    }
+    if body.len() > 5 * 1024 * 1024 {
+        return Err(ApiError::bad_request("signature image is too large"));
+    }
+
+    let content_type = image_content_type(
+        headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+    )?;
+
+    if content_type.as_ref() != "image/png" {
+        return Err(ApiError::bad_request("signature image must be a PNG"));
+    }
+
+    let shift_row: Option<(uuid::Uuid, String)> = sqlx::query_as(
+        r#"
+        SELECT lead_user_id, status::text AS status
+        FROM shifts
+        WHERE tenant_id = $1
+          AND id = $2
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(shift_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let Some((lead_user_id, status)) = shift_row else {
+        return Err(ApiError::forbidden("shift not found for current tenant"));
+    };
+
+    if lead_user_id != user.id {
+        return Err(ApiError::forbidden(
+            "only the shift lead can upload the signature",
+        ));
+    }
+
+    if status != "READY_TO_COMMIT" {
+        return Err(ApiError::conflict(
+            "signature upload is only allowed while shift is ready to commit",
+        ));
+    }
+
+    let object_name = shift_signature_object_name(storage, user.tenant_id, shift_id);
+    Object::create(
+        &storage.bucket,
+        body.to_vec(),
+        &object_name,
+        content_type.as_ref(),
+    )
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok((
+        StatusCode::OK,
+        Json(UploadShiftSignatureResponse {
+            signature_image_url: object_name,
+        }),
+    )
+        .into_response())
+}
+
+pub async fn commit_shift(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(shift_id): Path<uuid::Uuid>,
+    Json(payload): Json<CommitShiftRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+
+    let reference_person_name = payload.reference_person_name.trim();
+    if reference_person_name.is_empty() {
+        return Err(ApiError::bad_request("reference person name is required"));
+    }
+
+    let reference_person_role = payload.reference_person_role.trim();
+    if reference_person_role.is_empty() {
+        return Err(ApiError::bad_request("reference person role is required"));
+    }
+
+    let signature_image_url = payload.signature_image_url.trim();
+    if signature_image_url.is_empty() {
+        return Err(ApiError::bad_request("signature image is required"));
+    }
+
+    let has_signature = payload
+        .signature_strokes
+        .iter()
+        .flatten()
+        .any(|point| point.x.is_finite() && point.y.is_finite());
+    if !has_signature {
+        return Err(ApiError::bad_request("signature is required"));
+    }
+
+    let signature_json =
+        serde_json::to_string(&payload.signature_strokes).map_err(ApiError::internal)?;
+
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+
+    let shift_row: Option<(uuid::Uuid, String)> = sqlx::query_as(
+        r#"
+        SELECT lead_user_id, status::text AS status
+        FROM shifts
+        WHERE tenant_id = $1
+          AND id = $2
+        FOR UPDATE
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(shift_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let Some((lead_user_id, status)) = shift_row else {
+        return Err(ApiError::forbidden("shift not found for current tenant"));
+    };
+
+    if lead_user_id != user.id {
+        return Err(ApiError::forbidden("only the shift lead can commit the shift"));
+    }
+
+    if status != "READY_TO_COMMIT" {
+        return Err(ApiError::conflict(
+            "shift can only be committed after all close confirmations are complete",
+        ));
+    }
+
+    sqlx::query(
+        r#"
+        INSERT INTO shift_signatures (
+            shift_id,
+            tenant_id,
+            reference_person_name,
+            reference_person_role,
+            signature_json,
+            signature_image_url
+        )
+        VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+        ON CONFLICT (shift_id) DO UPDATE
+        SET reference_person_name = EXCLUDED.reference_person_name,
+            reference_person_role = EXCLUDED.reference_person_role,
+            signature_json = EXCLUDED.signature_json,
+            signature_image_url = EXCLUDED.signature_image_url
+        "#,
+    )
+    .bind(shift_id)
+    .bind(user.tenant_id)
+    .bind(reference_person_name)
+    .bind(reference_person_role)
+    .bind(signature_json)
+    .bind(signature_image_url)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let updated = sqlx::query(
+        r#"
+        UPDATE shifts
+        SET status = 'COMMITTED',
+            committed_at = COALESCE(committed_at, NOW())
+        WHERE tenant_id = $1
+          AND id = $2
+          AND status = 'READY_TO_COMMIT'
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(shift_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    if updated.rows_affected() == 0 {
+        return Err(ApiError::conflict("shift could not be committed"));
+    }
+
+    tx.commit().await.map_err(ApiError::internal)?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn accept_shift_invitation(

@@ -22,6 +22,7 @@ pub struct AuthConfig {
 pub struct StorageConfig {
     pub bucket: String,
     pub device_photo_prefix: String,
+    pub shift_signature_prefix: String,
 }
 
 pub fn load_storage_config() -> anyhow::Result<Option<StorageConfig>> {
@@ -72,9 +73,15 @@ pub fn load_storage_config() -> anyhow::Result<Option<StorageConfig>> {
         .trim_matches('/')
         .to_string();
 
+    let shift_signature_prefix = std::env::var("GCS_SHIFT_SIGNATURE_PREFIX")
+        .unwrap_or_else(|_| "shift-signatures".to_string())
+        .trim_matches('/')
+        .to_string();
+
     Ok(Some(StorageConfig {
         bucket,
         device_photo_prefix,
+        shift_signature_prefix,
     }))
 }
 

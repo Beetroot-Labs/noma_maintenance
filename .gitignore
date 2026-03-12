@@ -16,3 +16,7 @@
 
 .DS_Store
 *-service-account.json
+
+.codex/
+.omx/
+.agents/

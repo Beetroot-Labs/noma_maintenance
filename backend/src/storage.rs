@@ -41,3 +41,14 @@ pub fn maintenance_photo_object_name(
         storage.device_photo_prefix, tenant_id, maintenance_work_id, photo_id
     )
 }
+
+pub fn shift_signature_object_name(
+    storage: &StorageConfig,
+    tenant_id: uuid::Uuid,
+    shift_id: uuid::Uuid,
+) -> String {
+    format!(
+        "{}/tenants/{}/shifts/{}/signature",
+        storage.shift_signature_prefix, tenant_id, shift_id
+    )
+}

@@ -31,10 +31,11 @@ use crate::labeling::{
 };
 use crate::maintenance::{sync_maintenance_work, upload_maintenance_photo};
 use crate::shifts::{
-    accept_shift_invitation, add_shift_participant, cancel_shift, confirm_shift_close,
+    accept_shift_invitation, add_shift_participant, cancel_shift, commit_shift,
+    confirm_shift_close,
     create_shift, get_current_shift_state, get_shift_maintenance_summary, get_shift_waiting_room,
     list_shift_invite_candidates, mark_shift_cache_ready, remove_shift_participant,
-    request_shift_close, start_shift,
+    request_shift_close, start_shift, upload_shift_signature,
 };
 use crate::state::{AppState, AuthConfig, load_google_client_ids, load_storage_config};
 
@@ -138,6 +139,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/shifts/{shift_id}/start", post(start_shift))
         .route("/shifts/{shift_id}/close-request", post(request_shift_close))
         .route("/shifts/{shift_id}/close-confirm", post(confirm_shift_close))
+        .route("/shifts/{shift_id}/commit", post(commit_shift))
+        .route("/shifts/{shift_id}/signature-image", put(upload_shift_signature))
         .route("/shifts/{shift_id}/cancel", post(cancel_shift))
         .route("/shifts/{shift_id}/waiting-room", get(get_shift_waiting_room))
         .route(
