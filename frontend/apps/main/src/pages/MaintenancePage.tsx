@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   Box,
   Button,
+  ButtonBase,
   Card,
   CardContent,
   CardHeader,
@@ -11,10 +12,11 @@ import {
   MenuItem,
   Switch,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
 import {
-  AlertTriangle,
   ArrowLeft,
   ArrowRightFromLine,
   ArrowRightToLine,
@@ -32,10 +34,16 @@ import { PhotoUpload } from "@/components/PhotoUpload";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useMaintenance } from "@/context/MaintenanceContext";
 import { useDemoUser } from "@/context/DemoUserContext";
+import {
+  followupServiceReasonLabels,
+  followupServiceReasonOrder,
+} from "@/types/maintenance";
 import { appColors } from "@/theme";
 import { formatDateTime } from "@/lib/date";
 import { toast } from "@/lib/toast";
 import { getDeviceKindIcon } from "@/lib/deviceKind";
+
+const inlineFollowupReasons = followupServiceReasonOrder.filter((reason) => reason !== "OTHER");
 
 export default function MaintenancePage() {
   const { workId } = useParams<{ workId: string }>();
@@ -45,7 +53,9 @@ export default function MaintenancePage() {
     pastWorks,
     updateNotes,
     addPhoto,
-    toggleMalfunction,
+    setFollowupServiceRequired,
+    toggleFollowupServiceReason,
+    updateFollowupServiceReasonOther,
     completeMaintenance,
     abortMaintenance,
     markEdited,
@@ -58,6 +68,7 @@ export default function MaintenancePage() {
   const work =
     todaysWorks.find((item) => item.id === workId) ||
     pastWorks.find((item) => item.id === workId);
+  const lastEditedLabel = work?.lastEdited ? formatDateTime(work.lastEdited) : null;
 
   if (!work) {
     return (
@@ -78,21 +89,30 @@ export default function MaintenancePage() {
   const isExecutor = user?.id === work.executorId;
   const isReadOnly = isCompleted || (work.status === "in-progress" && !isExecutor);
   const canEdit = !isReadOnly || (isCompleted && isExecutor && isEditing);
-  const canEditMalfunction = canEdit;
   const canShowMenu =
     isExecutor && (work.status === "in-progress" || (work.status === "completed" && !isEditing));
   const canShowEditOption = !workdayClosed && work.status === "completed" && !isEditing;
   const hasPhoto = work.photos.length > 0;
-  const hasMalfunctionNote = work.notes.trim().length > 0;
-  const canCompleteMaintenance = hasPhoto && (!work.isMalfunctioning || hasMalfunctionNote);
+  const hasSelectedFollowupReason = work.followupServiceReasons.length > 0;
+  const requiresOtherReason = work.followupServiceReasons.includes("OTHER");
+  const hasOtherReason = work.followupServiceReasonOther.trim().length > 0;
+  const requiresPhoto = !work.followupServiceRequired;
+  const canCompleteMaintenance =
+    (!requiresPhoto || hasPhoto) &&
+    (!work.followupServiceRequired ||
+      (hasSelectedFollowupReason && (!requiresOtherReason || hasOtherReason)));
 
   const handleComplete = () => {
-    if (!hasPhoto) {
+    if (requiresPhoto && !hasPhoto) {
       toast.error("A befejezéshez legalább egy fotót töltsön fel");
       return;
     }
-    if (work.isMalfunctioning && !hasMalfunctionNote) {
-      toast.error("Hibás jelölés esetén megjegyzés megadása kötelező");
+    if (work.followupServiceRequired && !hasSelectedFollowupReason) {
+      toast.error("Jelöljön ki legalább egy okot a további szervízhez.");
+      return;
+    }
+    if (requiresOtherReason && !hasOtherReason) {
+      toast.error("Az Egyéb ok megadásához írjon be egy indoklást.");
       return;
     }
 
@@ -123,10 +143,6 @@ export default function MaintenancePage() {
 
   const kindLabel = getDeviceKindLabel(work.hvacKind);
   const KindIcon = getDeviceKindIcon(work.hvacKind);
-  const lastEditedLabel = useMemo(
-    () => (work.lastEdited ? formatDateTime(work.lastEdited) : null),
-    [work.lastEdited],
-  );
 
   return (
     <Layout>
@@ -146,7 +162,6 @@ export default function MaintenancePage() {
             </Box>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.5 }}>
               <StatusBadge status={work.status} />
-              {work.isMalfunctioning && <StatusBadge status="malfunction" />}
             </Box>
           </Box>
           {canShowMenu && (
@@ -352,38 +367,126 @@ export default function MaintenancePage() {
           </Box>
 
           <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
-            {canEditMalfunction && (
+            {(canEdit || work.followupServiceRequired) && (
               <Card
-              sx={{
-                boxShadow: "0 10px 24px rgba(31, 50, 58, 0.12)",
-                border: work.isMalfunctioning ? `1px solid ${appColors.destructive}` : "none",
-                bgcolor: work.isMalfunctioning ? "rgba(220, 40, 40, 0.06)" : undefined,
-              }}
-            >
-              <CardContent sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2 }}>
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                    <AlertTriangle
-                      size={18}
-                      color={work.isMalfunctioning ? appColors.destructive : appColors.mutedForeground}
+                sx={{
+                  boxShadow: "0 10px 24px rgba(31, 50, 58, 0.12)",
+                  border: work.followupServiceRequired ? `1px solid ${appColors.warning}` : "none",
+                  bgcolor: work.followupServiceRequired ? "rgba(245, 158, 11, 0.08)" : undefined,
+                }}
+              >
+                <CardContent sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2 }}>
+                    <Box>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                        További szervíz szükséges
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Kapcsolja be, ha az egység további beavatkozást igényel.
+                      </Typography>
+                    </Box>
+                    <Switch
+                      checked={work.followupServiceRequired}
+                      onChange={(_, checked) => setFollowupServiceRequired(work.id, checked)}
+                      disabled={!canEdit}
                     />
-                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                      Hibásként jelölés
-                    </Typography>
                   </Box>
-                  <Switch
-                    checked={work.isMalfunctioning}
-                    onChange={() => toggleMalfunction(work.id)}
-                    disabled={!canEditMalfunction}
-                  />
-                </Box>
-                {work.isMalfunctioning && (
-                  <Typography variant="caption" sx={{ color: appColors.destructive }}>
-                    Ez az egység javításra lesz jelölve
-                  </Typography>
-                )}
-              </CardContent>
-            </Card>
+                  {work.followupServiceRequired ? (
+                    <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+                      {canEdit ? (
+                        <>
+                          <ToggleButtonGroup
+                            value={work.followupServiceReasons.filter((reason) => reason !== "OTHER")}
+                            aria-label="További szervíz okai"
+                            sx={{
+                              display: "flex",
+                              flexWrap: "wrap",
+                              gap: 1,
+                              "& .MuiToggleButtonGroup-grouped": {
+                                borderRadius: "999px !important",
+                                border: `1px solid ${appColors.border} !important`,
+                                margin: "0 !important",
+                              },
+                            }}
+                          >
+                            {inlineFollowupReasons.map((reason) => (
+                              <ToggleButton
+                                key={reason}
+                                value={reason}
+                                selected={work.followupServiceReasons.includes(reason)}
+                                onChange={() => toggleFollowupServiceReason(work.id, reason)}
+                                disabled={!canEdit}
+                                sx={{
+                                  px: 1.5,
+                                  py: 0.75,
+                                  textTransform: "none",
+                                  fontWeight: 600,
+                                  color: "text.secondary",
+                                  "&.Mui-selected": {
+                                    bgcolor: "rgba(2, 50, 45, 0.12)",
+                                    color: appColors.primary,
+                                  },
+                                  "&.Mui-selected:hover": {
+                                    bgcolor: "rgba(2, 50, 45, 0.18)",
+                                  },
+                                }}
+                              >
+                                {followupServiceReasonLabels[reason]}
+                              </ToggleButton>
+                            ))}
+                          </ToggleButtonGroup>
+                          <ButtonBase
+                            onClick={() => toggleFollowupServiceReason(work.id, "OTHER")}
+                            disabled={!canEdit}
+                            sx={{
+                              alignSelf: "flex-start",
+                              px: 1.5,
+                              py: 1,
+                              borderRadius: 3,
+                              border: `1px dashed ${
+                                requiresOtherReason ? appColors.warning : appColors.border
+                              }`,
+                              bgcolor: requiresOtherReason
+                                ? "rgba(58, 120, 93, 0.12)"
+                                : "rgba(15, 23, 42, 0.03)",
+                              color: requiresOtherReason ? appColors.primary : "text.secondary",
+                              fontWeight: 600,
+                            }}
+                          >
+                            {requiresOtherReason ? "Egyéb kiválasztva" : "Egyéb"}
+                          </ButtonBase>
+                          {requiresOtherReason ? (
+                            <TextField
+                              label="Egyéb ok"
+                              placeholder="Írja le, milyen további szervíz szükséges"
+                              value={work.followupServiceReasonOther}
+                              onChange={(event) =>
+                                updateFollowupServiceReasonOther(work.id, event.target.value)
+                              }
+                              disabled={!canEdit}
+                              required
+                              fullWidth
+                            />
+                          ) : null}
+                        </>
+                      ) : (
+                        <>
+                          {work.followupServiceReasons.map((reason) => (
+                            <Typography key={reason} variant="body2">
+                              {followupServiceReasonLabels[reason]}
+                            </Typography>
+                          ))}
+                          {requiresOtherReason && work.followupServiceReasonOther.trim() ? (
+                            <Typography variant="body2" color="text.secondary">
+                              Egyéb: {work.followupServiceReasonOther}
+                            </Typography>
+                          ) : null}
+                        </>
+                      )}
+                    </Box>
+                  ) : null}
+                </CardContent>
+              </Card>
             )}
 
             <Card sx={{ boxShadow: "0 10px 24px rgba(31, 50, 58, 0.12)" }}>
@@ -497,11 +600,16 @@ export default function MaintenancePage() {
           </Menu>
         )}
 
-        {!isCompleted && (!hasPhoto || (work.isMalfunctioning && !hasMalfunctionNote)) && (
+        {!isCompleted &&
+        ((requiresPhoto && !hasPhoto) ||
+          (work.followupServiceRequired && !hasSelectedFollowupReason) ||
+          (requiresOtherReason && !hasOtherReason)) && (
           <Typography variant="body2" color="text.secondary" sx={{ textAlign: "center" }}>
-            {!hasPhoto
+            {requiresPhoto && !hasPhoto
               ? "A munka lezárásához töltsön fel legalább egy fotót"
-              : "Hibásként jelölt egységnél megjegyzés megadása kötelező a lezáráshoz"}
+              : !hasSelectedFollowupReason
+                ? "További szervíz esetén legalább egy ok megadása kötelező"
+                : "Az Egyéb ok kitöltése kötelező a lezáráshoz"}
           </Typography>
         )}
       </Box>

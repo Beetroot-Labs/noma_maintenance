@@ -25,6 +25,9 @@ pub struct SyncMaintenanceWorkRequest {
     finished_at: Option<DateTime<Utc>>,
     aborted_at: Option<DateTime<Utc>>,
     malfunction_description: Option<String>,
+    followup_service_required: Option<bool>,
+    followup_service_reasons: Option<Vec<String>>,
+    followup_service_reason_other: Option<String>,
     note: Option<String>,
 }
 
@@ -64,6 +67,33 @@ fn normalize_work_status(status: &str) -> Result<&'static str, ApiError> {
         "ABORTED" => Ok("ABORTED"),
         _ => Err(ApiError::bad_request("invalid maintenance work status")),
     }
+}
+
+fn normalize_followup_reasons(reasons: Option<Vec<String>>) -> Result<Vec<String>, ApiError> {
+    let mut normalized = Vec::new();
+
+    for reason in reasons.unwrap_or_default() {
+        let normalized_reason = match reason.trim().to_uppercase().as_str() {
+            "MAIN_COMPONENT_REPLACEMENT" => "MAIN_COMPONENT_REPLACEMENT",
+            "CLEANING" => "CLEANING",
+            "DAMAGED" => "DAMAGED",
+            "OTHER" => "OTHER",
+            "FAULT_DIAGNOSIS_REQUIRED" => "FAULT_DIAGNOSIS_REQUIRED",
+            "PERFORMANCE_DEGRADATION" => "PERFORMANCE_DEGRADATION",
+            "ABNORMAL_ODOR" => "ABNORMAL_ODOR",
+            "REFRIGERANT_LOW_OR_LEAK" => "REFRIGERANT_LOW_OR_LEAK",
+            _ => return Err(ApiError::bad_request("invalid follow-up service reason")),
+        };
+
+        if !normalized
+            .iter()
+            .any(|existing| existing == normalized_reason)
+        {
+            normalized.push(normalized_reason.to_string());
+        }
+    }
+
+    Ok(normalized)
 }
 
 fn normalize_photo_type(photo_type: Option<String>) -> Result<&'static str, ApiError> {
@@ -138,7 +168,38 @@ pub async fn sync_maintenance_work(
     let endpoint_key = format!("MAINTENANCE_WORK_SYNC:{work_id}");
     let normalized_status = normalize_work_status(&payload.status)?;
     let malfunction_description = normalize_optional_text(payload.malfunction_description);
+    let followup_service_required = payload.followup_service_required.unwrap_or(false);
+    let followup_service_reasons = normalize_followup_reasons(payload.followup_service_reasons)?;
+    let followup_service_reason_other =
+        normalize_optional_text(payload.followup_service_reason_other);
     let note = normalize_optional_text(payload.note);
+
+    if followup_service_required && followup_service_reasons.is_empty() {
+        return Err(ApiError::bad_request(
+            "at least one follow-up service reason is required",
+        ));
+    }
+
+    if !followup_service_required && !followup_service_reasons.is_empty() {
+        return Err(ApiError::bad_request(
+            "follow-up reasons require follow-up service to be enabled",
+        ));
+    }
+
+    let has_other_reason = followup_service_reasons
+        .iter()
+        .any(|reason| reason == "OTHER");
+    if has_other_reason && followup_service_reason_other.is_none() {
+        return Err(ApiError::bad_request(
+            "other follow-up service reason text is required",
+        ));
+    }
+
+    if !has_other_reason && followup_service_reason_other.is_some() {
+        return Err(ApiError::bad_request(
+            "other follow-up service reason text is only allowed with OTHER",
+        ));
+    }
 
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
 
@@ -183,6 +244,9 @@ pub async fn sync_maintenance_work(
             finished_at,
             aborted_at,
             malfunction_description,
+            followup_service_required,
+            followup_service_reasons,
+            followup_service_reason_other,
             note
         )
         VALUES (
@@ -196,7 +260,10 @@ pub async fn sync_maintenance_work(
             $8,
             $9,
             $10,
-            $11
+            $11,
+            $12::maintenance_followup_reason[],
+            $13,
+            $14
         )
         ON CONFLICT (id) DO UPDATE
         SET
@@ -207,6 +274,9 @@ pub async fn sync_maintenance_work(
             finished_at = EXCLUDED.finished_at,
             aborted_at = EXCLUDED.aborted_at,
             malfunction_description = EXCLUDED.malfunction_description,
+            followup_service_required = EXCLUDED.followup_service_required,
+            followup_service_reasons = EXCLUDED.followup_service_reasons,
+            followup_service_reason_other = EXCLUDED.followup_service_reason_other,
             note = EXCLUDED.note
         WHERE maintenance_works.tenant_id = EXCLUDED.tenant_id
           AND maintenance_works.maintainer_user_id = EXCLUDED.maintainer_user_id
@@ -223,6 +293,9 @@ pub async fn sync_maintenance_work(
     .bind(payload.finished_at)
     .bind(payload.aborted_at)
     .bind(malfunction_description)
+    .bind(followup_service_required)
+    .bind(followup_service_reasons)
+    .bind(followup_service_reason_other)
     .bind(note)
     .fetch_optional(&mut *tx)
     .await;

@@ -549,13 +549,9 @@ pub async fn assign_labeling_device_barcode(
     }
 
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
-    if let Some(replayed) = get_processed_mutation_response_tx(
-        &mut tx,
-        user.tenant_id,
-        &endpoint_key,
-        &mutation_id,
-    )
-    .await?
+    if let Some(replayed) =
+        get_processed_mutation_response_tx(&mut tx, user.tenant_id, &endpoint_key, &mutation_id)
+            .await?
     {
         return Ok(replayed);
     }
@@ -657,7 +653,13 @@ pub async fn assign_labeling_device_barcode(
 fn normalize_optional_text(value: Option<String>) -> Option<String> {
     value
         .map(|candidate| candidate.trim().to_string())
-        .and_then(|candidate| if candidate.is_empty() { None } else { Some(candidate) })
+        .and_then(|candidate| {
+            if candidate.is_empty() {
+                None
+            } else {
+                Some(candidate)
+            }
+        })
 }
 
 fn map_device_details_update_error(err: sqlx::Error) -> ApiError {

@@ -20,7 +20,9 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { cacheBuildingSnapshot, fetchBuildingCachePayload, getCachedBuildingSnapshot } from "@noma/shared";
+import {
+  rebuildBuildingSnapshot,
+} from "@noma/shared";
 import {
   ArrowLeft,
   Building2,
@@ -38,6 +40,7 @@ import { useNavigate } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { useDemoUser } from "@/context/DemoUserContext";
 import { useShift } from "@/context/ShiftContext";
+import { pruneNonRetryableMaintenanceSyncItems } from "@/lib/maintenanceStore";
 import { toast } from "@/lib/toast";
 import { appColors } from "@/theme";
 
@@ -193,7 +196,7 @@ const toActionErrorMessage = (err: unknown, fallback: string) => {
   return fallback;
 };
 
-export default function ShiftDetails() {
+export default function MyCurrentShiftPage() {
   const navigate = useNavigate();
   const { user } = useDemoUser();
   const { currentShift, refreshCurrentShift } = useShift();
@@ -422,11 +425,8 @@ export default function ShiftDetails() {
     setIsReloadingCache(true);
     handleCloseActionsMenu();
     try {
-      const cachePayload = await fetchBuildingCachePayload(payload.building_id);
-      const previousSnapshot = await getCachedBuildingSnapshot(user.tenantId, payload.building_id);
-      await cacheBuildingSnapshot(user.tenantId, payload.building_id, cachePayload, {
-        previousSnapshot: previousSnapshot ?? undefined,
-      });
+      await pruneNonRetryableMaintenanceSyncItems();
+      await rebuildBuildingSnapshot(user.tenantId, payload.building_id);
       toast.success("Berendezés adatok sikeresen újratöltve.");
     } catch (err) {
       const message = toActionErrorMessage(err, backendUnavailableMessage);

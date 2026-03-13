@@ -326,7 +326,17 @@ pub fn require_lead_or_admin(user: &SessionUser) -> Result<(), ApiError> {
     ))
 }
 
-async fn verify_google_id_token(state: &AppState, id_token: &str) -> Result<GoogleClaims, ApiError> {
+pub fn require_admin(user: &SessionUser) -> Result<(), ApiError> {
+    if user.role == "ADMIN" {
+        return Ok(());
+    }
+    Err(ApiError::forbidden("only admins can perform this action"))
+}
+
+async fn verify_google_id_token(
+    state: &AppState,
+    id_token: &str,
+) -> Result<GoogleClaims, ApiError> {
     let auth = state
         .auth
         .as_ref()

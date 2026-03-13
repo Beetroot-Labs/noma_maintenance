@@ -26,7 +26,9 @@ pub struct StorageConfig {
 }
 
 pub fn load_storage_config() -> anyhow::Result<Option<StorageConfig>> {
-    let Some(bucket) = std::env::var("GCS_BUCKET").ok().filter(|value| !value.trim().is_empty())
+    let Some(bucket) = std::env::var("GCS_BUCKET")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
     else {
         return Ok(None);
     };
@@ -97,7 +99,11 @@ pub fn load_google_client_ids() -> Vec<String> {
     .into_iter()
     .flatten()
     {
-        for client_id in value.split(',').map(str::trim).filter(|value| !value.is_empty()) {
+        for client_id in value
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
             if !client_ids.iter().any(|existing| existing == client_id) {
                 client_ids.push(client_id.to_string());
             }

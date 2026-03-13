@@ -9,7 +9,7 @@ const loadRootDevEnv = () => {
     return {};
   }
 
-  return Object.fromEntries(
+  const parsed = Object.fromEntries(
     fs
       .readFileSync(envFilePath, "utf8")
       .split("\n")
@@ -21,6 +21,13 @@ const loadRootDevEnv = () => {
         const value = line.slice(separatorIndex + 1).trim();
         return [key, value];
       }),
+  );
+
+  return Object.fromEntries(
+    Object.entries(parsed).map(([key, value]) => [
+      key,
+      value.replace(/\$\{([A-Z0-9_]+)\}/g, (_, variableName) => parsed[variableName] ?? ""),
+    ]),
   );
 };
 

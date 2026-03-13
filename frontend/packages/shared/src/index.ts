@@ -22,9 +22,12 @@ export type {
 } from "./outboxSyncEngine";
 export {
   cacheBuildingSnapshot,
+  clearCachedBuildingSnapshot,
+  clearCachedBuildingSnapshotsForTenant,
   fetchBuildingCachePayload,
   getCachedBuildingSnapshot,
   getLatestCachedBuildingSnapshotForTenant,
+  rebuildBuildingSnapshot,
 } from "./buildingCache";
 export type {
   SharedBuildingCachePayload,

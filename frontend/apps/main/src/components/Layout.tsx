@@ -51,7 +51,9 @@ export function Layout({ children }: LayoutProps) {
   const { currentShift } = useShift();
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const showBottomBar = Boolean(currentShift);
+  const isAdminView = location.pathname.startsWith("/admin");
+  const canAccessAdminView = user?.role === "admin";
+  const showBottomBar = Boolean(currentShift) && !isAdminView;
   const canStartNewMaintenance =
     currentShift?.status !== "CLOSE_REQUESTED" && currentShift?.status !== "READY_TO_COMMIT";
   const startActionDisabled = !currentWork && !canStartNewMaintenance;
@@ -83,6 +85,11 @@ export function Layout({ children }: LayoutProps) {
     navigate("/login");
   };
 
+  const handleToggleView = () => {
+    setMenuAnchor(null);
+    navigate(isAdminView ? "/" : "/admin/shifts");
+  };
+
   const handleDrawerOpen = () => setDrawerOpen(true);
   const handleDrawerClose = () => setDrawerOpen(false);
 
@@ -103,11 +110,11 @@ export function Layout({ children }: LayoutProps) {
         <Container maxWidth="lg" sx={{ height: 56, display: "flex", alignItems: "center" }}>
           <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2, width: "100%" }}>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              {isDesktop && (
+              {isDesktop && !isAdminView ? (
                 <IconButton onClick={handleDrawerOpen} aria-label="Menü megnyitása" sx={{ color: appColors.accent}}>
                   <MenuIcon size={20} />
                 </IconButton>
-              )}
+              ) : null}
               <Box
                 component="img"
                 src={`${import.meta.env.BASE_URL}logo-white.webp`}
@@ -270,71 +277,73 @@ export function Layout({ children }: LayoutProps) {
         </Paper>
       ) : null}
 
-      <Drawer
-        anchor="left"
-        open={drawerOpen}
-        onClose={handleDrawerClose}
-        PaperProps={{
-          sx: {
-            width: 260,
-            bgcolor: appColors.primary,
-            color: appColors.primaryForeground,
-          },
-        }}
-      >
-        <Box sx={{ p: 2 }}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-            Menü
-          </Typography>
-        </Box>
-        <Divider sx={{ borderColor: appColors.border }} />
-        <List sx={{ px: 1 }}>
-          {navItems.map(({ path, label, icon: Icon }) => (
+      {!isAdminView ? (
+        <Drawer
+          anchor="left"
+          open={drawerOpen}
+          onClose={handleDrawerClose}
+          PaperProps={{
+            sx: {
+              width: 260,
+              bgcolor: appColors.primary,
+              color: appColors.primaryForeground,
+            },
+          }}
+        >
+          <Box sx={{ p: 2 }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+              Menü
+            </Typography>
+          </Box>
+          <Divider sx={{ borderColor: appColors.border }} />
+          <List sx={{ px: 1 }}>
+            {navItems.map(({ path, label, icon: Icon }) => (
+              <ListItemButton
+                key={path}
+                component={Link}
+                to={path}
+                onClick={handleDrawerClose}
+                selected={location.pathname === path}
+                sx={{
+                  borderRadius: 2,
+                  "&.Mui-selected": {
+                    bgcolor: alpha(appColors.accent, 0.15),
+                    color: appColors.accent,
+                  },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 36, color: "inherit" }}>
+                  <Icon size={18} />
+                </ListItemIcon>
+                <ListItemText primary={label} />
+              </ListItemButton>
+            ))}
+          </List>
+          <Divider sx={{ borderColor: appColors.border, mt: 1 }} />
+          <List sx={{ px: 1 }}>
             <ListItemButton
-              key={path}
-              component={Link}
-              to={path}
-              onClick={handleDrawerClose}
-              selected={location.pathname === path}
+              component={startActionDisabled ? "div" : Link}
+              to={startActionDisabled ? undefined : currentWork ? `/maintenance/${currentWork.id}` : "/new-maintenance"}
+              onClick={startActionDisabled ? undefined : handleDrawerClose}
+              disabled={startActionDisabled}
               sx={{
                 borderRadius: 2,
-                "&.Mui-selected": {
-                  bgcolor: alpha(appColors.accent, 0.15),
-                  color: appColors.accent,
+                bgcolor: alpha(appColors.accent, 0.15),
+                color: appColors.accent,
+                fontWeight: 700,
+                "&:hover": {
+                  bgcolor: alpha(appColors.accent, 0.25),
                 },
               }}
             >
               <ListItemIcon sx={{ minWidth: 36, color: "inherit" }}>
-                <Icon size={18} />
+                {currentWork ? <Play size={18} /> : <ScanBarcode size={18} />}
               </ListItemIcon>
-              <ListItemText primary={label} />
+              <ListItemText primary={currentWork ? "Munka folytatása" : "Munka indítása"} />
             </ListItemButton>
-          ))}
-        </List>
-        <Divider sx={{ borderColor: appColors.border, mt: 1 }} />
-        <List sx={{ px: 1 }}>
-          <ListItemButton
-            component={startActionDisabled ? "div" : Link}
-            to={startActionDisabled ? undefined : currentWork ? `/maintenance/${currentWork.id}` : "/new-maintenance"}
-            onClick={startActionDisabled ? undefined : handleDrawerClose}
-            disabled={startActionDisabled}
-            sx={{
-              borderRadius: 2,
-              bgcolor: alpha(appColors.accent, 0.15),
-              color: appColors.accent,
-              fontWeight: 700,
-              "&:hover": {
-                bgcolor: alpha(appColors.accent, 0.25),
-              },
-            }}
-          >
-            <ListItemIcon sx={{ minWidth: 36, color: "inherit" }}>
-              {currentWork ? <Play size={18} /> : <ScanBarcode size={18} />}
-            </ListItemIcon>
-            <ListItemText primary={currentWork ? "Munka folytatása" : "Munka indítása"} />
-          </ListItemButton>
-        </List>
-      </Drawer>
+          </List>
+        </Drawer>
+      ) : null}
 
       <Menu
         anchorEl={menuAnchor}
@@ -343,6 +352,12 @@ export function Layout({ children }: LayoutProps) {
         anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
         transformOrigin={{ vertical: "top", horizontal: "right" }}
       >
+        {canAccessAdminView ? (
+          <MenuItem onClick={handleToggleView}>
+            {isAdminView ? "Maintenance view" : "Admin view"}
+          </MenuItem>
+        ) : null}
+        {canAccessAdminView ? <Divider sx={{ borderColor: "rgba(0, 0, 0, 0.12)" }} /> : null}
         <MenuItem
           onClick={handleLogout}
           sx={{ color: appColors.destructive, fontWeight: 700 }}

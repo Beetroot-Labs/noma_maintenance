@@ -90,6 +90,50 @@ export const cacheBuildingSnapshot = async (
   });
 };
 
+export const clearCachedBuildingSnapshot = async (
+  tenantId: string,
+  buildingId: string,
+): Promise<void> => {
+  const db = await openCacheDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(SNAPSHOTS_STORE, "readwrite");
+    tx.onerror = () => reject(tx.error);
+    tx.oncomplete = () => resolve();
+    tx.objectStore(SNAPSHOTS_STORE).delete(`${tenantId}:${buildingId}`);
+  });
+};
+
+export const clearCachedBuildingSnapshotsForTenant = async (
+  tenantId: string,
+): Promise<void> => {
+  const db = await openCacheDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(SNAPSHOTS_STORE, "readwrite");
+    tx.onerror = () => reject(tx.error);
+    tx.oncomplete = () => resolve();
+    const store = tx.objectStore(SNAPSHOTS_STORE);
+    const request = store.getAllKeys();
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      for (const key of request.result) {
+        if (typeof key === "string" && key.startsWith(`${tenantId}:`)) {
+          store.delete(key);
+        }
+      }
+    };
+  });
+};
+
+export const rebuildBuildingSnapshot = async (
+  tenantId: string,
+  buildingId: string,
+): Promise<SharedBuildingCachePayload> => {
+  await clearCachedBuildingSnapshotsForTenant(tenantId);
+  const payload = await fetchBuildingCachePayload(buildingId);
+  await cacheBuildingSnapshot(tenantId, buildingId, payload);
+  return payload;
+};
+
 export const getCachedBuildingSnapshot = async (
   tenantId: string,
   buildingId: string,

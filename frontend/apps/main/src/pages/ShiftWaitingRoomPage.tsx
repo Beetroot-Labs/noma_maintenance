@@ -22,10 +22,13 @@ import {
   Typography,
 } from "@mui/material";
 import { Check, CloudDownload, LoaderCircle, Plus, Trash, UserPlus, X } from "lucide-react";
-import { cacheBuildingSnapshot, fetchBuildingCachePayload } from "@noma/shared";
+import {
+  rebuildBuildingSnapshot,
+} from "@noma/shared";
 import { Layout } from "@/components/Layout";
 import { useDemoUser } from "@/context/DemoUserContext";
 import { useShift } from "@/context/ShiftContext";
+import { pruneNonRetryableMaintenanceSyncItems } from "@/lib/maintenanceStore";
 
 type ShiftParticipant = {
   user_id: string;
@@ -198,8 +201,8 @@ export default function ShiftWaitingRoomPage() {
 
     const run = async () => {
       try {
-        const cachePayload = await fetchBuildingCachePayload(payload.building_id);
-        await cacheBuildingSnapshot(user.tenantId, payload.building_id, cachePayload);
+        await pruneNonRetryableMaintenanceSyncItems();
+        await rebuildBuildingSnapshot(user.tenantId, payload.building_id);
         const ackResponse = await fetch(`/api/shifts/${payload.id}/cache-ready`, {
           method: "POST",
           credentials: "include",

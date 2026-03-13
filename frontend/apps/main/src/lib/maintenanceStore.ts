@@ -48,6 +48,9 @@ export type QueueMaintenanceWorkSyncInput = {
   finishedAt: string | null;
   abortedAt: string | null;
   malfunctionDescription: string | null;
+  followupServiceRequired: boolean;
+  followupServiceReasons: string[];
+  followupServiceReasonOther: string | null;
   note: string | null;
 };
 
@@ -151,6 +154,28 @@ const getAllOutboxRecords = async (): Promise<MaintenanceSyncOutboxRecord[]> => 
     request.onsuccess = () =>
       resolve((request.result as MaintenanceSyncOutboxRecord[] | undefined) ?? []);
   });
+};
+
+export const pruneNonRetryableMaintenanceSyncItems = async (): Promise<number> => {
+  const db = await openDb();
+  const items = await getAllOutboxRecords();
+  const nonRetryableIds = items
+    .filter((item) => item.status === "FAILED" && !item.retryable)
+    .map((item) => item.id);
+
+  if (nonRetryableIds.length === 0) {
+    return 0;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(SYNC_OUTBOX_STORE, "readwrite");
+    tx.onerror = () => reject(tx.error);
+    tx.oncomplete = () => resolve();
+    const store = tx.objectStore(SYNC_OUTBOX_STORE);
+    nonRetryableIds.forEach((id) => store.delete(id));
+  });
+
+  return nonRetryableIds.length;
 };
 
 const isPendingSyncItem = (item: Pick<MaintenanceSyncOutboxRecord, "status" | "retryable">) =>
@@ -322,6 +347,9 @@ export const syncPendingMaintenanceMutations = async (): Promise<void> => {
               finished_at: work.finishedAt,
               aborted_at: work.abortedAt,
               malfunction_description: work.malfunctionDescription,
+              followup_service_required: work.followupServiceRequired,
+              followup_service_reasons: work.followupServiceReasons,
+              followup_service_reason_other: work.followupServiceReasonOther,
               note: work.note,
             }),
           });
@@ -384,6 +412,9 @@ export const syncPendingMaintenanceMutations = async (): Promise<void> => {
               finished_at: work.finishedAt,
               aborted_at: work.abortedAt,
               malfunction_description: work.malfunctionDescription,
+              followup_service_required: work.followupServiceRequired,
+              followup_service_reasons: work.followupServiceReasons,
+              followup_service_reason_other: work.followupServiceReasonOther,
               note: work.note,
             }),
           });

@@ -1,6 +1,12 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import type { MaintenancePhoto, MaintenanceWork, ShiftManager } from "@/types/maintenance";
+import type {
+  FollowupServiceReason,
+  MaintenancePhoto,
+  MaintenanceWork,
+  ShiftManager,
+} from "@/types/maintenance";
 import { useDemoUser } from "@/context/DemoUserContext";
+import { useShift } from "@/context/ShiftContext";
 import { getCachedBuildingSnapshot } from "@noma/shared";
 import {
   clearMaintenanceState,
@@ -25,7 +31,9 @@ interface MaintenanceContextType {
   canConfirmShiftClose: boolean;
   updateNotes: (workId: string, notes: string) => void;
   addPhoto: (workId: string, photo: MaintenancePhoto) => void;
-  toggleMalfunction: (workId: string) => void;
+  setFollowupServiceRequired: (workId: string, required: boolean) => void;
+  toggleFollowupServiceReason: (workId: string, reason: FollowupServiceReason) => void;
+  updateFollowupServiceReasonOther: (workId: string, value: string) => void;
   completeMaintenance: (workId: string) => void;
   abortMaintenance: (workId: string) => void;
   markEdited: (workId: string) => void;
@@ -91,6 +99,11 @@ const deserializeWork = (work: StoredMaintenanceWork): MaintenanceWork | null =>
 
   return {
     ...candidate,
+    followupServiceRequired: Boolean(candidate.followupServiceRequired),
+    followupServiceReasons: Array.isArray(candidate.followupServiceReasons)
+      ? candidate.followupServiceReasons
+      : [],
+    followupServiceReasonOther: candidate.followupServiceReasonOther ?? "",
     startTime: new Date(work.startTime),
     endTime: work.endTime ? new Date(work.endTime) : undefined,
     lastEdited: work.lastEdited ? new Date(work.lastEdited) : undefined,
@@ -111,8 +124,19 @@ const deserializeWork = (work: StoredMaintenanceWork): MaintenanceWork | null =>
   };
 };
 
+const filterWorksForShift = (
+  works: MaintenanceWork[],
+  shiftId: string | null,
+): MaintenanceWork[] => {
+  if (!shiftId) {
+    return [];
+  }
+  return works.filter((work) => work.shiftId === shiftId);
+};
+
 export function MaintenanceProvider({ children }: { children: ReactNode }) {
   const { user } = useDemoUser();
+  const { currentShift, isLoading: isShiftLoading } = useShift();
   const [currentWork, setCurrentWork] = useState<MaintenanceWork | null>(null);
   const [todaysWorks, setTodaysWorks] = useState<MaintenanceWork[]>([]);
   const [pastWorks, setPastWorks] = useState<MaintenanceWork[]>([]);
@@ -122,7 +146,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
   const [deviceLookup, setDeviceLookup] = useState<Map<string, DeviceCacheLookupEntry>>(
     new Map(),
   );
-  const [currentShiftId, setCurrentShiftId] = useState<string | null>(null);
+  const activeShiftId = currentShift?.id ?? null;
 
   const shiftManager: ShiftManager = {
     name: "Ivanics Károly",
@@ -153,38 +177,13 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     lookup: Map<string, DeviceCacheLookupEntry>;
     shiftId: string | null;
   }> => {
-    if (!user?.tenantId) {
+    if (!user?.tenantId || !currentShift) {
       return { lookup: new Map(), shiftId: null };
     }
 
-    const currentShiftResponse = await fetch("/api/shifts/current", {
-      credentials: "include",
-      cache: "no-store",
-    });
-    if (!currentShiftResponse.ok) {
-      return { lookup: new Map(), shiftId: null };
-    }
-
-    const currentShiftPayload = (await currentShiftResponse.json()) as {
-      shift: { id: string } | null;
-    };
-    const shiftId = currentShiftPayload.shift?.id ?? null;
-    if (!shiftId) {
-      return { lookup: new Map(), shiftId: null };
-    }
-
-    const waitingRoomResponse = await fetch(`/api/shifts/${shiftId}/waiting-room`, {
-      credentials: "include",
-      cache: "no-store",
-    });
-    if (!waitingRoomResponse.ok) {
-      return { lookup: new Map(), shiftId: null };
-    }
-
-    const waitingRoomPayload = (await waitingRoomResponse.json()) as { building_id: string };
-    const snapshot = await getCachedBuildingSnapshot(user.tenantId, waitingRoomPayload.building_id);
+    const snapshot = await getCachedBuildingSnapshot(user.tenantId, currentShift.building_id);
     if (!snapshot) {
-      return { lookup: new Map(), shiftId };
+      return { lookup: new Map(), shiftId: currentShift.id };
     }
 
     const locationById = new Map(
@@ -216,7 +215,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
       });
     }
 
-    return { lookup, shiftId };
+    return { lookup, shiftId: currentShift.id };
   };
 
   useEffect(() => {
@@ -285,6 +284,46 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
   }, [user?.tenantId, user?.id]);
 
   useEffect(() => {
+    if (!isMaintenanceStateLoaded || isShiftLoading) {
+      return;
+    }
+
+    const nextCurrentWork =
+      currentWork && currentWork.shiftId === activeShiftId ? currentWork : null;
+    const nextTodaysWorks = filterWorksForShift(todaysWorks, activeShiftId);
+    const nextPastWorks = filterWorksForShift(pastWorks, activeShiftId);
+    const hasShiftMismatch =
+      nextCurrentWork !== currentWork ||
+      nextTodaysWorks.length !== todaysWorks.length ||
+      nextPastWorks.length !== pastWorks.length;
+
+    if (!hasShiftMismatch && (activeShiftId !== null || !workdayClosed)) {
+      return;
+    }
+
+    if (nextCurrentWork !== currentWork) {
+      setCurrentWork(nextCurrentWork);
+    }
+    if (nextTodaysWorks.length !== todaysWorks.length) {
+      setTodaysWorks(nextTodaysWorks);
+    }
+    if (nextPastWorks.length !== pastWorks.length) {
+      setPastWorks(nextPastWorks);
+    }
+    if (workdayClosed) {
+      setWorkdayClosed(false);
+    }
+  }, [
+    activeShiftId,
+    currentWork,
+    isMaintenanceStateLoaded,
+    isShiftLoading,
+    pastWorks,
+    todaysWorks,
+    workdayClosed,
+  ]);
+
+  useEffect(() => {
     purgeDemoPhotos().catch((error) => {
       console.warn("Nem sikerült törölni a demó fotókat.", error);
     });
@@ -333,25 +372,22 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     const loadDeviceLookup = async () => {
-      if (!user?.tenantId) {
+      if (!user?.tenantId || !currentShift) {
         if (!cancelled) {
           setDeviceLookup(new Map());
-          setCurrentShiftId(null);
         }
         return;
       }
 
       try {
-        const { lookup, shiftId } = await loadCurrentShiftDeviceLookup();
+        const { lookup } = await loadCurrentShiftDeviceLookup();
 
         if (!cancelled) {
           setDeviceLookup(lookup);
-          setCurrentShiftId(shiftId);
         }
       } catch {
         if (!cancelled) {
           setDeviceLookup(new Map());
-          setCurrentShiftId(null);
         }
       }
     };
@@ -360,7 +396,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [user?.tenantId]);
+  }, [currentShift, user?.tenantId]);
 
   useEffect(() => {
     let isActive = true;
@@ -447,7 +483,6 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
   ]);
 
   const queueMaintenanceFinalizeSync = (work: MaintenanceWork) => {
-    const malfunctionDescription = work.isMalfunctioning ? work.notes.trim() || null : null;
     enqueueMaintenanceFinalizeSync({
       work: {
         workId: work.id,
@@ -457,7 +492,10 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
         startedAt: work.startTime.toISOString(),
         finishedAt: work.endTime?.toISOString() ?? null,
         abortedAt: null,
-        malfunctionDescription,
+        malfunctionDescription: null,
+        followupServiceRequired: work.followupServiceRequired,
+        followupServiceReasons: work.followupServiceReasons,
+        followupServiceReasonOther: work.followupServiceReasonOther.trim() || null,
         note: work.notes.trim() || null,
       },
       photos: work.photos.map((photo) => ({
@@ -465,7 +503,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
         photoId: photo.id,
         captureNote: photo.description.trim() || null,
         capturedAt: photo.timestamp.toISOString(),
-        photoType: work.isMalfunctioning ? "MALFUNCTION" : "MAINTENANCE",
+        photoType: "MAINTENANCE",
       })),
     })
       .then(() => {
@@ -478,14 +516,13 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
 
   const startMaintenance = async (hvacId: string): Promise<string | null> => {
     setWorkdayClosed(false);
-    let resolvedShiftId = currentShiftId;
+    let resolvedShiftId = activeShiftId;
     let hvacInfo = deviceLookup.get(hvacId);
 
     if (!hvacInfo || !resolvedShiftId) {
       try {
         const { lookup, shiftId } = await loadCurrentShiftDeviceLookup();
         setDeviceLookup(lookup);
-        setCurrentShiftId(shiftId);
         resolvedShiftId = shiftId;
         hvacInfo = lookup.get(hvacId);
       } catch {
@@ -509,6 +546,9 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
       executorId: user?.id || "unknown",
       status: "in-progress",
       isMalfunctioning: false,
+      followupServiceRequired: false,
+      followupServiceReasons: [],
+      followupServiceReasonOther: "",
       notes: "",
       photos: [],
       startTime: new Date(),
@@ -574,12 +614,14 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     );
   };
 
-  const toggleMalfunction = (workId: string) => {
+  const setFollowupServiceRequired = (workId: string, required: boolean) => {
     let updatedWork: MaintenanceWork | null = null;
     if (currentWork?.id === workId) {
       updatedWork = {
         ...currentWork,
-        isMalfunctioning: !currentWork.isMalfunctioning,
+        followupServiceRequired: required,
+        followupServiceReasons: required ? currentWork.followupServiceReasons : [],
+        followupServiceReasonOther: required ? currentWork.followupServiceReasonOther : "",
       };
       setCurrentWork(updatedWork);
     }
@@ -590,7 +632,9 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
         }
         const nextWork = {
           ...work,
-          isMalfunctioning: !work.isMalfunctioning,
+          followupServiceRequired: required,
+          followupServiceReasons: required ? work.followupServiceReasons : [],
+          followupServiceReasonOther: required ? work.followupServiceReasonOther : "",
         };
         updatedWork = nextWork;
         return nextWork;
@@ -599,10 +643,51 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     setPastWorks((prev) =>
       prev.map((work) =>
         work.id === workId
-          ? { ...work, isMalfunctioning: !work.isMalfunctioning }
+          ? {
+              ...work,
+              followupServiceRequired: required,
+              followupServiceReasons: required ? work.followupServiceReasons : [],
+              followupServiceReasonOther: required ? work.followupServiceReasonOther : "",
+            }
           : work,
       ),
     );
+  };
+
+  const toggleFollowupServiceReason = (workId: string, reason: FollowupServiceReason) => {
+    const apply = (work: MaintenanceWork): MaintenanceWork => {
+      const hasReason = work.followupServiceReasons.includes(reason);
+      const nextReasons = hasReason
+        ? work.followupServiceReasons.filter((currentReason) => currentReason !== reason)
+        : [...work.followupServiceReasons, reason];
+
+      return {
+        ...work,
+        followupServiceRequired: nextReasons.length > 0 ? true : work.followupServiceRequired,
+        followupServiceReasons: nextReasons,
+        followupServiceReasonOther:
+          reason === "OTHER" && hasReason ? "" : work.followupServiceReasonOther,
+      };
+    };
+
+    if (currentWork?.id === workId) {
+      setCurrentWork(apply(currentWork));
+    }
+    setTodaysWorks((prev) => prev.map((work) => (work.id === workId ? apply(work) : work)));
+    setPastWorks((prev) => prev.map((work) => (work.id === workId ? apply(work) : work)));
+  };
+
+  const updateFollowupServiceReasonOther = (workId: string, value: string) => {
+    const apply = (work: MaintenanceWork): MaintenanceWork => ({
+      ...work,
+      followupServiceReasonOther: value,
+    });
+
+    if (currentWork?.id === workId) {
+      setCurrentWork(apply(currentWork));
+    }
+    setTodaysWorks((prev) => prev.map((work) => (work.id === workId ? apply(work) : work)));
+    setPastWorks((prev) => prev.map((work) => (work.id === workId ? apply(work) : work)));
   };
 
   const completeMaintenance = (workId: string) => {
@@ -703,7 +788,9 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
         canConfirmShiftClose,
         updateNotes,
         addPhoto,
-        toggleMalfunction,
+        setFollowupServiceRequired,
+        toggleFollowupServiceReason,
+        updateFollowupServiceReasonOther,
         completeMaintenance,
         abortMaintenance,
         markEdited,

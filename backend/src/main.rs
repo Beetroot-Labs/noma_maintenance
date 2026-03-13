@@ -32,10 +32,11 @@ use crate::labeling::{
 use crate::maintenance::{sync_maintenance_work, upload_maintenance_photo};
 use crate::shifts::{
     accept_shift_invitation, add_shift_participant, cancel_shift, commit_shift,
-    confirm_shift_close,
-    create_shift, get_current_shift_state, get_shift_maintenance_summary, get_shift_waiting_room,
-    list_shift_invite_candidates, mark_shift_cache_ready, remove_shift_participant,
-    request_shift_close, start_shift, upload_shift_signature,
+    confirm_shift_close, create_shift, get_admin_maintenance_detail, get_admin_maintenance_photo,
+    get_admin_shift_detail, get_current_shift_state, get_shift_maintenance_summary,
+    get_shift_waiting_room, list_admin_shifts, list_shift_invite_candidates,
+    mark_shift_cache_ready, remove_shift_participant, request_shift_close, start_shift,
+    upload_shift_signature,
 };
 use crate::state::{AppState, AuthConfig, load_google_client_ids, load_storage_config};
 
@@ -126,23 +127,54 @@ async fn main() -> anyhow::Result<()> {
         .route("/auth/google", post(google_login))
         .route("/auth/me", get(get_current_user))
         .route("/auth/logout", post(logout))
-        .route("/users/invite-candidates", get(list_shift_invite_candidates))
+        .route("/admin/shifts", get(list_admin_shifts))
+        .route("/admin/shifts/{shift_id}", get(get_admin_shift_detail))
+        .route(
+            "/admin/shifts/{shift_id}/maintenances/{maintenance_id}",
+            get(get_admin_maintenance_detail),
+        )
+        .route(
+            "/admin/shifts/{shift_id}/maintenances/{maintenance_id}/photos/{photo_id}",
+            get(get_admin_maintenance_photo),
+        )
+        .route(
+            "/users/invite-candidates",
+            get(list_shift_invite_candidates),
+        )
         .route("/shifts", post(create_shift))
         .route("/shifts/current", get(get_current_shift_state))
-        .route("/shifts/{shift_id}/participants", post(add_shift_participant))
+        .route(
+            "/shifts/{shift_id}/participants",
+            post(add_shift_participant),
+        )
         .route(
             "/shifts/{shift_id}/participants/{participant_user_id}",
             axum::routing::delete(remove_shift_participant),
         )
         .route("/shifts/{shift_id}/accept", post(accept_shift_invitation))
-        .route("/shifts/{shift_id}/cache-ready", post(mark_shift_cache_ready))
+        .route(
+            "/shifts/{shift_id}/cache-ready",
+            post(mark_shift_cache_ready),
+        )
         .route("/shifts/{shift_id}/start", post(start_shift))
-        .route("/shifts/{shift_id}/close-request", post(request_shift_close))
-        .route("/shifts/{shift_id}/close-confirm", post(confirm_shift_close))
+        .route(
+            "/shifts/{shift_id}/close-request",
+            post(request_shift_close),
+        )
+        .route(
+            "/shifts/{shift_id}/close-confirm",
+            post(confirm_shift_close),
+        )
         .route("/shifts/{shift_id}/commit", post(commit_shift))
-        .route("/shifts/{shift_id}/signature-image", put(upload_shift_signature))
+        .route(
+            "/shifts/{shift_id}/signature-image",
+            put(upload_shift_signature),
+        )
         .route("/shifts/{shift_id}/cancel", post(cancel_shift))
-        .route("/shifts/{shift_id}/waiting-room", get(get_shift_waiting_room))
+        .route(
+            "/shifts/{shift_id}/waiting-room",
+            get(get_shift_waiting_room),
+        )
         .route(
             "/shifts/{shift_id}/maintenance-summary",
             get(get_shift_maintenance_summary),
@@ -166,7 +198,10 @@ async fn main() -> anyhow::Result<()> {
             "/labeling/buildings/{building_id}/cache",
             get(get_labeling_building_cache),
         )
-        .route("/maintenance/works/{work_id}/sync", post(sync_maintenance_work))
+        .route(
+            "/maintenance/works/{work_id}/sync",
+            post(sync_maintenance_work),
+        )
         .route(
             "/maintenance/works/{work_id}/photos/{photo_id}",
             put(upload_maintenance_photo),

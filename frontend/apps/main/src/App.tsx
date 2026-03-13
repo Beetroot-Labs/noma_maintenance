@@ -14,9 +14,12 @@ import NotFound from "./pages/NotFound";
 import StartShiftPage from "./pages/StartShiftPage";
 import ShiftWaitingRoomPage from "./pages/ShiftWaitingRoomPage";
 import MaintenanceDashboard from "./pages/MaintenanceDashboard";
-import ShiftDetails from "./pages/ShiftDetails";
+import MyCurrentShiftPage from "./pages/MyCurrentShiftPage";
 import ShiftHomePage from "./pages/ShiftHomePage";
 import ShiftSummaryPage from "./pages/ShiftSummaryPage";
+import AdminShiftsPage from "./pages/AdminShiftsPage";
+import ShiftDetailsPage from "./pages/ShiftDetailsPage";
+import MaintenanceDetailsPage from "./pages/MaintenanceDetailsPage";
 
 const queryClient = new QueryClient();
 
@@ -173,13 +176,21 @@ const App = () => (
                   <Route path="/" element={<ShiftHomePage />} />
                   <Route path="/dashboard" element={<ShiftDashboardRoute />} />
                   <Route path="/shifts/:shiftId/waiting-room" element={<ShiftWaitingRoomPage />} />
+                  <Route element={<RequireRoles roles={["admin"]} />}>
+                    <Route path="/admin/shifts" element={<AdminShiftsPage />} />
+                    <Route path="/admin/shifts/:shiftId" element={<ShiftDetailsPage />} />
+                    <Route
+                      path="/admin/shifts/:shiftId/maintenances/:maintenanceId"
+                      element={<MaintenanceDetailsPage />}
+                    />
+                  </Route>
                   <Route element={<RequireActiveShift />}>
                     <Route element={<RequireMaintenanceStartAllowed />}>
                       <Route path="/new-maintenance" element={<NewMaintenancePage />} />
                       <Route path="/scan" element={<Navigate to="/new-maintenance" replace />} />
                     </Route>
                     <Route path="/maintenance/:workId" element={<MaintenancePage />} />
-                    <Route path="/shift-details" element={<ShiftDetails />} />
+                    <Route path="/shift-details" element={<MyCurrentShiftPage />} />
                     <Route path="/shift-summary" element={<ShiftSummaryPage />} />
                     <Route path="/devices/:id" element={<DeviceDetailsPage />} />
                   </Route>

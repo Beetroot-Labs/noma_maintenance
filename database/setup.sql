@@ -272,6 +272,17 @@ CREATE TYPE maintenance_work_status AS ENUM (
     'ABORTED'
 );
 
+CREATE TYPE maintenance_followup_reason AS ENUM (
+    'MAIN_COMPONENT_REPLACEMENT',
+    'CLEANING',
+    'DAMAGED',
+    'OTHER',
+    'FAULT_DIAGNOSIS_REQUIRED',
+    'PERFORMANCE_DEGRADATION',
+    'ABNORMAL_ODOR',
+    'REFRIGERANT_LOW_OR_LEAK'
+);
+
 CREATE TABLE maintenance_works (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4() NOT NULL,
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -283,6 +294,9 @@ CREATE TABLE maintenance_works (
     finished_at TIMESTAMPTZ,
     aborted_at TIMESTAMPTZ,
     malfunction_description TEXT,
+    followup_service_required BOOLEAN NOT NULL DEFAULT FALSE,
+    followup_service_reasons maintenance_followup_reason[] NOT NULL DEFAULT ARRAY[]::maintenance_followup_reason[],
+    followup_service_reason_other TEXT,
     note TEXT,
     CONSTRAINT maintenance_works_tenant_shift_fk
         FOREIGN KEY (tenant_id, shift_id)
@@ -298,6 +312,20 @@ CREATE TABLE maintenance_works (
         ON DELETE RESTRICT,
     CONSTRAINT maintenance_works_malfunction_description_not_empty CHECK (
         malfunction_description IS NULL OR NULLIF(BTRIM(malfunction_description), '') IS NOT NULL
+    ),
+    CONSTRAINT maintenance_works_followup_reasons_only_when_required CHECK (
+        followup_service_required OR cardinality(followup_service_reasons) = 0
+    ),
+    CONSTRAINT maintenance_works_followup_reasons_required CHECK (
+        NOT followup_service_required OR cardinality(followup_service_reasons) > 0
+    ),
+    CONSTRAINT maintenance_works_followup_other_required CHECK (
+        NOT ('OTHER' = ANY(followup_service_reasons))
+        OR NULLIF(BTRIM(followup_service_reason_other), '') IS NOT NULL
+    ),
+    CONSTRAINT maintenance_works_followup_other_forbidden CHECK (
+        ('OTHER' = ANY(followup_service_reasons))
+        OR followup_service_reason_other IS NULL
     ),
     CONSTRAINT maintenance_works_finished_at_required CHECK (
         status <> 'FINISHED' OR finished_at IS NOT NULL

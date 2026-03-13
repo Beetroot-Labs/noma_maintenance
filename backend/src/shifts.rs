@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use cloud_storage::Object;
 use serde::{Deserialize, Serialize};
 
-use crate::auth::{require_lead_or_admin, require_session_user};
+use crate::auth::{require_admin, require_lead_or_admin, require_session_user};
 use crate::error::ApiError;
 use crate::state::AppState;
 use crate::storage::{image_content_type, shift_signature_object_name};
@@ -109,6 +109,180 @@ pub struct CurrentShiftResponse {
 }
 
 #[derive(Serialize, sqlx::FromRow)]
+pub struct AdminLiveShiftRow {
+    shift_id: uuid::Uuid,
+    status: String,
+    building_name: String,
+    lead_user_name: String,
+    created_at: DateTime<Utc>,
+    started_at: Option<DateTime<Utc>>,
+    closed_at: Option<DateTime<Utc>>,
+    participants_ready_count: i64,
+    participants_invited_count: i64,
+    participants_count: i64,
+    malfunctioning_count: i64,
+    maintenances_synced: i64,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct AdminPastShiftRow {
+    shift_id: uuid::Uuid,
+    status: String,
+    date: DateTime<Utc>,
+    started_at: Option<DateTime<Utc>>,
+    finished_at: Option<DateTime<Utc>>,
+    building_name: String,
+    lead_user_name: String,
+    participants_count: i64,
+    malfunctioning_count: i64,
+    maintenances_count: i64,
+    avg_maintenance_minutes: Option<f64>,
+    report_ready: bool,
+}
+
+#[derive(Serialize)]
+pub struct AdminShiftListResponse {
+    live: Vec<AdminLiveShiftRow>,
+    past: Vec<AdminPastShiftRow>,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct AdminShiftParticipantRow {
+    user_id: uuid::Uuid,
+    full_name: String,
+    role: String,
+    status: String,
+    invited_at: DateTime<Utc>,
+    accepted_at: Option<DateTime<Utc>>,
+    cache_ready_at: Option<DateTime<Utc>>,
+    close_confirmed_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct AdminShiftMaintenanceRow {
+    maintenance_id: uuid::Uuid,
+    barcode: Option<String>,
+    kind: String,
+    brand: Option<String>,
+    model: Option<String>,
+    floor: Option<String>,
+    wing: Option<String>,
+    room: Option<String>,
+    location_description: Option<String>,
+    maintainer_user_name: String,
+    started_at: DateTime<Utc>,
+    ended_at: Option<DateTime<Utc>>,
+    followup_service_required: bool,
+    has_notes: bool,
+}
+
+#[derive(Serialize)]
+pub struct AdminShiftDetailResponse {
+    shift_id: uuid::Uuid,
+    status: String,
+    building_name: String,
+    building_address: String,
+    shift_lead_name: String,
+    created_at: DateTime<Utc>,
+    started_at: Option<DateTime<Utc>>,
+    closed_at: Option<DateTime<Utc>>,
+    finished_at: Option<DateTime<Utc>>,
+    avg_maintenance_pace_minutes: Option<f64>,
+    participants_count: i64,
+    total_maintenances: i64,
+    total_followup_service: i64,
+    report_url: Option<String>,
+    report_ready: bool,
+    participants: Vec<AdminShiftParticipantRow>,
+    maintenances: Vec<AdminShiftMaintenanceRow>,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct AdminMaintenancePhotoRow {
+    photo_id: uuid::Uuid,
+    photo_type: String,
+    photo_url: String,
+    capture_note: Option<String>,
+    captured_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct AdminMaintenanceDetailCore {
+    maintenance_id: uuid::Uuid,
+    shift_id: uuid::Uuid,
+    maintenance_status: String,
+    barcode: Option<String>,
+    kind: String,
+    brand: Option<String>,
+    model: Option<String>,
+    serial_number: Option<String>,
+    source_device_code: Option<String>,
+    maintainer_user_name: String,
+    started_at: DateTime<Utc>,
+    finished_at: Option<DateTime<Utc>>,
+    aborted_at: Option<DateTime<Utc>>,
+    malfunction_description: Option<String>,
+    followup_service_required: bool,
+    followup_service_reasons: Vec<String>,
+    followup_service_reason_other: Option<String>,
+    note: Option<String>,
+    building_name: String,
+    building_address: String,
+    floor: Option<String>,
+    wing: Option<String>,
+    room: Option<String>,
+    location_description: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct AdminMaintenanceDetailResponse {
+    maintenance_id: uuid::Uuid,
+    shift_id: uuid::Uuid,
+    maintenance_status: String,
+    barcode: Option<String>,
+    kind: String,
+    brand: Option<String>,
+    model: Option<String>,
+    serial_number: Option<String>,
+    source_device_code: Option<String>,
+    maintainer_user_name: String,
+    started_at: DateTime<Utc>,
+    finished_at: Option<DateTime<Utc>>,
+    aborted_at: Option<DateTime<Utc>>,
+    malfunction_description: Option<String>,
+    followup_service_required: bool,
+    followup_service_reasons: Vec<String>,
+    followup_service_reason_other: Option<String>,
+    note: Option<String>,
+    building_name: String,
+    building_address: String,
+    floor: Option<String>,
+    wing: Option<String>,
+    room: Option<String>,
+    location_description: Option<String>,
+    photos: Vec<AdminMaintenancePhotoRow>,
+}
+
+#[derive(sqlx::FromRow)]
+struct AdminShiftDetailCore {
+    shift_id: uuid::Uuid,
+    status: String,
+    building_name: String,
+    building_address: String,
+    shift_lead_name: String,
+    created_at: DateTime<Utc>,
+    started_at: Option<DateTime<Utc>>,
+    closed_at: Option<DateTime<Utc>>,
+    finished_at: Option<DateTime<Utc>>,
+    avg_maintenance_pace_minutes: Option<f64>,
+    participants_count: i64,
+    total_maintenances: i64,
+    total_followup_service: i64,
+    report_url: Option<String>,
+    report_ready: bool,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
 pub struct ShiftMaintenanceSummaryRow {
     maintenance_id: uuid::Uuid,
     maintainer_user_name: String,
@@ -171,6 +345,484 @@ pub async fn list_shift_invite_candidates(
     .map_err(ApiError::internal)?;
 
     Ok(Json(users))
+}
+
+pub async fn list_admin_shifts(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    require_admin(&user)?;
+
+    let live = sqlx::query_as::<_, AdminLiveShiftRow>(
+        r#"
+        SELECT
+            s.id AS shift_id,
+            s.status::text AS status,
+            b.name AS building_name,
+            lu.full_name AS lead_user_name,
+            s.created_at,
+            s.started_at,
+            s.close_requested_at AS closed_at,
+            (
+                SELECT COUNT(*)::bigint
+                FROM shift_participants sp
+                WHERE sp.tenant_id = s.tenant_id
+                  AND sp.shift_id = s.id
+                  AND sp.status IN ('CACHE_READY', 'CLOSE_CONFIRMED')
+            ) AS participants_ready_count,
+            (
+                SELECT COUNT(*)::bigint
+                FROM shift_participants sp
+                WHERE sp.tenant_id = s.tenant_id
+                  AND sp.shift_id = s.id
+            ) AS participants_invited_count,
+            (
+                SELECT COUNT(*)::bigint
+                FROM shift_participants sp
+                WHERE sp.tenant_id = s.tenant_id
+                  AND sp.shift_id = s.id
+                  AND sp.status <> 'DECLINED'
+            ) AS participants_count,
+            (
+                SELECT COUNT(*)::bigint
+                FROM maintenance_works mw
+                WHERE mw.tenant_id = s.tenant_id
+                  AND mw.shift_id = s.id
+                  AND mw.malfunction_description IS NOT NULL
+            ) AS malfunctioning_count,
+            (
+                SELECT COUNT(*)::bigint
+                FROM maintenance_works mw
+                WHERE mw.tenant_id = s.tenant_id
+                  AND mw.shift_id = s.id
+            ) AS maintenances_synced
+        FROM shifts s
+        JOIN buildings b
+          ON b.tenant_id = s.tenant_id
+         AND b.id = s.building_id
+        JOIN users lu
+          ON lu.tenant_id = s.tenant_id
+         AND lu.id = s.lead_user_id
+        WHERE s.tenant_id = $1
+          AND s.status IN ('INVITING', 'READY_TO_START', 'IN_PROGRESS', 'CLOSE_REQUESTED', 'READY_TO_COMMIT')
+        ORDER BY COALESCE(s.started_at, s.created_at) DESC, s.created_at DESC, s.id DESC
+        "#,
+    )
+    .bind(user.tenant_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let past = sqlx::query_as::<_, AdminPastShiftRow>(
+        r#"
+        SELECT
+            s.id AS shift_id,
+            s.status::text AS status,
+            COALESCE(s.started_at, s.created_at) AS date,
+            s.started_at,
+            COALESCE(s.committed_at, s.close_requested_at) AS finished_at,
+            b.name AS building_name,
+            lu.full_name AS lead_user_name,
+            (
+                SELECT COUNT(*)::bigint
+                FROM shift_participants sp
+                WHERE sp.tenant_id = s.tenant_id
+                  AND sp.shift_id = s.id
+                  AND sp.status <> 'DECLINED'
+            ) AS participants_count,
+            (
+                SELECT COUNT(*)::bigint
+                FROM maintenance_works mw
+                WHERE mw.tenant_id = s.tenant_id
+                  AND mw.shift_id = s.id
+                  AND mw.malfunction_description IS NOT NULL
+            ) AS malfunctioning_count,
+            (
+                SELECT COUNT(*)::bigint
+                FROM maintenance_works mw
+                WHERE mw.tenant_id = s.tenant_id
+                  AND mw.shift_id = s.id
+            ) AS maintenances_count,
+            (
+                SELECT ROUND(AVG(EXTRACT(EPOCH FROM (COALESCE(mw.finished_at, mw.aborted_at) - mw.started_at)) / 60.0)::numeric, 1)::double precision
+                FROM maintenance_works mw
+                WHERE mw.tenant_id = s.tenant_id
+                  AND mw.shift_id = s.id
+                  AND COALESCE(mw.finished_at, mw.aborted_at) IS NOT NULL
+            ) AS avg_maintenance_minutes,
+            (s.report_url IS NOT NULL) AS report_ready
+        FROM shifts s
+        JOIN buildings b
+          ON b.tenant_id = s.tenant_id
+         AND b.id = s.building_id
+        JOIN users lu
+          ON lu.tenant_id = s.tenant_id
+         AND lu.id = s.lead_user_id
+        WHERE s.tenant_id = $1
+          AND s.status IN ('COMMITTED', 'CANCELLED')
+        ORDER BY COALESCE(s.started_at, s.created_at) DESC, s.id DESC
+        "#,
+    )
+    .bind(user.tenant_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(Json(AdminShiftListResponse { live, past }))
+}
+
+pub async fn get_admin_shift_detail(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(shift_id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    require_admin(&user)?;
+
+    let detail = sqlx::query_as::<_, AdminShiftDetailCore>(
+        r#"
+        SELECT
+            s.id AS shift_id,
+            s.status::text AS status,
+            b.name AS building_name,
+            b.address AS building_address,
+            lu.full_name AS shift_lead_name,
+            s.created_at,
+            s.started_at,
+            s.close_requested_at AS closed_at,
+            s.committed_at AS finished_at,
+            (
+                SELECT ROUND(AVG(EXTRACT(EPOCH FROM (COALESCE(mw.finished_at, mw.aborted_at) - mw.started_at)) / 60.0)::numeric, 1)::double precision
+                FROM maintenance_works mw
+                WHERE mw.tenant_id = s.tenant_id
+                  AND mw.shift_id = s.id
+                  AND COALESCE(mw.finished_at, mw.aborted_at) IS NOT NULL
+            ) AS avg_maintenance_pace_minutes,
+            (
+                SELECT COUNT(*)::bigint
+                FROM shift_participants sp
+                WHERE sp.tenant_id = s.tenant_id
+                  AND sp.shift_id = s.id
+                  AND sp.status <> 'DECLINED'
+            ) AS participants_count,
+            (
+                SELECT COUNT(*)::bigint
+                FROM maintenance_works mw
+                WHERE mw.tenant_id = s.tenant_id
+                  AND mw.shift_id = s.id
+            ) AS total_maintenances,
+            (
+                SELECT COUNT(*)::bigint
+                FROM maintenance_works mw
+                WHERE mw.tenant_id = s.tenant_id
+                  AND mw.shift_id = s.id
+                  AND mw.followup_service_required = TRUE
+            ) AS total_followup_service,
+            s.report_url,
+            (s.report_url IS NOT NULL) AS report_ready
+        FROM shifts s
+        JOIN buildings b
+          ON b.tenant_id = s.tenant_id
+         AND b.id = s.building_id
+        JOIN users lu
+          ON lu.tenant_id = s.tenant_id
+         AND lu.id = s.lead_user_id
+        WHERE s.tenant_id = $1
+          AND s.id = $2
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(shift_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let Some(detail) = detail else {
+        return Err(ApiError::forbidden("shift not found for current tenant"));
+    };
+
+    let participants = sqlx::query_as::<_, AdminShiftParticipantRow>(
+        r#"
+        SELECT
+            sp.user_id,
+            u.full_name,
+            u.role::text AS role,
+            sp.status::text AS status,
+            sp.invited_at,
+            sp.accepted_at,
+            sp.cache_ready_at,
+            sp.close_confirmed_at
+        FROM shift_participants sp
+        JOIN users u
+          ON u.tenant_id = sp.tenant_id
+         AND u.id = sp.user_id
+        WHERE sp.tenant_id = $1
+          AND sp.shift_id = $2
+        ORDER BY
+            CASE WHEN sp.user_id = (
+                SELECT lead_user_id
+                FROM shifts
+                WHERE tenant_id = $1 AND id = $2
+            ) THEN 0 ELSE 1 END,
+            u.full_name ASC,
+            sp.user_id ASC
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(shift_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let maintenances = sqlx::query_as::<_, AdminShiftMaintenanceRow>(
+        r#"
+        SELECT
+            mw.id AS maintenance_id,
+            bc.code AS barcode,
+            d.kind::text AS kind,
+            d.brand,
+            d.model,
+            l.floor,
+            l.wing,
+            l.room,
+            l.location_description,
+            mu.full_name AS maintainer_user_name,
+            mw.started_at,
+            COALESCE(mw.finished_at, mw.aborted_at) AS ended_at,
+            mw.followup_service_required,
+            (mw.note IS NOT NULL AND NULLIF(BTRIM(mw.note), '') IS NOT NULL) AS has_notes
+        FROM maintenance_works mw
+        JOIN devices d
+          ON d.tenant_id = mw.tenant_id
+         AND d.id = mw.device_id
+        LEFT JOIN site_locations l
+          ON l.tenant_id = d.tenant_id
+         AND l.id = d.location_id
+        LEFT JOIN barcodes bc
+          ON bc.tenant_id = d.tenant_id
+         AND bc.device_id = d.id
+         AND bc.deactivated_at IS NULL
+        JOIN users mu
+          ON mu.tenant_id = mw.tenant_id
+         AND mu.id = mw.maintainer_user_id
+        WHERE mw.tenant_id = $1
+          AND mw.shift_id = $2
+        ORDER BY mw.started_at ASC, mw.id ASC
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(shift_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(Json(AdminShiftDetailResponse {
+        shift_id: detail.shift_id,
+        status: detail.status,
+        building_name: detail.building_name,
+        building_address: detail.building_address,
+        shift_lead_name: detail.shift_lead_name,
+        created_at: detail.created_at,
+        started_at: detail.started_at,
+        closed_at: detail.closed_at,
+        finished_at: detail.finished_at,
+        avg_maintenance_pace_minutes: detail.avg_maintenance_pace_minutes,
+        participants_count: detail.participants_count,
+        total_maintenances: detail.total_maintenances,
+        total_followup_service: detail.total_followup_service,
+        report_url: detail.report_url,
+        report_ready: detail.report_ready,
+        participants,
+        maintenances,
+    }))
+}
+
+pub async fn get_admin_maintenance_detail(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((shift_id, maintenance_id)): Path<(uuid::Uuid, uuid::Uuid)>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    require_admin(&user)?;
+
+    let detail = sqlx::query_as::<_, AdminMaintenanceDetailCore>(
+        r#"
+        SELECT
+            mw.id AS maintenance_id,
+            mw.shift_id,
+            mw.status::text AS maintenance_status,
+            bc.code AS barcode,
+            d.kind::text AS kind,
+            d.brand,
+            d.model,
+            d.serial_number,
+            d.source_device_code,
+            mu.full_name AS maintainer_user_name,
+            mw.started_at,
+            mw.finished_at,
+            mw.aborted_at,
+            mw.malfunction_description,
+            mw.followup_service_required,
+            ARRAY(SELECT UNNEST(mw.followup_service_reasons)::text) AS followup_service_reasons,
+            mw.followup_service_reason_other,
+            mw.note,
+            b.name AS building_name,
+            b.address AS building_address,
+            l.floor,
+            l.wing,
+            l.room,
+            l.location_description
+        FROM maintenance_works mw
+        JOIN shifts s
+          ON s.tenant_id = mw.tenant_id
+         AND s.id = mw.shift_id
+        JOIN devices d
+          ON d.tenant_id = mw.tenant_id
+         AND d.id = mw.device_id
+        LEFT JOIN site_locations l
+          ON l.tenant_id = d.tenant_id
+         AND l.id = d.location_id
+        LEFT JOIN barcodes bc
+          ON bc.tenant_id = d.tenant_id
+         AND bc.device_id = d.id
+         AND bc.deactivated_at IS NULL
+        JOIN buildings b
+          ON b.tenant_id = s.tenant_id
+         AND b.id = s.building_id
+        JOIN users mu
+          ON mu.tenant_id = mw.tenant_id
+         AND mu.id = mw.maintainer_user_id
+        WHERE mw.tenant_id = $1
+          AND mw.shift_id = $2
+          AND mw.id = $3
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(shift_id)
+    .bind(maintenance_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(|| ApiError::forbidden("maintenance not found for current tenant"))?;
+
+    let photos = sqlx::query_as::<_, AdminMaintenancePhotoRow>(
+        r#"
+        SELECT
+            mp.id AS photo_id,
+            mp.photo_type::text AS photo_type,
+            FORMAT(
+                '/api/admin/shifts/%s/maintenances/%s/photos/%s',
+                $2::text,
+                $3::text,
+                mp.id::text
+            ) AS photo_url,
+            mp.capture_note,
+            mp.created_at AS captured_at
+        FROM maintenance_photos mp
+        WHERE mp.tenant_id = $1
+          AND mp.maintenance_work_id = $3
+        ORDER BY mp.created_at ASC, mp.id ASC
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(shift_id)
+    .bind(maintenance_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(Json(AdminMaintenanceDetailResponse {
+        maintenance_id: detail.maintenance_id,
+        shift_id: detail.shift_id,
+        maintenance_status: detail.maintenance_status,
+        barcode: detail.barcode,
+        kind: detail.kind,
+        brand: detail.brand,
+        model: detail.model,
+        serial_number: detail.serial_number,
+        source_device_code: detail.source_device_code,
+        maintainer_user_name: detail.maintainer_user_name,
+        started_at: detail.started_at,
+        finished_at: detail.finished_at,
+        aborted_at: detail.aborted_at,
+        malfunction_description: detail.malfunction_description,
+        followup_service_required: detail.followup_service_required,
+        followup_service_reasons: detail.followup_service_reasons,
+        followup_service_reason_other: detail.followup_service_reason_other,
+        note: detail.note,
+        building_name: detail.building_name,
+        building_address: detail.building_address,
+        floor: detail.floor,
+        wing: detail.wing,
+        room: detail.room,
+        location_description: detail.location_description,
+        photos,
+    }))
+}
+
+pub async fn get_admin_maintenance_photo(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((shift_id, maintenance_id, photo_id)): Path<(uuid::Uuid, uuid::Uuid, uuid::Uuid)>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let storage = state
+        .storage
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("device photo storage is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    require_admin(&user)?;
+
+    let object_name = sqlx::query_scalar::<_, Option<String>>(
+        r#"
+        SELECT mp.photo_url
+        FROM maintenance_photos mp
+        JOIN maintenance_works mw
+          ON mw.tenant_id = mp.tenant_id
+         AND mw.id = mp.maintenance_work_id
+        WHERE mp.tenant_id = $1
+          AND mw.shift_id = $2
+          AND mw.id = $3
+          AND mp.id = $4
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(shift_id)
+    .bind(maintenance_id)
+    .bind(photo_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?
+    .flatten()
+    .ok_or_else(|| ApiError::forbidden("maintenance photo not found for current tenant"))?;
+
+    let metadata = Object::read(&storage.bucket, &object_name)
+        .await
+        .map_err(ApiError::internal)?;
+    let bytes = Object::download(&storage.bucket, &object_name)
+        .await
+        .map_err(ApiError::internal)?;
+    let content_type = metadata
+        .content_type
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+
+    Ok(([(header::CONTENT_TYPE, content_type)], bytes))
 }
 
 pub async fn get_current_shift_state(
@@ -553,7 +1205,9 @@ pub async fn commit_shift(
     };
 
     if lead_user_id != user.id {
-        return Err(ApiError::forbidden("only the shift lead can commit the shift"));
+        return Err(ApiError::forbidden(
+            "only the shift lead can commit the shift",
+        ));
     }
 
     if status != "READY_TO_COMMIT" {
@@ -653,7 +1307,9 @@ pub async fn accept_shift_invitation(
     .map_err(ApiError::internal)?;
 
     if updated.rows_affected() == 0 {
-        return Err(ApiError::forbidden("shift invitation not found for current user"));
+        return Err(ApiError::forbidden(
+            "shift invitation not found for current user",
+        ));
     }
 
     refresh_shift_ready_state_tx(&mut tx, user.tenant_id, shift_id).await?;
@@ -983,7 +1639,9 @@ pub async fn start_shift(
     };
 
     if lead_user_id != user.id {
-        return Err(ApiError::forbidden("only the shift lead can start the shift"));
+        return Err(ApiError::forbidden(
+            "only the shift lead can start the shift",
+        ));
     }
 
     let not_ready_count: i64 = sqlx::query_scalar(
@@ -1169,7 +1827,9 @@ pub async fn confirm_shift_close(
     .map_err(ApiError::internal)?;
 
     if updated.rows_affected() == 0 {
-        return Err(ApiError::forbidden("shift participant not eligible for close confirmation"));
+        return Err(ApiError::forbidden(
+            "shift participant not eligible for close confirmation",
+        ));
     }
 
     refresh_shift_close_state_tx(&mut tx, user.tenant_id, shift_id).await?;
@@ -1207,15 +1867,21 @@ pub async fn cancel_shift(
     .map_err(ApiError::internal)?;
 
     let Some((lead_user_id, status)) = shift_row else {
-        return Err(ApiError::forbidden("shift not found or cannot be cancelled"));
+        return Err(ApiError::forbidden(
+            "shift not found or cannot be cancelled",
+        ));
     };
 
     if lead_user_id != user.id {
-        return Err(ApiError::forbidden("shift not found or cannot be cancelled"));
+        return Err(ApiError::forbidden(
+            "shift not found or cannot be cancelled",
+        ));
     }
 
     if matches!(status.as_str(), "CANCELLED" | "COMMITTED") {
-        return Err(ApiError::conflict("shift is already closed and cannot be cancelled"));
+        return Err(ApiError::conflict(
+            "shift is already closed and cannot be cancelled",
+        ));
     }
 
     sqlx::query(
@@ -1245,7 +1911,9 @@ pub async fn cancel_shift(
     .map_err(ApiError::internal)?;
 
     if deleted_shift.rows_affected() == 0 {
-        return Err(ApiError::forbidden("shift not found or cannot be cancelled"));
+        return Err(ApiError::forbidden(
+            "shift not found or cannot be cancelled",
+        ));
     }
 
     tx.commit().await.map_err(ApiError::internal)?;

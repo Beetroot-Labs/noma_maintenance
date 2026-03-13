@@ -6,6 +6,8 @@ export default function LoginPage() {
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
   const { isAuthenticating, loginWithGoogle } = useDemoUser();
 
+  console.log("Google Client ID:", googleClientId);
+
   const handleGoogleCredential = async (credential: string) => {
     try {
       await loginWithGoogle(credential);
