@@ -1,8 +1,9 @@
-import { Card, CardContent, Typography, Box } from "@mui/material";
+import { useState } from "react";
+import { Box, Card, CardContent, ClickAwayListener, IconButton, Tooltip, Typography } from "@mui/material";
 import { Link } from "react-router-dom";
-import { Camera, Clock, MapPin } from "lucide-react";
+import { Camera, Clock, CloudAlert, CloudCog, CloudUpload, MapPin } from "lucide-react";
 import { getDeviceKindLabel } from "@noma/shared";
-import type { MaintenanceWork } from "@/types/maintenance";
+import type { MaintenanceWork, MaintenanceWorkSyncState } from "@/types/maintenance";
 import { StatusBadge } from "./StatusBadge";
 import { formatTime } from "@/lib/date";
 import { getDeviceKindIcon } from "@/lib/deviceKind";
@@ -12,15 +13,44 @@ interface WorkCardProps {
   to?: string;
   onClick?: () => void;
   hideAddress?: boolean;
+  syncState?: MaintenanceWorkSyncState;
 }
 
-export function WorkCard({ work, to, onClick, hideAddress = false }: WorkCardProps) {
+export function WorkCard({ work, to, onClick, hideAddress = false, syncState }: WorkCardProps) {
   const duration = work.endTime
     ? Math.round((work.endTime.getTime() - work.startTime.getTime()) / 60000)
     : null;
   const kindLabel = getDeviceKindLabel(work.hvacKind);
   const KindIcon = getDeviceKindIcon(work.hvacKind);
   const isClickable = Boolean(to || onClick);
+  const [isErrorTooltipOpen, setIsErrorTooltipOpen] = useState(false);
+
+  const effectiveSyncState =
+    syncState ?? {
+      status: work.status === "completed" ? "synced" : "retriable",
+      lastError: null,
+    };
+
+  const syncLabel =
+    effectiveSyncState.status === "synced"
+      ? "Feltöltve"
+      : effectiveSyncState.status === "error"
+        ? "Feltöltési hiba"
+        : work.status === "completed"
+          ? "Feltöltésre vár"
+          : "Nincs feltöltve";
+  const SyncIcon =
+    effectiveSyncState.status === "synced"
+      ? CloudUpload
+      : effectiveSyncState.status === "error"
+        ? CloudAlert
+        : CloudCog;
+  const syncColor =
+    effectiveSyncState.status === "synced"
+      ? "success.main"
+      : effectiveSyncState.status === "error"
+        ? "error.main"
+        : "warning.main";
 
   return (
     <Card
@@ -95,6 +125,47 @@ export function WorkCard({ work, to, onClick, hideAddress = false }: WorkCardPro
             <Typography variant="body2" color="text.secondary">
               {work.photos.length} fotó
             </Typography>
+          </Box>
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 1,
+              mt: 0.5,
+            }}
+          >
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1, color: syncColor }}>
+              <SyncIcon size={16} />
+              <Typography variant="body2" sx={{ color: syncColor }}>
+                {syncLabel}
+              </Typography>
+            </Box>
+            {effectiveSyncState.status === "error" && effectiveSyncState.lastError ? (
+              <ClickAwayListener onClickAway={() => setIsErrorTooltipOpen(false)}>
+                <Tooltip
+                  open={isErrorTooltipOpen}
+                  title={effectiveSyncState.lastError}
+                  placement="top-start"
+                  arrow
+                  disableFocusListener
+                  disableHoverListener
+                  disableTouchListener
+                >
+                  <IconButton
+                    size="small"
+                    aria-label="Utolsó szinkronhiba megnyitása"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setIsErrorTooltipOpen((open) => !open);
+                    }}
+                  >
+                    <CloudAlert size={16} />
+                  </IconButton>
+                </Tooltip>
+              </ClickAwayListener>
+            ) : null}
           </Box>
           {work.notes && (
             <Box sx={{ mt: 1, p: 1, bgcolor: "rgba(0, 0, 0, 0.04)", borderRadius: 1 }}>

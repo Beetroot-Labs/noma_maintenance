@@ -6,6 +6,7 @@ import {
   type OutboxSyncItemResult,
 } from "@noma/shared";
 import { getPhotoById } from "@/lib/photoStore";
+import type { MaintenanceWorkSyncState } from "@/types/maintenance";
 
 const DB_NAME = "noma-maintenance-state";
 const DB_VERSION = 2;
@@ -182,6 +183,68 @@ const isPendingSyncItem = (item: Pick<MaintenanceSyncOutboxRecord, "status" | "r
   item.status === "PENDING" ||
   item.status === "IN_PROGRESS" ||
   (item.status === "FAILED" && item.retryable);
+
+const getWorkIdForSyncRecord = (item: MaintenanceSyncOutboxRecord): string | null => {
+  if (item.mutation_type === "UPSERT_MAINTENANCE_WORK" || item.mutation_type === "FINALIZE_MAINTENANCE_WORK") {
+    return item.entity_id;
+  }
+
+  return item.payload_json?.photo?.workId ?? null;
+};
+
+export const getMaintenanceWorkSyncStateByWork = async (): Promise<
+  Record<string, MaintenanceWorkSyncState>
+> => {
+  const items = await getAllOutboxRecords();
+  const syncStateByWorkId = new Map<
+    string,
+    MaintenanceWorkSyncState & { updatedAt: string }
+  >();
+
+  for (const item of items) {
+    const workId = getWorkIdForSyncRecord(item);
+    if (!workId) {
+      continue;
+    }
+
+    const nextStatus =
+      item.status === "FAILED" && !item.retryable
+        ? "error"
+        : isPendingSyncItem(item)
+          ? "retriable"
+          : null;
+
+    if (!nextStatus) {
+      continue;
+    }
+
+    const existing = syncStateByWorkId.get(workId);
+    const shouldReplace =
+      !existing ||
+      (nextStatus === "error" && existing.status !== "error") ||
+      (existing.status === nextStatus && item.updated_at.localeCompare(existing.updatedAt) > 0);
+
+    if (!shouldReplace) {
+      continue;
+    }
+
+    syncStateByWorkId.set(workId, {
+      status: nextStatus,
+      lastError: item.last_error,
+      updatedAt: item.updated_at,
+    });
+  }
+
+  return Object.fromEntries(
+    Array.from(syncStateByWorkId.entries()).map(([workId, state]) => [
+      workId,
+      {
+        status: state.status,
+        lastError: state.lastError,
+      } satisfies MaintenanceWorkSyncState,
+    ]),
+  );
+};
 
 export const hasPendingMaintenanceSyncItems = async (): Promise<boolean> => {
   const items = await getAllOutboxRecords();

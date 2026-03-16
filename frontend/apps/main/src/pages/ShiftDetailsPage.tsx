@@ -352,8 +352,16 @@ export default function ShiftDetailsPage() {
                 </Box>
               </AccordionSummary>
               <AccordionDetails sx={{ pt: 0 }}>
-                <TableContainer sx={{ border: `1px solid ${appColors.border}`, borderRadius: 3, overflow: "hidden" }}>
-                  <Table>
+                <TableContainer
+                  sx={{
+                    border: `1px solid ${appColors.border}`,
+                    borderRadius: 3,
+                    maxWidth: "100%",
+                    overflowX: "auto",
+                    overflowY: "hidden",
+                  }}
+                >
+                  <Table sx={{ minWidth: 960 }}>
                     <TableHead>
                       <TableRow sx={{ bgcolor: "rgba(15, 23, 42, 0.04)" }}>
                         <TableCell>Név</TableCell>
@@ -398,8 +406,16 @@ export default function ShiftDetailsPage() {
                   Karbantartások
                 </Typography>
               </Box>
-              <TableContainer sx={{ border: `1px solid ${appColors.border}`, borderRadius: 3, overflow: "hidden" }}>
-                <Table>
+              <TableContainer
+                sx={{
+                  border: `1px solid ${appColors.border}`,
+                  borderRadius: 3,
+                  maxWidth: "100%",
+                  overflowX: "auto",
+                  overflowY: "hidden",
+                }}
+              >
+                <Table sx={{ minWidth: 960 }}>
                   <TableHead>
                     <TableRow sx={{ bgcolor: "rgba(15, 23, 42, 0.04)" }}>
                       <TableCell>Vonalkód</TableCell>

@@ -59,6 +59,11 @@ export interface MaintenanceWork {
   lastEdited?: Date;
 }
 
+export interface MaintenanceWorkSyncState {
+  status: "synced" | "retriable" | "error";
+  lastError: string | null;
+}
+
 export interface ShiftManager {
   name: string;
   phone: string;

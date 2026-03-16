@@ -303,11 +303,13 @@ export default function AdminShiftsPage() {
                 sx={{
                   border: `1px solid ${appColors.border}`,
                   borderRadius: 3,
-                  overflow: "hidden",
+                  maxWidth: "100%",
+                  overflowX: "auto",
+                  overflowY: "hidden",
                   bgcolor: appColors.card,
                 }}
               >
-                <Table>
+                <Table sx={{ minWidth: 900 }}>
                   <TableHead>
                     <TableRow sx={{ bgcolor: "rgba(15, 23, 42, 0.04)" }}>
                       <TableCell>Dátum</TableCell>

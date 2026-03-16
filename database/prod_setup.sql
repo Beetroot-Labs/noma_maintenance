@@ -15,7 +15,9 @@ user_seed(full_name, email, role_label, phone) AS (
         ('Nowacki Krisztián', 'krisztian@nomahutes.hu', 'ADMIN', '0036305546968'),
         ('Szalma Dániel', 'daniel@nomahutes.hu', 'ADMIN', '0036309232368'),
         ('Technikus Krisztián', 'nowkrisz@gmail.com', 'TECHNICIAN', '0036305546968'),
-        ('Technikus Dániel', 'szalmadaniel@gmail.com', 'TECHNICIAN', '0036309232368')
+        ('Technikus Dániel', 'szalmadaniel@gmail.com', 'TECHNICIAN', '0036309232368'),
+        ('Kovács Zoltán', 'kovask8@gmail.com', 'TECHNICIAN', '0036704226992'),
+        ('Surányi András', 'andras.suranyi@nomahutes.hu', 'LEAD_TECHNICIAN', '0036305864290')
 )
 INSERT INTO users (tenant_id, full_name, email, phone_number, role, email_verified_at)
 SELECT

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 
 export type ScannerProfileId = "1080P" | "720P";
 type ScannerFeedbackState = "SUCCESS" | "FAILURE" | null;
+type NumericCapabilityRange = { min?: number; max?: number; step?: number };
 
 export type Code128DetectionResult =
   | {
@@ -19,6 +20,50 @@ export type Code128DetectionResult =
 type UseCode128ScannerOptions = {
   containerRef: RefObject<HTMLDivElement>;
   onDetected: (scannedCode: string) => Promise<Code128DetectionResult> | Code128DetectionResult;
+};
+
+const getNumericCapabilityRange = (capability: unknown): NumericCapabilityRange | null => {
+  if (typeof capability === "number" && Number.isFinite(capability)) {
+    return { min: capability, max: capability };
+  }
+
+  if (!capability || typeof capability !== "object") {
+    return null;
+  }
+
+  const range = capability as NumericCapabilityRange;
+  const min = typeof range.min === "number" && Number.isFinite(range.min) ? range.min : undefined;
+  const max = typeof range.max === "number" && Number.isFinite(range.max) ? range.max : undefined;
+  const step =
+    typeof range.step === "number" && Number.isFinite(range.step) && range.step > 0
+      ? range.step
+      : undefined;
+
+  if (min === undefined && max === undefined) {
+    return null;
+  }
+
+  return { min, max, step };
+};
+
+const getPreferredZoomLevel = (capabilities: MediaTrackCapabilities | null) => {
+  const zoomRange = getNumericCapabilityRange(
+    (capabilities as MediaTrackCapabilities & { zoom?: unknown } | null)?.zoom,
+  );
+  if (!zoomRange) {
+    return null;
+  }
+
+  const minZoom = zoomRange.min ?? 1;
+  const maxZoom = zoomRange.max ?? minZoom;
+  const clampedZoom = Math.min(maxZoom, Math.max(minZoom, 2));
+
+  if (zoomRange.step) {
+    const snappedStepCount = Math.round((clampedZoom - minZoom) / zoomRange.step);
+    return minZoom + snappedStepCount * zoomRange.step;
+  }
+
+  return clampedZoom;
 };
 
 export const useCode128Scanner = ({
@@ -225,13 +270,10 @@ export const useCode128Scanner = ({
         : null;
     setFlashlightSupported(Boolean(capabilities?.torch));
 
-    const zoomCapabilities = capabilities as MediaTrackCapabilities & {
-      zoom?: { min?: number; max?: number };
-    };
-    const minZoom = zoomCapabilities.zoom?.min;
-    if (track && typeof minZoom === "number") {
+    const preferredZoomLevel = getPreferredZoomLevel(capabilities);
+    if (track && typeof preferredZoomLevel === "number") {
       void track
-        .applyConstraints({ advanced: [{ zoom: minZoom } as MediaTrackConstraintSet] })
+        .applyConstraints({ advanced: [{ zoom: preferredZoomLevel } as MediaTrackConstraintSet] })
         .catch(() => undefined);
     }
 
@@ -242,33 +284,6 @@ export const useCode128Scanner = ({
         })
         .catch(() => undefined);
     }
-  }, [containerRef]);
-
-  const tryBoostTrackToMaxResolution = useCallback(async () => {
-    const stream = containerRef.current?.querySelector("video")?.srcObject;
-    const track = stream instanceof MediaStream ? stream.getVideoTracks()[0] : null;
-    if (!track) {
-      return;
-    }
-    const capabilities =
-      typeof track.getCapabilities === "function"
-        ? (track.getCapabilities() as MediaTrackCapabilities & {
-            width?: { max?: number };
-            height?: { max?: number };
-          })
-        : null;
-    const maxWidth = capabilities?.width?.max;
-    const maxHeight = capabilities?.height?.max;
-    if (typeof maxWidth !== "number" || typeof maxHeight !== "number") {
-      return;
-    }
-
-    await track
-      .applyConstraints({
-        width: { exact: maxWidth },
-        height: { exact: maxHeight },
-      })
-      .catch(() => undefined);
   }, [containerRef]);
 
   const start = useCallback(
@@ -471,9 +486,6 @@ export const useCode128Scanner = ({
           Quagga.onProcessed(onProcessedHandler);
           Quagga.start();
           setIsStarting(false);
-          if (profile === "1080P") {
-            void tryBoostTrackToMaxResolution();
-          }
           window.setTimeout(() => {
             detectFlashlightSupport();
             if (flashlightWantedRef.current) {
@@ -517,7 +529,6 @@ export const useCode128Scanner = ({
       detectFlashlightSupport,
       setFeedbackState,
       stop,
-      tryBoostTrackToMaxResolution,
     ],
   );
 

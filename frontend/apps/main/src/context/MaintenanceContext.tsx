@@ -1,8 +1,9 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from "react";
 import type {
   FollowupServiceReason,
   MaintenancePhoto,
   MaintenanceWork,
+  MaintenanceWorkSyncState,
   ShiftManager,
 } from "@/types/maintenance";
 import { useDemoUser } from "@/context/DemoUserContext";
@@ -11,6 +12,7 @@ import { getCachedBuildingSnapshot } from "@noma/shared";
 import {
   clearMaintenanceState,
   enqueueMaintenanceFinalizeSync,
+  getMaintenanceWorkSyncStateByWork,
   hasPendingMaintenanceSyncItems,
   loadMaintenanceState,
   saveMaintenanceState,
@@ -25,6 +27,7 @@ interface MaintenanceContextType {
   currentWork: MaintenanceWork | null;
   todaysWorks: MaintenanceWork[];
   pastWorks: MaintenanceWork[];
+  workSyncStates: Record<string, MaintenanceWorkSyncState>;
   workdayClosed: boolean;
   shiftManager: ShiftManager;
   startMaintenance: (hvacId: string) => Promise<string | null>;
@@ -143,6 +146,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
   const [workdayClosed, setWorkdayClosed] = useState(false);
   const [isMaintenanceStateLoaded, setIsMaintenanceStateLoaded] = useState(false);
   const [hasPendingSync, setHasPendingSync] = useState(false);
+  const [workSyncStates, setWorkSyncStates] = useState<Record<string, MaintenanceWorkSyncState>>({});
   const [deviceLookup, setDeviceLookup] = useState<Map<string, DeviceCacheLookupEntry>>(
     new Map(),
   );
@@ -217,6 +221,20 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
 
     return { lookup, shiftId: currentShift.id };
   };
+
+  const refreshSyncState = useCallback(async () => {
+    try {
+      const [nextHasPendingSync, nextWorkSyncStates] = await Promise.all([
+        hasPendingMaintenanceSyncItems(),
+        getMaintenanceWorkSyncStateByWork(),
+      ]);
+      setHasPendingSync(nextHasPendingSync);
+      setWorkSyncStates(nextWorkSyncStates);
+    } catch {
+      setHasPendingSync(false);
+      setWorkSyncStates({});
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -344,29 +362,40 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
 
-    const refreshPendingSync = async () => {
+    if (!user?.tenantId || !user.id) {
+      setHasPendingSync(false);
+      setWorkSyncStates({});
+      return;
+    }
+
+    const refresh = async () => {
       try {
-        const nextHasPendingSync = await hasPendingMaintenanceSyncItems();
+        const [nextHasPendingSync, nextWorkSyncStates] = await Promise.all([
+          hasPendingMaintenanceSyncItems(),
+          getMaintenanceWorkSyncStateByWork(),
+        ]);
         if (!cancelled) {
           setHasPendingSync(nextHasPendingSync);
+          setWorkSyncStates(nextWorkSyncStates);
         }
       } catch {
         if (!cancelled) {
           setHasPendingSync(false);
+          setWorkSyncStates({});
         }
       }
     };
 
-    void refreshPendingSync();
+    void refresh();
     const intervalId = window.setInterval(() => {
-      void refreshPendingSync();
+      void refresh();
     }, 3_000);
 
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [user?.tenantId, user?.id]);
+  }, [refreshSyncState, user?.tenantId, user?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -508,6 +537,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     })
       .then(() => {
         triggerMaintenanceOfflineSyncNow();
+        void refreshSyncState();
       })
       .catch((error) => {
         console.warn("Nem sikerült sorba állítani a karbantartás lezárási szinkronizációját.", error);
@@ -769,6 +799,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     setTodaysWorks([]);
     setPastWorks([]);
     setWorkdayClosed(false);
+    void refreshSyncState();
     return didClearPhotos;
   };
 
@@ -782,6 +813,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
         currentWork,
         todaysWorks,
         pastWorks,
+        workSyncStates,
         workdayClosed,
         shiftManager,
         startMaintenance,
