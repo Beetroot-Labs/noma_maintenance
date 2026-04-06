@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import SigPad from "signature_pad";
 import {
   Alert,
   Box,
@@ -65,6 +66,12 @@ type SignaturePoint = {
 
 type SignatureStroke = SignaturePoint[];
 
+type SignaturePadHandle = {
+  isEmpty: () => boolean;
+  toStrokes: () => SignatureStroke[];
+  toPngBlob: () => Promise<Blob>;
+};
+
 const SIGNATURE_EXPORT_WIDTH = 1200;
 const SIGNATURE_EXPORT_HEIGHT = 360;
 
@@ -120,171 +127,144 @@ const readApiErrorMessage = async (response: Response, fallback: string) => {
   return fallback;
 };
 
-const hasSignatureStrokes = (strokes: SignatureStroke[]) =>
-  strokes.some((stroke) => stroke.length > 0);
-
-const signatureToPngBlob = async (strokes: SignatureStroke[]) => {
-  const canvas = document.createElement("canvas");
-  canvas.width = SIGNATURE_EXPORT_WIDTH;
-  canvas.height = SIGNATURE_EXPORT_HEIGHT;
-  const context = canvas.getContext("2d");
-
-  if (!context) {
-    throw new Error("Az aláírás képének előállítása nem sikerült.");
-  }
-
-  context.fillStyle = "#ffffff";
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.strokeStyle = appColors.primary;
-  context.lineWidth = 6;
-  context.lineCap = "round";
-  context.lineJoin = "round";
-
-  for (const stroke of strokes) {
-    if (stroke.length === 0) {
-      continue;
-    }
-
-    if (stroke.length === 1) {
-      const point = stroke[0];
-      context.beginPath();
-      context.arc((point.x / 100) * canvas.width, (point.y / 100) * canvas.height, 3, 0, Math.PI * 2);
-      context.fillStyle = appColors.primary;
-      context.fill();
-      continue;
-    }
-
-    context.beginPath();
-    stroke.forEach((point, index) => {
-      const x = (point.x / 100) * canvas.width;
-      const y = (point.y / 100) * canvas.height;
-      if (index === 0) {
-        context.moveTo(x, y);
-      } else {
-        context.lineTo(x, y);
-      }
-    });
-    context.stroke();
-  }
-
-  const blob = await new Promise<Blob | null>((resolve) => {
-    canvas.toBlob((nextBlob) => resolve(nextBlob), "image/png");
-  });
-
-  if (!blob) {
-    throw new Error("Az aláírás képének előállítása nem sikerült.");
-  }
-
-  return blob;
-};
+const hasSignatureStrokes = (padRef: React.RefObject<SignaturePadHandle | null>) =>
+  !(padRef.current?.isEmpty() ?? true);
 
 type SignaturePadProps = {
-  strokes: SignatureStroke[];
-  onChange: (strokes: SignatureStroke[]) => void;
+  onIsEmptyChange: (isEmpty: boolean) => void;
 };
 
-function SignaturePad({ strokes, onChange }: SignaturePadProps) {
-  const surfaceRef = useRef<HTMLDivElement | null>(null);
-  const pointerIdRef = useRef<number | null>(null);
-  const currentStrokeRef = useRef<SignatureStroke>([]);
-  const [draftStroke, setDraftStroke] = useState<SignatureStroke>([]);
+const SignaturePad = forwardRef<SignaturePadHandle, SignaturePadProps>(({ onIsEmptyChange }, ref) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const padRef = useRef<SigPad | null>(null);
+  const onIsEmptyChangeRef = useRef(onIsEmptyChange);
+  const [isEmpty, setIsEmpty] = useState(true);
 
-  const toPoint = (clientX: number, clientY: number): SignaturePoint | null => {
-    const surface = surfaceRef.current;
-    if (!surface) {
-      return null;
-    }
+  useEffect(() => {
+    onIsEmptyChangeRef.current = onIsEmptyChange;
+  });
 
-    const rect = surface.getBoundingClientRect();
-    if (!rect.width || !rect.height) {
-      return null;
-    }
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
 
-    return {
-      x: ((clientX - rect.left) / rect.width) * 100,
-      y: ((clientY - rect.top) / rect.height) * 100,
+    const initCanvas = () => {
+      const ratio = Math.max(window.devicePixelRatio || 1, 1);
+      canvas.width = canvas.offsetWidth * ratio;
+      canvas.height = canvas.offsetHeight * ratio;
+      canvas.getContext("2d")?.scale(ratio, ratio);
     };
+
+    initCanvas();
+
+    const pad = new SigPad(canvas, { penColor: appColors.primary });
+    padRef.current = pad;
+
+    const handleEndStroke = () => {
+      const empty = pad.isEmpty();
+      setIsEmpty(empty);
+      onIsEmptyChangeRef.current(empty);
+    };
+
+    pad.addEventListener("endStroke", handleEndStroke);
+
+    const observer = new ResizeObserver(() => {
+      const data = pad.toData();
+      initCanvas();
+      pad.clear();
+      pad.fromData(data);
+    });
+
+    if (containerRef.current) observer.observe(containerRef.current);
+
+    return () => {
+      pad.off();
+      observer.disconnect();
+    };
+  }, []);
+
+  useImperativeHandle(ref, () => ({
+    isEmpty: () => padRef.current?.isEmpty() ?? true,
+    toStrokes: () =>
+      (padRef.current?.toData() ?? []).map((group) =>
+        group.points.map((p) => ({ x: p.x, y: p.y })),
+      ),
+    toPngBlob: async (): Promise<Blob> => {
+      const pad = padRef.current;
+      const canvas = canvasRef.current;
+      if (!pad || !canvas) throw new Error("Az aláírás képének előállítása nem sikerült.");
+
+      const sourceWidth = canvas.offsetWidth;
+      const sourceHeight = canvas.offsetHeight;
+      const data = pad.toData();
+
+      const offscreen = document.createElement("canvas");
+      offscreen.width = SIGNATURE_EXPORT_WIDTH;
+      offscreen.height = SIGNATURE_EXPORT_HEIGHT;
+      const ctx = offscreen.getContext("2d");
+      if (!ctx) throw new Error("Az aláírás képének előállítása nem sikerült.");
+
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, offscreen.width, offscreen.height);
+      ctx.strokeStyle = appColors.primary;
+      ctx.fillStyle = appColors.primary;
+      ctx.lineWidth = 6;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+
+      const scaleX = SIGNATURE_EXPORT_WIDTH / sourceWidth;
+      const scaleY = SIGNATURE_EXPORT_HEIGHT / sourceHeight;
+
+      for (const group of data) {
+        const { points } = group;
+        if (points.length === 0) continue;
+        if (points.length === 1) {
+          ctx.beginPath();
+          ctx.arc(points[0].x * scaleX, points[0].y * scaleY, 3, 0, Math.PI * 2);
+          ctx.fill();
+          continue;
+        }
+        ctx.beginPath();
+        points.forEach((p, i) => {
+          if (i === 0) ctx.moveTo(p.x * scaleX, p.y * scaleY);
+          else ctx.lineTo(p.x * scaleX, p.y * scaleY);
+        });
+        ctx.stroke();
+      }
+
+      return new Promise<Blob>((resolve, reject) => {
+        offscreen.toBlob(
+          (blob) =>
+            blob
+              ? resolve(blob)
+              : reject(new Error("Az aláírás képének előállítása nem sikerült.")),
+          "image/png",
+        );
+      });
+    },
+  }));
+
+  const handleClear = () => {
+    padRef.current?.clear();
+    setIsEmpty(true);
+    onIsEmptyChangeRef.current(true);
   };
-
-  const commitCurrentStroke = () => {
-    if (currentStrokeRef.current.length === 0) {
-      setDraftStroke([]);
-      return;
-    }
-
-    onChange([...strokes, currentStrokeRef.current]);
-    currentStrokeRef.current = [];
-    setDraftStroke([]);
-  };
-
-  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    const nextPoint = toPoint(event.clientX, event.clientY);
-    if (!nextPoint) {
-      return;
-    }
-
-    pointerIdRef.current = event.pointerId;
-    currentStrokeRef.current = [nextPoint];
-    setDraftStroke([nextPoint]);
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (pointerIdRef.current !== event.pointerId) {
-      return;
-    }
-
-    const nextPoint = toPoint(event.clientX, event.clientY);
-    if (!nextPoint) {
-      return;
-    }
-
-    currentStrokeRef.current = [...currentStrokeRef.current, nextPoint];
-    setDraftStroke(currentStrokeRef.current);
-  };
-
-  const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (pointerIdRef.current !== event.pointerId) {
-      return;
-    }
-
-    commitCurrentStroke();
-    pointerIdRef.current = null;
-    event.currentTarget.releasePointerCapture(event.pointerId);
-  };
-
-  const handlePointerLeave = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (pointerIdRef.current !== event.pointerId) {
-      return;
-    }
-
-    commitCurrentStroke();
-    pointerIdRef.current = null;
-    event.currentTarget.releasePointerCapture(event.pointerId);
-  };
-
-  const allStrokes = draftStroke.length > 0 ? [...strokes, draftStroke] : strokes;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1.25 }}>
       <Box
-        ref={surfaceRef}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerUp}
-        onPointerLeave={handlePointerLeave}
+        ref={containerRef}
         sx={{
           position: "relative",
           minHeight: 180,
           border: `1px dashed ${appColors.border}`,
           borderRadius: 2,
           bgcolor: "background.paper",
-          touchAction: "none",
           overflow: "hidden",
         }}
       >
-        {allStrokes.length === 0 ? (
+        {isEmpty ? (
           <Box
             sx={{
               position: "absolute",
@@ -301,48 +281,20 @@ function SignaturePad({ strokes, onChange }: SignaturePadProps) {
             </Typography>
           </Box>
         ) : null}
-
-        <Box
-          component="svg"
-          viewBox="0 0 100 100"
-          preserveAspectRatio="none"
-          sx={{
-            display: "block",
-            width: "100%",
-            height: 180,
-          }}
-        >
-          {allStrokes.map((stroke, index) => {
-            if (stroke.length === 1) {
-              const point = stroke[0];
-              return <circle key={`point-${index}`} cx={point.x} cy={point.y} r="0.9" fill={appColors.primary} />;
-            }
-
-            return (
-              <polyline
-                key={`stroke-${index}`}
-                points={stroke.map((point) => `${point.x},${point.y}`).join(" ")}
-                fill="none"
-                stroke={appColors.primary}
-                strokeWidth="1.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            );
-          })}
-        </Box>
+        <canvas
+          ref={canvasRef}
+          style={{ display: "block", width: "100%", height: 180, touchAction: "none" }}
+        />
       </Box>
       <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 2 }}>
-        <Typography variant="caption" color="text.secondary">
-          Az aláírás jelenleg csak helyben marad, nem kerül feltöltésre.
-        </Typography>
-        <Button variant="text" color="inherit" onClick={() => onChange([])}>
+        <Button variant="text" color="inherit" onClick={handleClear}>
           Törlés
         </Button>
       </Box>
     </Box>
   );
-}
+});
+SignaturePad.displayName = "SignaturePad";
 
 export default function ShiftSummaryPage() {
   const navigate = useNavigate();
@@ -353,7 +305,8 @@ export default function ShiftSummaryPage() {
   const [error, setError] = useState<string | null>(null);
   const [referentName, setReferentName] = useState("");
   const [referentRole, setReferentRole] = useState("");
-  const [signatureStrokes, setSignatureStrokes] = useState<SignatureStroke[]>([]);
+  const signaturePadRef = useRef<SignaturePadHandle>(null);
+  const [isSignatureEmpty, setIsSignatureEmpty] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
@@ -408,7 +361,7 @@ export default function ShiftSummaryPage() {
   const canSubmit =
     referentName.trim().length > 0 &&
     referentRole.trim().length > 0 &&
-    hasSignatureStrokes(signatureStrokes) &&
+    !isSignatureEmpty &&
     !isSubmitting;
 
   const handleCommitShift = async () => {
@@ -426,14 +379,14 @@ export default function ShiftSummaryPage() {
       return;
     }
 
-    if (!hasSignatureStrokes(signatureStrokes)) {
+    if (!hasSignatureStrokes(signaturePadRef)) {
       toast.error("A műszak véglegesítéséhez aláírás szükséges.");
       return;
     }
 
     setIsSubmitting(true);
     try {
-      const signatureBlob = await signatureToPngBlob(signatureStrokes);
+      const signatureBlob = await signaturePadRef.current!.toPngBlob();
       const uploadResponse = await fetch(`/api/shifts/${currentShift.id}/signature-image`, {
         method: "PUT",
         credentials: "include",
@@ -465,7 +418,7 @@ export default function ShiftSummaryPage() {
         body: JSON.stringify({
           reference_person_name: referentName.trim(),
           reference_person_role: referentRole.trim(),
-          signature_strokes: signatureStrokes,
+          signature_strokes: signaturePadRef.current!.toStrokes(),
           signature_image_url: uploadPayload.signature_image_url,
         }),
       });
@@ -622,7 +575,7 @@ export default function ShiftSummaryPage() {
                   />
                 </Box>
 
-                <SignaturePad strokes={signatureStrokes} onChange={setSignatureStrokes} />
+                <SignaturePad ref={signaturePadRef} onIsEmptyChange={setIsSignatureEmpty} />
 
                 <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
                   <Button
