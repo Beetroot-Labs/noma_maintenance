@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Autocomplete,
@@ -17,6 +17,7 @@ import { ArrowLeft, ArrowRight, Flashlight, FlashlightOff, Keyboard, ScanBarcode
 import {
   getCachedBuildingSnapshot,
   getLatestCachedBuildingSnapshotForTenant,
+  rebuildBuildingSnapshot,
   useCode128Scanner,
   validateNomaBarcode,
 } from "@noma/shared";
@@ -26,6 +27,9 @@ import { appColors } from "@/theme";
 import { useMaintenance } from "@/context/MaintenanceContext";
 import { toast } from "@/lib/toast";
 import { useDemoUser } from "@/context/DemoUserContext";
+import { pruneNonRetryableMaintenanceSyncItems } from "@/lib/maintenanceStore";
+
+const REFRESH_CACHE_ON_SCAN = import.meta.env.VITE_REFRESH_CACHE_ON_SCAN === "true";
 
 export default function NewMaintenancePage() {
   const navigate = useNavigate();
@@ -111,44 +115,51 @@ export default function NewMaintenancePage() {
     return queryIndex === query.length;
   };
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadBarcodeOptions = useCallback(async () => {
+    if (!user?.tenantId) {
+      setBarcodeOptions([]);
+      setIsLoadingBarcodeOptions(false);
+      return;
+    }
 
-    const loadBarcodeOptions = async () => {
-      if (!user?.tenantId) {
-        setBarcodeOptions([]);
-        setIsLoadingBarcodeOptions(false);
-        return;
-      }
-
-      setIsLoadingBarcodeOptions(true);
-      try {
-        const snapshot = currentShift?.building_id
-          ? await getCachedBuildingSnapshot(user.tenantId, currentShift.building_id)
-          : await getLatestCachedBuildingSnapshotForTenant(user.tenantId);
-        const codes = Array.from(
-          new Set(
-            (snapshot?.devices ?? [])
-              .map((device) => device.code?.trim() ?? "")
-              .filter((code): code is string => code.length > 0),
-          ),
-        ).sort((a, b) => a.localeCompare(b, "hu-HU"));
-
-        if (!cancelled) {
-          setBarcodeOptions(codes);
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoadingBarcodeOptions(false);
-        }
-      }
-    };
-
-    void loadBarcodeOptions();
-    return () => {
-      cancelled = true;
-    };
+    setIsLoadingBarcodeOptions(true);
+    try {
+      const snapshot = currentShift?.building_id
+        ? await getCachedBuildingSnapshot(user.tenantId, currentShift.building_id)
+        : await getLatestCachedBuildingSnapshotForTenant(user.tenantId);
+      const codes = Array.from(
+        new Set(
+          (snapshot?.devices ?? [])
+            .map((device) => device.code?.trim() ?? "")
+            .filter((code): code is string => code.length > 0),
+        ),
+      ).sort((a, b) => a.localeCompare(b, "hu-HU"));
+      setBarcodeOptions(codes);
+    } finally {
+      setIsLoadingBarcodeOptions(false);
+    }
   }, [currentShift?.building_id, user?.tenantId]);
+
+  useEffect(() => {
+    void loadBarcodeOptions();
+  }, [loadBarcodeOptions]);
+
+  useEffect(() => {
+    if (!scannerOpen || !REFRESH_CACHE_ON_SCAN || !user?.tenantId || !currentShift?.building_id) {
+      return;
+    }
+    const tenantId = user.tenantId;
+    const buildingId = currentShift.building_id;
+    void (async () => {
+      try {
+        await pruneNonRetryableMaintenanceSyncItems();
+        await rebuildBuildingSnapshot(tenantId, buildingId);
+        await loadBarcodeOptions();
+      } catch {
+        // Silent — the user is not blocked from scanning with the existing cache.
+      }
+    })();
+  }, [scannerOpen, user?.tenantId, currentShift?.building_id, loadBarcodeOptions]);
 
   useEffect(() => {
     if (!scannerOpen) {
