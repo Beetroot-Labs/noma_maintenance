@@ -25,7 +25,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { Barcode, Camera, Flashlight, FlashlightOff, ImagePlus, MessageCircleMore, ScanBarcode, Trash2, TriangleAlert, X } from "lucide-react";
+import { Barcode, Camera, Flashlight, FlashlightOff, ImagePlus, MessageCircleMore, Repeat, ScanBarcode, Trash2, TriangleAlert, X } from "lucide-react";
 import { deviceKindLabels, getDeviceKindLabel, useAuth, useCode128Scanner, validateNomaBarcode } from "@noma/shared";
 import { ChangeEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -566,6 +566,15 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
                             <Box sx={{ color: "error.main", display: "inline-flex" }}>
                               <TriangleAlert size={16} aria-label="Vonalkód szinkronhiba" />
                             </Box>
+                          ) : device.code != null ? (
+                            <IconButton
+                              size="small"
+                              onClick={handleAssignBarcode}
+                              aria-label="Vonalkód újraolvasása"
+                              sx={{ p: 0.25 }}
+                            >
+                              <Repeat size={16} />
+                            </IconButton>
                           ) : null
                         }
                         helperText={barcodeHasSyncError ? device.codeSyncError : null}

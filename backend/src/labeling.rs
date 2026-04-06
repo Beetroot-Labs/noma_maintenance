@@ -579,7 +579,6 @@ pub async fn assign_labeling_device_barcode(
         FROM barcodes
         WHERE tenant_id = $1
           AND code = $2
-          AND deactivated_at IS NULL
         "#,
     )
     .bind(user.tenant_id)
@@ -592,7 +591,7 @@ pub async fn assign_labeling_device_barcode(
         && existing_device_id != device_id
     {
         return Err(ApiError::conflict(
-            "barcode is already assigned to another device",
+            "barcode has already been used and cannot be reassigned",
         ));
     }
 
