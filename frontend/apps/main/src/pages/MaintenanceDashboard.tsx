@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Alert,
@@ -352,13 +352,11 @@ export default function MaintenanceDashboard() {
   const navigate = useNavigate();
   const { user } = useDemoUser();
   const { todaysWorks, canConfirmShiftClose, workSyncStates } = useMaintenance();
-  const { currentShift, refreshCurrentShift } = useShift();
+  const { currentShift } = useShift();
   const [activeTab, setActiveTab] = useState<DashboardTabValue>("mine");
-  const [isConfirmingClose, setIsConfirmingClose] = useState(false);
   const [allWorksPayload, setAllWorksPayload] = useState<ShiftMaintenanceSummaryPayload | null>(null);
   const [isLoadingAllWorks, setIsLoadingAllWorks] = useState(false);
   const [allWorksError, setAllWorksError] = useState<string | null>(null);
-  const attemptedCloseConfirmRef = useRef<string | null>(null);
 
   const orderedOwnWorks = useMemo(
     () => [...todaysWorks].sort(compareWorksByCompletionAndStart),
@@ -431,44 +429,6 @@ export default function MaintenanceDashboard() {
       cancelled = true;
     };
   }, [currentShift?.id]);
-
-  useEffect(() => {
-    if (
-      !currentShift ||
-      !navigator.onLine ||
-      !canConfirmShiftClose ||
-      currentShift.my_participant_status === "CLOSE_CONFIRMED" ||
-      (currentShift.status !== "CLOSE_REQUESTED" && currentShift.status !== "READY_TO_COMMIT")
-    ) {
-      attemptedCloseConfirmRef.current = null;
-      return;
-    }
-
-    const requestKey = `${currentShift.id}:${currentShift.status}:${currentShift.my_participant_status}`;
-    if (attemptedCloseConfirmRef.current === requestKey || isConfirmingClose) {
-      return;
-    }
-
-    attemptedCloseConfirmRef.current = requestKey;
-    setIsConfirmingClose(true);
-
-    void fetch(`/api/shifts/${currentShift.id}/close-confirm`, {
-      method: "POST",
-      credentials: "include",
-    })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error("Nem sikerült megerősíteni a műszak lezárását.");
-        }
-        await refreshCurrentShift();
-      })
-      .catch(() => {
-        attemptedCloseConfirmRef.current = null;
-      })
-      .finally(() => {
-        setIsConfirmingClose(false);
-      });
-  }, [canConfirmShiftClose, currentShift, isConfirmingClose, refreshCurrentShift]);
 
   return (
     <Layout>

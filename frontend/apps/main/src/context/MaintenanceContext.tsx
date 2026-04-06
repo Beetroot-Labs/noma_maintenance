@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, ReactNode } from "react";
 import type {
   FollowupServiceReason,
   MaintenancePhoto,
@@ -139,7 +139,7 @@ const filterWorksForShift = (
 
 export function MaintenanceProvider({ children }: { children: ReactNode }) {
   const { user } = useDemoUser();
-  const { currentShift, isLoading: isShiftLoading } = useShift();
+  const { currentShift, isLoading: isShiftLoading, refreshCurrentShift } = useShift();
   const [currentWork, setCurrentWork] = useState<MaintenanceWork | null>(null);
   const [todaysWorks, setTodaysWorks] = useState<MaintenanceWork[]>([]);
   const [pastWorks, setPastWorks] = useState<MaintenanceWork[]>([]);
@@ -732,6 +732,9 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
 
     if (workToArchive) {
       queueMaintenanceFinalizeSync(workToArchive);
+      // Optimistically mark pending sync so canConfirmShiftClose stays false
+      // until the outbox record is actually flushed to the backend.
+      setHasPendingSync(true);
     }
 
     if (currentWork?.id === workId) {
@@ -806,6 +809,47 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
   const hasOpenMaintenance =
     Boolean(currentWork) || todaysWorks.some((work) => work.status === "in-progress");
   const canConfirmShiftClose = !hasOpenMaintenance && !hasPendingSync;
+
+  const attemptedCloseConfirmRef = useRef<string | null>(null);
+  const [isConfirmingClose, setIsConfirmingClose] = useState(false);
+
+  useEffect(() => {
+    if (
+      !currentShift ||
+      !navigator.onLine ||
+      !canConfirmShiftClose ||
+      currentShift.my_participant_status === "CLOSE_CONFIRMED" ||
+      (currentShift.status !== "CLOSE_REQUESTED" && currentShift.status !== "READY_TO_COMMIT")
+    ) {
+      attemptedCloseConfirmRef.current = null;
+      return;
+    }
+
+    const requestKey = `${currentShift.id}:${currentShift.status}:${currentShift.my_participant_status}`;
+    if (attemptedCloseConfirmRef.current === requestKey || isConfirmingClose) {
+      return;
+    }
+
+    attemptedCloseConfirmRef.current = requestKey;
+    setIsConfirmingClose(true);
+
+    void fetch(`/api/shifts/${currentShift.id}/close-confirm`, {
+      method: "POST",
+      credentials: "include",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error("Nem sikerült megerősíteni a műszak lezárását.");
+        }
+        await refreshCurrentShift();
+      })
+      .catch(() => {
+        attemptedCloseConfirmRef.current = null;
+      })
+      .finally(() => {
+        setIsConfirmingClose(false);
+      });
+  }, [canConfirmShiftClose, currentShift, isConfirmingClose, refreshCurrentShift]);
 
   return (
     <MaintenanceContext.Provider

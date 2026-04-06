@@ -305,7 +305,7 @@ export default function MyCurrentShiftPage() {
     return () => {
       cancelled = true;
     };
-  }, [currentShift?.id, user?.id]);
+  }, [currentShift?.id, currentShift?.status, user?.id]);
 
   const loadInviteCandidates = async () => {
     const response = await fetch("/api/users/invite-candidates", {
@@ -453,7 +453,6 @@ export default function MyCurrentShiftPage() {
       const nextPayload = await loadShiftDetails();
       setPayload(nextPayload);
       toast.success("A műszak lezárása kezdeményezve.");
-      navigate("/dashboard");
     } catch (err) {
       const message = toActionErrorMessage(err, backendUnavailableMessage);
       toast.error(message);
@@ -640,6 +639,11 @@ export default function MyCurrentShiftPage() {
               >
                 Műszak lezárása
               </Button>
+            ) : null}
+            {isShiftLead && payload.status === "CLOSE_REQUESTED" && !areAllParticipantsConfirmed ? (
+              <Alert severity="info" sx={{ mt: 1 }}>
+                A műszak lezárása folyamatban van. A műszak összegzéséhez minden résztvevő alkalmazásának szinkronizálnia kell. Új karbantartás nem kezdeményezhető.
+              </Alert>
             ) : null}
             {isShiftLead && areAllParticipantsConfirmed ? (
               <Button
