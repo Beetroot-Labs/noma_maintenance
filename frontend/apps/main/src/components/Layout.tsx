@@ -1,7 +1,8 @@
-import { ReactNode, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   Avatar,
+  Badge,
   Box,
   Container,
   Divider,
@@ -20,6 +21,7 @@ import {
 import { alpha, useTheme } from "@mui/material/styles";
 import {
   CircleUser,
+  ClipboardList,
   HardHat,
   LogOut,
   Menu as MenuIcon,
@@ -51,12 +53,28 @@ export function Layout({ children }: LayoutProps) {
   const { currentShift } = useShift();
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
   const isAdminView = location.pathname.startsWith("/admin");
   const canAccessAdminView = user?.role === "admin";
+  const isLeadOrAdmin = user?.role === "admin" || user?.role === "lead_technician";
   const showBottomBar = Boolean(currentShift) && !isAdminView;
-  const canStartNewMaintenance =
-    currentShift?.status !== "CLOSE_REQUESTED" && currentShift?.status !== "READY_TO_COMMIT";
+  const canStartNewMaintenance = currentShift?.status !== "CLOSE_REQUESTED";
   const startActionDisabled = !currentWork && !canStartNewMaintenance;
+
+  useEffect(() => {
+    if (!isLeadOrAdmin) return;
+    let cancelled = false;
+    const load = () => {
+      fetch("/api/shifts/pending", { credentials: "include", cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : []))
+        .then((rows: unknown[]) => { if (!cancelled) setPendingCount(rows.length); })
+        .catch(() => {});
+    };
+    load();
+    const id = window.setInterval(load, 30_000);
+    return () => { cancelled = true; window.clearInterval(id); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLeadOrAdmin]);
 
   const roleLabel = {
     admin: "adminisztrátor",
@@ -318,6 +336,28 @@ export function Layout({ children }: LayoutProps) {
                 <ListItemText primary={label} />
               </ListItemButton>
             ))}
+            {isLeadOrAdmin ? (
+              <ListItemButton
+                component={Link}
+                to="/pending-worksheets"
+                onClick={handleDrawerClose}
+                selected={location.pathname === "/pending-worksheets"}
+                sx={{
+                  borderRadius: 2,
+                  "&.Mui-selected": {
+                    bgcolor: alpha(appColors.accent, 0.15),
+                    color: appColors.accent,
+                  },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 36, color: "inherit" }}>
+                  <Badge badgeContent={pendingCount} color="error">
+                    <ClipboardList size={18} />
+                  </Badge>
+                </ListItemIcon>
+                <ListItemText primary="Munkalapok" />
+              </ListItemButton>
+            ) : null}
           </List>
           <Divider sx={{ borderColor: appColors.border, mt: 1 }} />
           <List sx={{ px: 1 }}>

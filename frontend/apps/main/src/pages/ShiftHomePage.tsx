@@ -1,6 +1,7 @@
+import { useEffect, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
-import { Box, Button, Card, CardActionArea, CardContent, CircularProgress, Typography } from "@mui/material";
-import { ChevronRight, HardHat, Plus, Radio, Users } from "lucide-react";
+import { Badge, Box, Button, Card, CardActionArea, CardContent, CircularProgress, Typography } from "@mui/material";
+import { ChevronRight, ClipboardList, HardHat, Plus, Radio, Users } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import { useDemoUser } from "@/context/DemoUserContext";
 import { useShift } from "@/context/ShiftContext";
@@ -18,6 +19,16 @@ export default function ShiftHomePage() {
   const navigate = useNavigate();
   const { user } = useDemoUser();
   const { currentShift, isLoading } = useShift();
+  const isLeadOrAdmin = user?.role === "admin" || user?.role === "lead_technician";
+  const [pendingCount, setPendingCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!isLeadOrAdmin) return;
+    fetch("/api/shifts/pending", { credentials: "include", cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows: unknown[]) => setPendingCount(rows.length))
+      .catch(() => {});
+  }, [isLeadOrAdmin]);
 
   if (isLoading) {
     return (
@@ -31,13 +42,12 @@ export default function ShiftHomePage() {
 
   if (
     currentShift?.status === "IN_PROGRESS" ||
-    currentShift?.status === "CLOSE_REQUESTED" ||
-    currentShift?.status === "READY_TO_COMMIT"
+    currentShift?.status === "CLOSE_REQUESTED"
   ) {
     return <Navigate to="/dashboard" replace />;
   }
 
-  const canStartShift = user?.role === "admin" || user?.role === "lead_technician";
+  const canStartShift = isLeadOrAdmin;
 
   return (
     <Layout>
@@ -120,6 +130,46 @@ export default function ShiftHomePage() {
             </CardActionArea>
           </Card>
         )}
+
+        {isLeadOrAdmin ? (
+          <Card sx={{ boxShadow: "0 14px 36px rgba(15, 23, 42, 0.08)" }}>
+            <CardActionArea onClick={() => navigate("/pending-worksheets")}>
+              <CardContent sx={{ display: "flex", alignItems: "center", gap: 2, py: 3 }}>
+                <Box
+                  sx={{
+                    width: 56,
+                    height: 56,
+                    display: "grid",
+                    placeItems: "center",
+                    borderRadius: "50%",
+                    bgcolor: pendingCount ? "rgba(239, 164, 35, 0.14)" : "rgba(15, 23, 42, 0.05)",
+                    color: pendingCount ? appColors.accentForeground : appColors.primary,
+                    flexShrink: 0,
+                  }}
+                >
+                  <Badge badgeContent={pendingCount ?? 0} color="error">
+                    <ClipboardList size={24} />
+                  </Badge>
+                </Box>
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                    Aláírandó munkalapok
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {pendingCount === null
+                      ? "Betöltés..."
+                      : pendingCount === 0
+                        ? "Nincs aláírandó munkalap."
+                        : pendingCount === 1
+                          ? "1 műszak munkalapja vár aláírásra."
+                          : `${pendingCount} műszak munkalapja vár aláírásra.`}
+                  </Typography>
+                </Box>
+                <ChevronRight size={20} color={appColors.primary} />
+              </CardContent>
+            </CardActionArea>
+          </Card>
+        ) : null}
       </Box>
     </Layout>
   );

@@ -33,10 +33,10 @@ use crate::maintenance::{sync_maintenance_work, upload_maintenance_photo};
 use crate::shifts::{
     accept_shift_invitation, add_shift_participant, cancel_shift, commit_shift,
     confirm_shift_close, create_shift, get_admin_maintenance_detail, get_admin_maintenance_photo,
-    get_admin_shift_detail, get_current_shift_state, get_shift_maintenance_summary,
-    get_shift_waiting_room, list_admin_shifts, list_shift_invite_candidates,
-    mark_shift_cache_ready, remove_shift_participant, request_shift_close, start_shift,
-    upload_shift_signature,
+    get_admin_shift_detail, get_current_shift_state, get_pending_worksheets,
+    get_shift_maintenance_summary, get_shift_waiting_room, list_admin_shifts,
+    list_shift_invite_candidates, mark_shift_cache_ready, remove_shift_participant,
+    request_shift_close, start_shift, upload_shift_signature,
 };
 use crate::state::{AppState, AuthConfig, load_google_client_ids, load_storage_config};
 
@@ -143,6 +143,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/shifts", post(create_shift))
         .route("/shifts/current", get(get_current_shift_state))
+        .route("/shifts/pending", get(get_pending_worksheets))
         .route(
             "/shifts/{shift_id}/participants",
             post(add_shift_participant),

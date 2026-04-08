@@ -825,6 +825,56 @@ pub async fn get_admin_maintenance_photo(
     Ok(([(header::CONTENT_TYPE, content_type)], bytes))
 }
 
+#[derive(Serialize, sqlx::FromRow)]
+pub struct PendingWorksheetRow {
+    shift_id: uuid::Uuid,
+    building_name: String,
+    building_address: String,
+    lead_user_name: String,
+    started_at: Option<DateTime<Utc>>,
+    close_requested_at: Option<DateTime<Utc>>,
+}
+
+pub async fn get_pending_worksheets(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    require_lead_or_admin(&user)?;
+
+    let rows = sqlx::query_as::<_, PendingWorksheetRow>(
+        r#"
+        SELECT
+            s.id AS shift_id,
+            b.name AS building_name,
+            b.address AS building_address,
+            lu.full_name AS lead_user_name,
+            s.started_at,
+            s.close_requested_at
+        FROM shifts s
+        JOIN buildings b
+          ON b.tenant_id = s.tenant_id
+         AND b.id = s.building_id
+        JOIN users lu
+          ON lu.tenant_id = s.tenant_id
+         AND lu.id = s.lead_user_id
+        WHERE s.tenant_id = $1
+          AND s.status = 'READY_TO_COMMIT'
+        ORDER BY s.close_requested_at DESC NULLS LAST, s.created_at DESC
+        "#,
+    )
+    .bind(user.tenant_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(Json(rows))
+}
+
 pub async fn get_current_shift_state(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -857,10 +907,10 @@ pub async fn get_current_shift_state(
          AND lu.id = s.lead_user_id
         WHERE sp.tenant_id = $1
           AND sp.user_id = $2
-          AND s.status IN ('INVITING', 'READY_TO_START', 'IN_PROGRESS', 'CLOSE_REQUESTED', 'READY_TO_COMMIT')
+          AND s.status IN ('INVITING', 'READY_TO_START', 'IN_PROGRESS', 'CLOSE_REQUESTED')
         ORDER BY
           CASE
-            WHEN s.status IN ('IN_PROGRESS', 'CLOSE_REQUESTED', 'READY_TO_COMMIT') THEN 0
+            WHEN s.status IN ('IN_PROGRESS', 'CLOSE_REQUESTED') THEN 0
             ELSE 1
           END,
           s.created_at DESC
@@ -886,6 +936,7 @@ pub async fn get_shift_maintenance_summary(
         .as_ref()
         .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
     let user = require_session_user(&state, &headers).await?;
+    require_lead_or_admin(&user)?;
 
     let shift_core = sqlx::query_as::<_, (String, String, uuid::Uuid, String)>(
         r#"
@@ -895,10 +946,6 @@ pub async fn get_shift_maintenance_summary(
             s.lead_user_id,
             lu.full_name AS lead_user_name
         FROM shifts s
-        JOIN shift_participants sp
-          ON sp.tenant_id = s.tenant_id
-         AND sp.shift_id = s.id
-         AND sp.user_id = $3
         JOIN buildings b
           ON b.tenant_id = s.tenant_id
          AND b.id = s.building_id
@@ -911,20 +958,13 @@ pub async fn get_shift_maintenance_summary(
     )
     .bind(user.tenant_id)
     .bind(shift_id)
-    .bind(user.id)
     .fetch_optional(pool)
     .await
     .map_err(ApiError::internal)?;
 
     let Some((shift_status, building_name, lead_user_id, lead_user_name)) = shift_core else {
-        return Err(ApiError::forbidden("shift not found for current user"));
+        return Err(ApiError::forbidden("shift not found for current tenant"));
     };
-
-    if lead_user_id != user.id {
-        return Err(ApiError::forbidden(
-            "only the shift lead can view the maintenance summary",
-        ));
-    }
 
     let maintenances = sqlx::query_as::<_, ShiftMaintenanceSummaryRow>(
         r#"
@@ -1077,6 +1117,7 @@ pub async fn upload_shift_signature(
         .as_ref()
         .ok_or_else(|| ApiError::service_unavailable("signature storage is not configured"))?;
     let user = require_session_user(&state, &headers).await?;
+    require_lead_or_admin(&user)?;
 
     if body.is_empty() {
         return Err(ApiError::bad_request("signature image body is required"));
@@ -1095,9 +1136,9 @@ pub async fn upload_shift_signature(
         return Err(ApiError::bad_request("signature image must be a PNG"));
     }
 
-    let shift_row: Option<(uuid::Uuid, String)> = sqlx::query_as(
+    let shift_row: Option<String> = sqlx::query_scalar(
         r#"
-        SELECT lead_user_id, status::text AS status
+        SELECT status::text
         FROM shifts
         WHERE tenant_id = $1
           AND id = $2
@@ -1109,15 +1150,9 @@ pub async fn upload_shift_signature(
     .await
     .map_err(ApiError::internal)?;
 
-    let Some((lead_user_id, status)) = shift_row else {
+    let Some(status) = shift_row else {
         return Err(ApiError::forbidden("shift not found for current tenant"));
     };
-
-    if lead_user_id != user.id {
-        return Err(ApiError::forbidden(
-            "only the shift lead can upload the signature",
-        ));
-    }
 
     if status != "READY_TO_COMMIT" {
         return Err(ApiError::conflict(
@@ -1155,6 +1190,7 @@ pub async fn commit_shift(
         .as_ref()
         .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
     let user = require_session_user(&state, &headers).await?;
+    require_lead_or_admin(&user)?;
 
     let reference_person_name = payload.reference_person_name.trim();
     if reference_person_name.is_empty() {
@@ -1185,9 +1221,9 @@ pub async fn commit_shift(
 
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
 
-    let shift_row: Option<(uuid::Uuid, String)> = sqlx::query_as(
+    let shift_row: Option<String> = sqlx::query_scalar(
         r#"
-        SELECT lead_user_id, status::text AS status
+        SELECT status::text
         FROM shifts
         WHERE tenant_id = $1
           AND id = $2
@@ -1200,15 +1236,9 @@ pub async fn commit_shift(
     .await
     .map_err(ApiError::internal)?;
 
-    let Some((lead_user_id, status)) = shift_row else {
+    let Some(status) = shift_row else {
         return Err(ApiError::forbidden("shift not found for current tenant"));
     };
-
-    if lead_user_id != user.id {
-        return Err(ApiError::forbidden(
-            "only the shift lead can commit the shift",
-        ));
-    }
 
     if status != "READY_TO_COMMIT" {
         return Err(ApiError::conflict(
@@ -1337,7 +1367,7 @@ pub async fn add_shift_participant(
         FROM shifts
         WHERE tenant_id = $1
           AND id = $2
-          AND status IN ('INVITING', 'READY_TO_START')
+          AND status IN ('INVITING', 'READY_TO_START', 'IN_PROGRESS')
         "#,
     )
     .bind(user.tenant_id)

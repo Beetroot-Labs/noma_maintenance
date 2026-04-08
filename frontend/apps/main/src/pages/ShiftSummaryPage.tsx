@@ -18,7 +18,7 @@ import {
   Typography,
 } from "@mui/material";
 import { AlertTriangle, ArrowLeft } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { useDemoUser } from "@/context/DemoUserContext";
 import { useShift } from "@/context/ShiftContext";
@@ -298,8 +298,14 @@ SignaturePad.displayName = "SignaturePad";
 
 export default function ShiftSummaryPage() {
   const navigate = useNavigate();
+  const { shiftId: shiftIdParam } = useParams<{ shiftId?: string }>();
   const { user } = useDemoUser();
   const { currentShift, isLoading: isShiftLoading, refreshCurrentShift } = useShift();
+
+  // When accessed via /shifts/:shiftId/summary use the URL param; otherwise fall back to current shift
+  const shiftId = shiftIdParam ?? currentShift?.id;
+  const isFromPendingList = Boolean(shiftIdParam);
+
   const [payload, setPayload] = useState<ShiftMaintenanceSummaryPayload | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -313,7 +319,7 @@ export default function ShiftSummaryPage() {
     let cancelled = false;
 
     const load = async () => {
-      if (!currentShift?.id) {
+      if (!shiftId) {
         if (!cancelled) {
           setPayload(null);
           setIsLoading(false);
@@ -324,7 +330,7 @@ export default function ShiftSummaryPage() {
       setIsLoading(true);
       setError(null);
       try {
-        const response = await fetch(`/api/shifts/${currentShift.id}/maintenance-summary`, {
+        const response = await fetch(`/api/shifts/${shiftId}/maintenance-summary`, {
           credentials: "include",
           cache: "no-store",
         });
@@ -352,9 +358,9 @@ export default function ShiftSummaryPage() {
     return () => {
       cancelled = true;
     };
-  }, [currentShift?.id]);
+  }, [shiftId]);
 
-  const isShiftLead = Boolean(user && payload && user.id === payload.lead_user_id);
+  const isLeadOrAdmin = user?.role === "admin" || user?.role === "lead_technician";
 
   const rows = useMemo(() => payload?.maintenances ?? [], [payload]);
   const todayLabel = useMemo(() => formatCurrentDate(new Date()), []);
@@ -364,8 +370,16 @@ export default function ShiftSummaryPage() {
     !isSignatureEmpty &&
     !isSubmitting;
 
+  const handleBack = () => {
+    if (isFromPendingList) {
+      navigate("/pending-worksheets");
+    } else {
+      navigate("/shift-details");
+    }
+  };
+
   const handleCommitShift = async () => {
-    if (!currentShift?.id || !isShiftLead) {
+    if (!shiftId || !isLeadOrAdmin) {
       return;
     }
 
@@ -387,7 +401,7 @@ export default function ShiftSummaryPage() {
     setIsSubmitting(true);
     try {
       const signatureBlob = await signaturePadRef.current!.toPngBlob();
-      const uploadResponse = await fetch(`/api/shifts/${currentShift.id}/signature-image`, {
+      const uploadResponse = await fetch(`/api/shifts/${shiftId}/signature-image`, {
         method: "PUT",
         credentials: "include",
         headers: {
@@ -409,7 +423,7 @@ export default function ShiftSummaryPage() {
         signature_image_url: string;
       };
 
-      const response = await fetch(`/api/shifts/${currentShift.id}/commit`, {
+      const response = await fetch(`/api/shifts/${shiftId}/commit`, {
         method: "POST",
         credentials: "include",
         headers: {
@@ -431,7 +445,7 @@ export default function ShiftSummaryPage() {
 
       await refreshCurrentShift();
       toast.success("A műszak sikeresen véglegesítve.");
-      navigate("/");
+      navigate(isFromPendingList ? "/pending-worksheets" : "/");
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Nem sikerült véglegesíteni a műszakot.",
@@ -441,7 +455,7 @@ export default function ShiftSummaryPage() {
     }
   };
 
-  if (isShiftLoading) {
+  if (!isFromPendingList && isShiftLoading) {
     return (
       <Layout>
         <Box sx={{ py: 6, display: "grid", placeItems: "center" }}>
@@ -451,7 +465,7 @@ export default function ShiftSummaryPage() {
     );
   }
 
-  if (!currentShift) {
+  if (!shiftId) {
     return null;
   }
 
@@ -459,7 +473,7 @@ export default function ShiftSummaryPage() {
     <Layout>
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-          <IconButton onClick={() => navigate("/shift-details")} aria-label="Vissza">
+          <IconButton onClick={handleBack} aria-label="Vissza">
             <ArrowLeft size={18} />
           </IconButton>
           <Typography variant="h6" sx={{ fontWeight: 700 }}>
@@ -475,7 +489,7 @@ export default function ShiftSummaryPage() {
           </Box>
         ) : !payload ? (
           <Alert severity="info">Nem érhető el műszak összegzés.</Alert>
-        ) : !isShiftLead ? (
+        ) : !isLeadOrAdmin ? (
           <Alert severity="error">Csak a műszakvezető láthatja ezt az oldalt.</Alert>
         ) : (
           <>

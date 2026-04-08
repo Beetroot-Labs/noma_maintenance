@@ -10,14 +10,15 @@ WITH upsert_tenant AS (
 user_seed(full_name, email, role_label, phone) AS (
     VALUES
         ('Surányi Domonkos', 'floomatik@nomahutes.hu', 'ADMIN', '0036305865232'),
-        ('NoMa Automation', 'hello@floomatik.com', 'ADMIN', '0036309227530'),
+        /*('NoMa Automation', 'hello@floomatik.com', 'ADMIN', '0036309227530'),
         ('Teszt Domonkos', 'suranyi.domi@gmail.com', 'TECHNICIAN', '0036305865232'),
+        ('Technikus Krisztián', 'nowkrisz@gmail.com', 'TECHNICIAN', '0036305546968'),
+        ('Technikus Dániel', 'szalmadaniel@gmail.com', 'TECHNICIAN', '0036309232368'),*/
         ('Nowacki Krisztián', 'krisztian@nomahutes.hu', 'ADMIN', '0036305546968'),
         ('Szalma Dániel', 'daniel@nomahutes.hu', 'ADMIN', '0036309232368'),
-        ('Technikus Krisztián', 'nowkrisz@gmail.com', 'TECHNICIAN', '0036305546968'),
-        ('Technikus Dániel', 'szalmadaniel@gmail.com', 'TECHNICIAN', '0036309232368'),
         ('Kovács Zoltán', 'kovask8@gmail.com', 'TECHNICIAN', '0036704226992'),
-        ('Surányi András', 'andras.suranyi@nomahutes.hu', 'LEAD_TECHNICIAN', '0036305864290')
+        ('Surányi András', 'andras.suranyi@nomahutes.hu', 'LEAD_TECHNICIAN', '0036305864290'),
+        ('Farkas Krisztián', 'krisztianfarkas282@gmail.com', 'TECHNICIAN', NULL)
 )
 INSERT INTO users (tenant_id, full_name, email, phone_number, role, email_verified_at)
 SELECT

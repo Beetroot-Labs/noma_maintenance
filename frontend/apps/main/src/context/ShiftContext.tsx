@@ -7,8 +7,7 @@ export type CurrentShiftSummary = {
     | "INVITING"
     | "READY_TO_START"
     | "IN_PROGRESS"
-    | "CLOSE_REQUESTED"
-    | "READY_TO_COMMIT";
+    | "CLOSE_REQUESTED";
   building_id: string;
   building_name: string;
   lead_user_name: string;

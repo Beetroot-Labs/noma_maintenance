@@ -17,6 +17,7 @@ import MaintenanceDashboard from "./pages/MaintenanceDashboard";
 import MyCurrentShiftPage from "./pages/MyCurrentShiftPage";
 import ShiftHomePage from "./pages/ShiftHomePage";
 import ShiftSummaryPage from "./pages/ShiftSummaryPage";
+import PendingWorksheetsPage from "./pages/PendingWorksheetsPage";
 import AdminShiftsPage from "./pages/AdminShiftsPage";
 import ShiftDetailsPage from "./pages/ShiftDetailsPage";
 import MaintenanceDetailsPage from "./pages/MaintenanceDetailsPage";
@@ -104,7 +105,7 @@ const RequireMaintenanceStartAllowed = () => {
 
   if (
     currentShift &&
-    (currentShift.status === "CLOSE_REQUESTED" || currentShift.status === "READY_TO_COMMIT")
+    currentShift.status === "CLOSE_REQUESTED"
   ) {
     return <Navigate to="/dashboard" replace />;
   }
@@ -196,6 +197,8 @@ const App = () => (
                   </Route>
                   <Route element={<RequireRoles roles={["admin", "lead_technician"]} />}>
                     <Route path="/shifts/start" element={<StartShiftPage />} />
+                    <Route path="/pending-worksheets" element={<PendingWorksheetsPage />} />
+                    <Route path="/shifts/:shiftId/summary" element={<ShiftSummaryPage />} />
                   </Route>
                 </Route>
                 <Route path="*" element={<NotFound />} />
