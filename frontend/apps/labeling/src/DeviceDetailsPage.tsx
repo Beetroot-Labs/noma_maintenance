@@ -418,7 +418,7 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
         userName={user.name}
         userEmail={user.email}
         buildingName={buildingName}
-        onBuildingClick={() => navigate("/")}
+        onBuildingClick={() => navigate(-1)}
         onSyncStatusClick={handleSyncStatusClick}
         onLogout={async () => {
           await clearUser();
@@ -440,7 +440,7 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
             <Button
               color="inherit"
               startIcon={<ArrowBackIosNew sx={{ fontSize: 16 }} />}
-              onClick={() => navigate("/")}
+              onClick={() => navigate(-1)}
               sx={{ mb: 1, px: 0, justifyContent: "flex-start" }}
             >
               Vissza az eszközlistához

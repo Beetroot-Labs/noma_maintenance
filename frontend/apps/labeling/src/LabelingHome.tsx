@@ -27,7 +27,7 @@ import {
 import { TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { getDeviceKindLabel, useAuth } from "@noma/shared";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import LoginPage from "./LoginPage";
 import { LabelingAppBar } from "./components/LabelingAppBar";
 import {
@@ -90,6 +90,18 @@ const readApiErrorMessage = async (response: Response, fallback: string) => {
 export function LabelingHome({ googleClientId }: LabelingHomeProps) {
   const { user, clearUser, isHydrated } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const columnFilters: ColumnFilterState = {
+    code: searchParams.get("code") ?? "",
+    floor: searchParams.get("floor") ?? "",
+    wing: searchParams.get("wing") ?? "",
+    room: searchParams.get("room") ?? "",
+    kind: searchParams.get("kind") ?? "",
+    brand: searchParams.get("brand") ?? "",
+    model: searchParams.get("model") ?? "",
+    serialNumber: searchParams.get("serialNumber") ?? "",
+  };
   const [cacheDialogOpen, setCacheDialogOpen] = useState(false);
   const [availableBuildings, setAvailableBuildings] = useState<CachedBuilding[]>([]);
   const [selectedBuildingId, setSelectedBuildingId] = useState("");
@@ -99,7 +111,6 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
   const [cacheError, setCacheError] = useState<string | null>(null);
   const [deviceRows, setDeviceRows] = useState<CachedDeviceListItem[]>([]);
   const [isLoadingDeviceRows, setIsLoadingDeviceRows] = useState(false);
-  const [columnFilters, setColumnFilters] = useState<ColumnFilterState>(emptyFilters);
   const [activeFilterKey, setActiveFilterKey] = useState<FilterKey | null>(null);
   const [filterMenuAnchor, setFilterMenuAnchor] = useState<HTMLElement | null>(null);
   const [unsyncedWarningOpen, setUnsyncedWarningOpen] = useState(false);
@@ -366,22 +377,32 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
   };
 
   const handleFilterChange = (key: FilterKey, value: string) => {
-    setColumnFilters((current) => ({
-      ...current,
-      [key]: value,
-    }));
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (value) {
+        next.set(key, value);
+      } else {
+        next.delete(key);
+      }
+      return next;
+    }, { replace: true });
   };
 
   const handleClearFilter = (key: FilterKey) => {
-    setColumnFilters((current) => ({
-      ...current,
-      [key]: "",
-    }));
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete(key);
+      return next;
+    }, { replace: true });
     handleCloseFilterMenu();
   };
 
   const handleClearAllFilters = () => {
-    setColumnFilters(emptyFilters);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      (Object.keys(emptyFilters) as FilterKey[]).forEach((k) => next.delete(k));
+      return next;
+    }, { replace: true });
     handleCloseFilterMenu();
   };
 
