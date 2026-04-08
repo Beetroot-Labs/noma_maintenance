@@ -68,6 +68,7 @@ export type CachedDeviceListItem = {
   floor: string | null;
   wing: string | null;
   room: string | null;
+  locationDescription: string | null;
   kind: string;
   brand: string | null;
   model: string | null;
@@ -559,6 +560,7 @@ export const getCachedDeviceListItems = async (): Promise<CachedDeviceListItem[]
       floor: location?.floor ?? null,
       wing: location?.wing ?? null,
       room: location?.room ?? null,
+      locationDescription: location?.location_description ?? null,
       kind: device.kind,
       brand: device.brand,
       model: device.model,

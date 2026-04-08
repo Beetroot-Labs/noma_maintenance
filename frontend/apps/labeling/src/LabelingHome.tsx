@@ -47,7 +47,7 @@ type LabelingHomeProps = {
   googleClientId: string;
 };
 
-type FilterKey = "code" | "floor" | "wing" | "room" | "kind" | "brand" | "model" | "serialNumber";
+type FilterKey = "code" | "floor" | "wing" | "room" | "locationDescription" | "kind" | "brand" | "model";
 
 type ColumnFilterState = Record<FilterKey, string>;
 
@@ -56,10 +56,10 @@ const emptyFilters: ColumnFilterState = {
   floor: "",
   wing: "",
   room: "",
+  locationDescription: "",
   kind: "",
   brand: "",
   model: "",
-  serialNumber: "",
 };
 
 const tableColumns: Array<{ key: FilterKey; label: string }> = [
@@ -67,10 +67,10 @@ const tableColumns: Array<{ key: FilterKey; label: string }> = [
   { key: "floor", label: "Emelet" },
   { key: "wing", label: "Szárny" },
   { key: "room", label: "Helyiség" },
+  { key: "locationDescription", label: "Hely leírása" },
   { key: "kind", label: "Eszköz típusa" },
   { key: "brand", label: "Márka" },
   { key: "model", label: "Modell" },
-  { key: "serialNumber", label: "Gyári szám" },
 ];
 
 const enumFilterKeys: FilterKey[] = ["floor", "wing", "kind", "brand"];
@@ -97,10 +97,10 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
     floor: searchParams.get("floor") ?? "",
     wing: searchParams.get("wing") ?? "",
     room: searchParams.get("room") ?? "",
+    locationDescription: searchParams.get("locationDescription") ?? "",
     kind: searchParams.get("kind") ?? "",
     brand: searchParams.get("brand") ?? "",
     model: searchParams.get("model") ?? "",
-    serialNumber: searchParams.get("serialNumber") ?? "",
   };
   const [cacheDialogOpen, setCacheDialogOpen] = useState(false);
   const [availableBuildings, setAvailableBuildings] = useState<CachedBuilding[]>([]);
@@ -417,6 +417,7 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
       (left, right) => left.localeCompare(right, "hu-HU"),
     ),
     room: [],
+    locationDescription: [],
     kind: Array.from(new Set(deviceRows.map((device) => getDeviceKindLabel(device.kind)))).sort((left, right) =>
       left.localeCompare(right, "hu-HU"),
     ),
@@ -424,7 +425,6 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
       (left, right) => left.localeCompare(right, "hu-HU"),
     ),
     model: [],
-    serialNumber: [],
   };
 
   const filteredDeviceRows = deviceRows.filter((device) =>
@@ -730,12 +730,12 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
                           <TableCell>{device.floor ?? "-"}</TableCell>
                           <TableCell>{device.wing ?? "-"}</TableCell>
                           <TableCell>{device.room ?? "-"}</TableCell>
+                          <TableCell>{device.locationDescription ?? "-"}</TableCell>
                           <TableCell sx={{ whiteSpace: "nowrap" }}>
                             {getDeviceKindLabel(device.kind)}
                           </TableCell>
                           <TableCell>{device.brand ?? "-"}</TableCell>
                           <TableCell>{device.model ?? "-"}</TableCell>
-                          <TableCell>{device.serialNumber ?? "-"}</TableCell>
                         </TableRow>
                       ))
                     )}
