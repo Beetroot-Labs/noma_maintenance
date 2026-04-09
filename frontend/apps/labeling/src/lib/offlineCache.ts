@@ -52,6 +52,7 @@ export type CachedDevice = {
   serial_number: string | null;
   source_device_code: string | null;
   device_photo_url: string | null;
+  original_kind: string | null;
 };
 
 export type BuildingCachePayload = {
@@ -70,6 +71,7 @@ export type CachedDeviceListItem = {
   room: string | null;
   locationDescription: string | null;
   kind: string;
+  originalKind: string | null;
   brand: string | null;
   model: string | null;
   serialNumber: string | null;
@@ -562,6 +564,7 @@ export const getCachedDeviceListItems = async (): Promise<CachedDeviceListItem[]
       room: location?.room ?? null,
       locationDescription: location?.location_description ?? null,
       kind: device.kind,
+      originalKind: device.original_kind ?? null,
       brand: device.brand,
       model: device.model,
       serialNumber: device.serial_number ?? null,

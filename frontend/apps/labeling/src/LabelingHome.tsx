@@ -47,7 +47,7 @@ type LabelingHomeProps = {
   googleClientId: string;
 };
 
-type FilterKey = "code" | "floor" | "wing" | "room" | "locationDescription" | "kind" | "brand" | "model";
+type FilterKey = "code" | "floor" | "wing" | "room" | "locationDescription" | "kind" | "originalKind" | "brand" | "model";
 
 type ColumnFilterState = Record<FilterKey, string>;
 
@@ -58,6 +58,7 @@ const emptyFilters: ColumnFilterState = {
   room: "",
   locationDescription: "",
   kind: "",
+  originalKind: "",
   brand: "",
   model: "",
 };
@@ -69,6 +70,7 @@ const tableColumns: Array<{ key: FilterKey; label: string }> = [
   { key: "room", label: "Helyiség" },
   { key: "locationDescription", label: "Hely leírása" },
   { key: "kind", label: "Eszköz típusa" },
+  { key: "originalKind", label: "Eredeti Típus" },
   { key: "brand", label: "Márka" },
   { key: "model", label: "Modell" },
 ];
@@ -99,6 +101,7 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
     room: searchParams.get("room") ?? "",
     locationDescription: searchParams.get("locationDescription") ?? "",
     kind: searchParams.get("kind") ?? "",
+    originalKind: searchParams.get("originalKind") ?? "",
     brand: searchParams.get("brand") ?? "",
     model: searchParams.get("model") ?? "",
   };
@@ -421,6 +424,7 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
     kind: Array.from(new Set(deviceRows.map((device) => getDeviceKindLabel(device.kind)))).sort((left, right) =>
       left.localeCompare(right, "hu-HU"),
     ),
+    originalKind: [],
     brand: Array.from(new Set(deviceRows.map((device) => device.brand).filter((value): value is string => Boolean(value)))).sort(
       (left, right) => left.localeCompare(right, "hu-HU"),
     ),
@@ -734,6 +738,7 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
                           <TableCell sx={{ whiteSpace: "nowrap" }}>
                             {getDeviceKindLabel(device.kind)}
                           </TableCell>
+                          <TableCell>{device.originalKind ?? "-"}</TableCell>
                           <TableCell>{device.brand ?? "-"}</TableCell>
                           <TableCell>{device.model ?? "-"}</TableCell>
                         </TableRow>

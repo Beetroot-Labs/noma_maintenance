@@ -67,6 +67,7 @@ struct CachedDevice {
     serial_number: Option<String>,
     source_device_code: Option<String>,
     device_photo_url: Option<String>,
+    original_kind: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -173,7 +174,8 @@ pub async fn get_labeling_building_cache(
             CASE
                 WHEN d.device_photo_url IS NULL THEN NULL
                 ELSE CONCAT('/api/labeling/devices/', d.id::text, '/photo')
-            END AS device_photo_url
+            END AS device_photo_url,
+            d.original_kind
         FROM devices d
         JOIN site_locations sl
           ON sl.tenant_id = d.tenant_id
