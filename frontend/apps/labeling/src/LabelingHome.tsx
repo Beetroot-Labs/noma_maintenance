@@ -25,7 +25,7 @@ import {
   Typography,
 } from "@mui/material";
 import { TriangleAlert } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getDeviceKindLabel, useAuth } from "@noma/shared";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import LoginPage from "./LoginPage";
@@ -77,6 +77,9 @@ const tableColumns: Array<{ key: FilterKey; label: string }> = [
 
 const enumFilterKeys: FilterKey[] = ["floor", "wing", "kind", "brand"];
 
+const normalizeForFilter = (s: string) =>
+  s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLocaleLowerCase("hu-HU");
+
 const readApiErrorMessage = async (response: Response, fallback: string) => {
   try {
     const payload = (await response.json()) as { error?: string };
@@ -116,6 +119,8 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
   const [isLoadingDeviceRows, setIsLoadingDeviceRows] = useState(false);
   const [activeFilterKey, setActiveFilterKey] = useState<FilterKey | null>(null);
   const [filterMenuAnchor, setFilterMenuAnchor] = useState<HTMLElement | null>(null);
+  // Pending text input value — committed to searchParams only when user clicks "Kész"
+  const [pendingTextFilter, setPendingTextFilter] = useState<string>("");
   const [unsyncedWarningOpen, setUnsyncedWarningOpen] = useState(false);
   const [unsyncedChangeCount, setUnsyncedChangeCount] = useState(0);
   const [allowDiscardUnsyncedSwitch, setAllowDiscardUnsyncedSwitch] = useState(false);
@@ -265,6 +270,29 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
     };
   }, [activeFilterKey, filterMenuAnchor]);
 
+  const filteredDeviceRows = useMemo(() =>
+    deviceRows.filter((device) =>
+      tableColumns.every(({ key }) => {
+        const filterValue = normalizeForFilter(columnFilters[key].trim());
+        if (!filterValue) {
+          return true;
+        }
+
+        const cellValue =
+          key === "kind"
+            ? getDeviceKindLabel(device.kind)
+            : (device[key] ?? "-");
+
+        const normalizedCellValue = normalizeForFilter(String(cellValue));
+        return enumFilterKeys.includes(key)
+          ? normalizedCellValue === filterValue
+          : normalizedCellValue.includes(filterValue);
+      }),
+    ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [deviceRows, columnFilters],
+  );
+
   if (!isHydrated) {
     return (
       <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center", px: 2 }}>
@@ -372,23 +400,45 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
   const handleOpenFilterMenu = (event: React.MouseEvent<HTMLElement>, key: FilterKey) => {
     setActiveFilterKey(key);
     setFilterMenuAnchor(event.currentTarget);
+    // Seed pending text input with current committed value
+    if (!enumFilterKeys.includes(key)) {
+      setPendingTextFilter(columnFilters[key] ?? "");
+    }
   };
 
   const handleCloseFilterMenu = () => {
     setActiveFilterKey(null);
     setFilterMenuAnchor(null);
+    setPendingTextFilter("");
   };
 
-  const handleFilterChange = (key: FilterKey, value: string) => {
+  const commitTextFilter = (key: FilterKey, value: string) => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
-      if (value) {
-        next.set(key, value);
+      if (value.trim()) {
+        next.set(key, value.trim());
       } else {
         next.delete(key);
       }
       return next;
     }, { replace: true });
+  };
+
+  const handleFilterChange = (key: FilterKey, value: string) => {
+    // Enum filters apply immediately; text filters wait for "Kész"
+    if (enumFilterKeys.includes(key)) {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (value) {
+          next.set(key, value);
+        } else {
+          next.delete(key);
+        }
+        return next;
+      }, { replace: true });
+    } else {
+      setPendingTextFilter(value);
+    }
   };
 
   const handleClearFilter = (key: FilterKey) => {
@@ -397,6 +447,7 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
       next.delete(key);
       return next;
     }, { replace: true });
+    setPendingTextFilter("");
     handleCloseFilterMenu();
   };
 
@@ -430,25 +481,6 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
     ),
     model: [],
   };
-
-  const filteredDeviceRows = deviceRows.filter((device) =>
-    tableColumns.every(({ key }) => {
-      const filterValue = columnFilters[key].trim().toLocaleLowerCase("hu-HU");
-      if (!filterValue) {
-        return true;
-      }
-
-      const cellValue =
-        key === "kind"
-          ? getDeviceKindLabel(device.kind)
-          : (device[key] ?? "-");
-
-      const normalizedCellValue = String(cellValue).toLocaleLowerCase("hu-HU");
-      return enumFilterKeys.includes(key)
-        ? normalizedCellValue === filterValue
-        : normalizedCellValue.includes(filterValue);
-    }),
-  );
 
   const renderBarcodeCell = (device: CachedDeviceListItem) => {
     const hasBarcodeError = device.codeSyncState === "FAILED" && Boolean(device.code);
@@ -798,17 +830,36 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
                 fullWidth
                 inputRef={filterInputRef}
                 label="Szűrőszöveg"
-                value={columnFilters[activeFilterKey]}
+                value={pendingTextFilter}
                 onChange={(event) => handleFilterChange(activeFilterKey, event.target.value)}
+                onKeyDown={(event) => {
+                  // Prevent Menu from intercepting keystrokes (e.g. focus-by-letter behaviour)
+                  event.stopPropagation();
+                  if (event.key === "Enter") {
+                    commitTextFilter(activeFilterKey, pendingTextFilter);
+                    handleCloseFilterMenu();
+                  }
+                }}
               />
             )}
             <Stack direction="row" spacing={1} justifyContent="flex-end">
-              {columnFilters[activeFilterKey].trim() !== "" && (
+              {(enumFilterKeys.includes(activeFilterKey)
+                ? columnFilters[activeFilterKey].trim() !== ""
+                : pendingTextFilter.trim() !== "" || columnFilters[activeFilterKey].trim() !== ""
+              ) && (
                 <Button color="error" onClick={() => handleClearFilter(activeFilterKey)}>
                   Szűrő törlése
                 </Button>
               )}
-              <Button color="secondary" onClick={handleCloseFilterMenu}>
+              <Button
+                color="secondary"
+                onClick={() => {
+                  if (!enumFilterKeys.includes(activeFilterKey)) {
+                    commitTextFilter(activeFilterKey, pendingTextFilter);
+                  }
+                  handleCloseFilterMenu();
+                }}
+              >
                 Kész
               </Button>
             </Stack>
