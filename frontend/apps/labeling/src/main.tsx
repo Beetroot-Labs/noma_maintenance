@@ -1,6 +1,11 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import LogRocket from "logrocket";
 import App from "./App.tsx";
+
+if (!import.meta.env.DEV) {
+  LogRocket.init("xctxm9/noma-maintenance");
+}
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 if (basePath && basePath !== "/" && window.location.pathname === basePath) {

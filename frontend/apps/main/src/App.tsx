@@ -1,6 +1,8 @@
 import { Box, CircularProgress, CssBaseline, GlobalStyles, ThemeProvider } from "@mui/material";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from "react-router-dom";
+import { useEffect } from "react";
+import LogRocket from "logrocket";
 import { NotificationProvider } from "@/components/notifications/NotificationProvider";
 import { MaintenanceProvider } from "@/context/MaintenanceContext";
 import { DemoUserProvider, useDemoUser } from "@/context/DemoUserContext";
@@ -23,6 +25,16 @@ import ShiftDetailsPage from "./pages/ShiftDetailsPage";
 import MaintenanceDetailsPage from "./pages/MaintenanceDetailsPage";
 
 const queryClient = new QueryClient();
+
+const LogRocketIdentifier = () => {
+  const { user } = useDemoUser();
+  useEffect(() => {
+    if (user && !import.meta.env.DEV) {
+      LogRocket.identify(user.id, { name: user.name, email: user.email });
+    }
+  }, [user]);
+  return null;
+};
 
 const RequireDemoUser = () => {
   const { user, isHydrated } = useDemoUser();
@@ -169,6 +181,7 @@ const App = () => (
       <NotificationProvider />
       <BrowserRouter basename={import.meta.env.BASE_URL}>
         <DemoUserProvider>
+          <LogRocketIdentifier />
           <ShiftProvider>
             <MaintenanceProvider>
               <Routes>

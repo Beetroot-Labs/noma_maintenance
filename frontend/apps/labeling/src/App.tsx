@@ -5,6 +5,7 @@ import {
 } from "@mui/material";
 import { AuthProvider, useAuth } from "@noma/shared";
 import { useEffect } from "react";
+import LogRocket from "logrocket";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { DeviceDetailsPage } from "./DeviceDetailsPage";
 import { LabelingHome } from "./LabelingHome";
@@ -17,6 +18,16 @@ import {
   triggerOfflineSyncNow,
 } from "./lib/offlineCache";
 import { theme } from "./theme";
+
+function LogRocketIdentifier() {
+  const { user } = useAuth();
+  useEffect(() => {
+    if (user && !import.meta.env.DEV) {
+      LogRocket.identify(user.id, { name: user.name, email: user.email });
+    }
+  }, [user]);
+  return null;
+}
 
 function BarcodeSyncManager() {
   const { user, isHydrated } = useAuth();
@@ -95,6 +106,7 @@ export default function App() {
         }}
       >
         <AuthProvider defaultRole="technician">
+          <LogRocketIdentifier />
           <BarcodeSyncManager />
           <BuildingCacheRefreshManager />
           <BrowserRouter basename={basename} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>

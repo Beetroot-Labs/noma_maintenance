@@ -1,6 +1,11 @@
 import { createRoot } from "react-dom/client";
+import LogRocket from "logrocket";
 import App from "./App.tsx";
 import "./index.css";
+
+if (!import.meta.env.DEV) {
+  LogRocket.init("xctxm9/noma-maintenance");
+}
 
 createRoot(document.getElementById("root")!).render(<App />);
 
