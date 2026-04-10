@@ -374,12 +374,8 @@ export const cacheBuildingData = async (
   selectedBuildingId: string,
 ): Promise<void> => {
   const existingDevices = await getAllRecords<CachedDevice>(DEVICES_STORE);
-  const existingPhotoRecords = await getAllRecords<CachedDevicePhotoRecord>(DEVICE_PHOTOS_STORE);
   const pendingBarcodeOutbox = await getAllRecords<SyncOutboxRecord>(SYNC_OUTBOX_STORE);
   const existingDeviceById = new Map(existingDevices.map((device) => [device.id, device]));
-  const existingPhotoByDeviceId = new Map(
-    existingPhotoRecords.map((record) => [record.deviceId, record]),
-  );
   const pendingBarcodeDeviceIds = new Set(
     pendingBarcodeOutbox
       .filter(
@@ -415,30 +411,9 @@ export const cacheBuildingData = async (
       pendingDetailsLocationById.set(location.id, location);
     }
   });
-  const photoRecords = (
-    await Promise.all(
-      payload.devices.map(async (device) => {
-        if (pendingPhotoDeviceIds.has(device.id)) {
-          return existingPhotoByDeviceId.get(device.id) ?? null;
-        }
-        if (!device.device_photo_url) {
-          return null;
-        }
-
-        try {
-          return {
-            deviceId: device.id,
-            blob: await fetchPhotoBlob(device.device_photo_url),
-            sourceUrl: device.device_photo_url,
-            contentType: null,
-          } satisfies CachedDevicePhotoRecord;
-        } catch {
-          return null;
-        }
-      }),
-    )
-  ).filter((record): record is CachedDevicePhotoRecord => record !== null);
-
+  // Server-side photos are no longer pre-downloaded during cache — they load
+  // on demand in the device details view and are cached by the browser.
+  // Only preserve existing blobs for devices with a locally pending photo upload.
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(
@@ -459,7 +434,10 @@ export const cacheBuildingData = async (
     tx.objectStore(BUILDINGS_STORE).clear();
     tx.objectStore(LOCATIONS_STORE).clear();
     tx.objectStore(DEVICES_STORE).clear();
-    tx.objectStore(DEVICE_PHOTOS_STORE).clear();
+    // Only clear server-fetched photos; keep locally pending uploads.
+    if (pendingPhotoDeviceIds.size === 0) {
+      tx.objectStore(DEVICE_PHOTOS_STORE).clear();
+    }
 
     tx.objectStore(BUILDINGS_STORE).put(payload.building);
     payload.locations.forEach((location) => {
@@ -520,9 +498,6 @@ export const cacheBuildingData = async (
         photo_updated_at: nextPhotoUpdatedAt,
       } satisfies CachedDevice);
     });
-    photoRecords.forEach((record) => {
-      tx.objectStore(DEVICE_PHOTOS_STORE).put(record);
-    });
     tx.objectStore(SETTINGS_STORE).put({
       key: "selectedBuildingId",
       value: selectedBuildingId,
@@ -578,6 +553,7 @@ export const getCachedDeviceDetails = async (
   const [locations, device, cachedPhoto] = await Promise.all([
     getAllRecords<CachedLocation>(LOCATIONS_STORE),
     getRecord<CachedDevice>(DEVICES_STORE, deviceId),
+    // Only check DEVICE_PHOTOS_STORE for locally pending user-uploaded photos.
     getRecord<CachedDevicePhotoRecord>(DEVICE_PHOTOS_STORE, deviceId),
   ]);
 
