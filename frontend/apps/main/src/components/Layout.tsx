@@ -55,7 +55,7 @@ export function Layout({ children }: LayoutProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const isAdminView = location.pathname.startsWith("/admin");
-  const canAccessAdminView = user?.role === "admin";
+  const canAccessAdminView = user?.role === "admin" || user?.role === "lead_technician";
   const isLeadOrAdmin = user?.role === "admin" || user?.role === "lead_technician";
   const showBottomBar = Boolean(currentShift) && !isAdminView;
   const canStartNewMaintenance = currentShift?.status !== "CLOSE_REQUESTED";
@@ -78,7 +78,7 @@ export function Layout({ children }: LayoutProps) {
 
   const roleLabel = {
     admin: "adminisztrátor",
-    lead_technician: "műszakvezető",
+    lead_technician: "vezető technikus",
     technician: "technikus",
     viewer: "megtekintő",
     partner: "partner",

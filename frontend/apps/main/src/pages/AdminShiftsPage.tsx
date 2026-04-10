@@ -63,7 +63,7 @@ const readApiErrorMessage = async (response: Response, fallback: string) => {
       return payload.error;
     }
   } catch {
-    // Ignore malformed payloads.
+    // Ignore JSON parsing errors and fall back to the provided message.
   }
   return fallback;
 };
@@ -72,8 +72,8 @@ const statusLabel: Record<string, string> = {
   INVITING: "Meghívás alatt",
   READY_TO_START: "Indításra kész",
   IN_PROGRESS: "Folyamatban",
-  CLOSE_REQUESTED: "Lezárás kérve",
-  READY_TO_COMMIT: "Commitre kész",
+  CLOSE_REQUESTED: "Lezárás folyamatban",
+  READY_TO_COMMIT: "Aláírásra vár",
   COMMITTED: "Lezárt",
   CANCELLED: "Megszakítva",
 };
@@ -264,9 +264,6 @@ export default function AdminShiftsPage() {
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 800 }}>
             Műszakok
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-            Aktív műszakok felül, korábbi műszakok alul.
           </Typography>
         </Box>
 

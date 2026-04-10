@@ -56,7 +56,7 @@ const getPreferredZoomLevel = (capabilities: MediaTrackCapabilities | null) => {
 
   const minZoom = zoomRange.min ?? 1;
   const maxZoom = zoomRange.max ?? minZoom;
-  const clampedZoom = Math.min(maxZoom, Math.max(minZoom, 2));
+  const clampedZoom = Math.min(maxZoom, Math.max(minZoom, 1));
 
   if (zoomRange.step) {
     const snappedStepCount = Math.round((clampedZoom - minZoom) / zoomRange.step);
@@ -164,6 +164,11 @@ export const useCode128Scanner = ({
       Quagga.offProcessed();
     }
     void Quagga.stop().catch(() => undefined);
+
+    // Explicitly stop all tracks so iOS Safari releases the camera and doesn't re-prompt for permission on next scan.
+    if (stream instanceof MediaStream) {
+      stream.getTracks().forEach((t) => t.stop());
+    }
 
     processingRef.current = false;
     fpsSamplesRef.current = [];

@@ -356,7 +356,7 @@ pub async fn list_admin_shifts(
         .as_ref()
         .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
     let user = require_session_user(&state, &headers).await?;
-    require_admin(&user)?;
+    require_lead_or_admin(&user)?;
 
     let live = sqlx::query_as::<_, AdminLiveShiftRow>(
         r#"
@@ -486,7 +486,7 @@ pub async fn get_admin_shift_detail(
         .as_ref()
         .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
     let user = require_session_user(&state, &headers).await?;
-    require_admin(&user)?;
+    require_lead_or_admin(&user)?;
 
     let detail = sqlx::query_as::<_, AdminShiftDetailCore>(
         r#"

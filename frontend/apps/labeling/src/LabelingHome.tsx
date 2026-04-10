@@ -65,8 +65,8 @@ const emptyFilters: ColumnFilterState = {
 
 const tableColumns: Array<{ key: FilterKey; label: string }> = [
   { key: "code", label: "Kód" },
-  { key: "floor", label: "Emelet" },
   { key: "wing", label: "Szárny" },
+  { key: "floor", label: "Emelet" },
   { key: "room", label: "Helyiség" },
   { key: "locationDescription", label: "Hely leírása" },
   { key: "kind", label: "Eszköz típusa" },
@@ -271,24 +271,49 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
   }, [activeFilterKey, filterMenuAnchor]);
 
   const filteredDeviceRows = useMemo(() =>
-    deviceRows.filter((device) =>
-      tableColumns.every(({ key }) => {
-        const filterValue = normalizeForFilter(columnFilters[key].trim());
-        if (!filterValue) {
-          return true;
-        }
+    deviceRows
+      .filter((device) =>
+        tableColumns.every(({ key }) => {
+          const filterValue = normalizeForFilter(columnFilters[key].trim());
+          if (!filterValue) {
+            return true;
+          }
 
-        const cellValue =
-          key === "kind"
-            ? getDeviceKindLabel(device.kind)
-            : (device[key] ?? "-");
+          const cellValue =
+            key === "kind"
+              ? getDeviceKindLabel(device.kind)
+              : (device[key] ?? "-");
 
-        const normalizedCellValue = normalizeForFilter(String(cellValue));
-        return enumFilterKeys.includes(key)
-          ? normalizedCellValue === filterValue
-          : normalizedCellValue.includes(filterValue);
+          const normalizedCellValue = normalizeForFilter(String(cellValue));
+          return enumFilterKeys.includes(key)
+            ? normalizedCellValue === filterValue
+            : normalizedCellValue.includes(filterValue);
+        }),
+      )
+      .sort((a, b) => {
+        const nullLast = (val: string | null | undefined) => (val == null || val === "" ? 1 : 0);
+
+        const wingA = a.wing ?? null;
+        const wingB = b.wing ?? null;
+        if (nullLast(wingA) !== nullLast(wingB)) return nullLast(wingA) - nullLast(wingB);
+        const wingCmp = (wingA ?? "").localeCompare(wingB ?? "", "hu-HU");
+        if (wingCmp !== 0) return wingCmp;
+
+        const floorA = a.floor ?? null;
+        const floorB = b.floor ?? null;
+        if (nullLast(floorA) !== nullLast(floorB)) return nullLast(floorA) - nullLast(floorB);
+        const floorStartsWithNumber = (f: string | null) => f != null && /^\d/.test(f);
+        const aNum = floorStartsWithNumber(floorA) ? 0 : 1;
+        const bNum = floorStartsWithNumber(floorB) ? 0 : 1;
+        if (aNum !== bNum) return aNum - bNum;
+        const floorCmp = (floorA ?? "").localeCompare(floorB ?? "", "hu-HU", { numeric: true });
+        if (floorCmp !== 0) return floorCmp;
+
+        const roomA = a.room ?? null;
+        const roomB = b.room ?? null;
+        if (nullLast(roomA) !== nullLast(roomB)) return nullLast(roomA) - nullLast(roomB);
+        return (roomA ?? "").localeCompare(roomB ?? "", "hu-HU");
       }),
-    ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [deviceRows, columnFilters],
   );
@@ -768,8 +793,8 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
                           sx={{ cursor: "pointer" }}
                         >
                           <TableCell>{renderBarcodeCell(device)}</TableCell>
-                          <TableCell>{device.floor ?? "-"}</TableCell>
                           <TableCell>{device.wing ?? "-"}</TableCell>
+                          <TableCell>{device.floor ?? "-"}</TableCell>
                           <TableCell>{device.room ?? "-"}</TableCell>
                           <TableCell>{device.locationDescription ?? "-"}</TableCell>
                           <TableCell sx={{ whiteSpace: "nowrap" }}>

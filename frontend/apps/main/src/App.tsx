@@ -177,7 +177,7 @@ const App = () => (
                   <Route path="/" element={<ShiftHomePage />} />
                   <Route path="/dashboard" element={<ShiftDashboardRoute />} />
                   <Route path="/shifts/:shiftId/waiting-room" element={<ShiftWaitingRoomPage />} />
-                  <Route element={<RequireRoles roles={["admin"]} />}>
+                  <Route element={<RequireRoles roles={["admin", "lead_technician"]} />}>
                     <Route path="/admin/shifts" element={<AdminShiftsPage />} />
                     <Route path="/admin/shifts/:shiftId" element={<ShiftDetailsPage />} />
                     <Route
