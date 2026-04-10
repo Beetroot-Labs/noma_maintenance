@@ -14,7 +14,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import { ClipboardCheck, CloudAlert, CloudCog, CloudUpload } from "lucide-react";
+import { ClipboardCheck, CloudAlert, CloudCog, CloudUpload, Sigma } from "lucide-react";
 import { WorkCard } from "@/components/WorkCard";
 import { Layout } from "@/components/Layout";
 import { useDemoUser } from "@/context/DemoUserContext";
@@ -376,6 +376,14 @@ export default function MaintenanceDashboard() {
     return [...backendRows, ...localOnlyRows].sort(compareDashboardRowsByCompletionAndStart);
   }, [allWorksPayload?.maintenances, todaysWorks, user?.name]);
 
+  const workCounts = useMemo(() => {
+    const total = orderedAllWorks.length;
+    const unsynced = orderedAllWorks.filter(
+      (row) => resolveSyncState(row, workSyncStates[row.maintenance_id]).status !== "synced",
+    ).length;
+    return { total, synced: total - unsynced, unsynced };
+  }, [orderedAllWorks, workSyncStates]);
+
   const isCloseRequested =
     currentShift?.status === "CLOSE_REQUESTED" || currentShift?.status === "READY_TO_COMMIT";
   const canStartNewMaintenance = !isCloseRequested;
@@ -449,6 +457,16 @@ export default function MaintenanceDashboard() {
             <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
               Karbantartási munkák
             </Typography>
+            {workCounts.total > 0 && (
+              <Box sx={{ ml: "auto", display: "flex", alignItems: "center", gap: 0.5, flexShrink: 0 }}>
+                <Sigma size={15} />
+                <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                  {workCounts.unsynced > 0
+                    ? `${workCounts.synced}+${workCounts.unsynced}`
+                    : workCounts.synced}
+                </Typography>
+              </Box>
+            )}
           </Box>
 
           <Tabs

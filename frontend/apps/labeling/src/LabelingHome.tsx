@@ -661,8 +661,13 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
         }}
       >
         <Stack spacing={1.5}>
-          <Box sx={{ px: 0.5 }}>
+          <Box sx={{ px: 0.5, display: "flex", alignItems: "baseline", gap: 1.5 }}>
             <Typography variant="h2">Eszközlista</Typography>
+            {deviceRows.length > 0 && (
+              <Typography variant="body2" color="text.secondary">
+                {filteredDeviceRows.length}/{deviceRows.length} berendezés megjelenítve
+              </Typography>
+            )}
           </Box>
 
           {hasActiveFilters && (
