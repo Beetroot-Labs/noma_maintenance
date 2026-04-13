@@ -7,7 +7,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 echo "Installing frontend workspace dependencies..."
 (
   cd "${REPO_ROOT}/frontend"
-  npm ci
+  npm install --no-audit --no-fund
 )
 
 echo "Building main frontend..."
