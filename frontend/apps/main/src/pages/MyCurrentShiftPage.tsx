@@ -313,15 +313,7 @@ export default function MyCurrentShiftPage() {
   }, [currentShift?.id, currentShift?.status, loadShiftDetails, user?.id]);
 
   useEffect(() => {
-    if (
-      !currentShift?.id ||
-      !(
-        payload?.participants.some((participant) => participant.status === "INVITED") ||
-        currentShift.status === "CLOSE_REQUESTED" ||
-        currentShift.status === "READY_TO_COMMIT"
-      ) ||
-      !isOnline
-    ) {
+    if (!currentShift?.id || !isOnline) {
       return;
     }
 
@@ -371,7 +363,7 @@ export default function MyCurrentShiftPage() {
       eventSource.removeEventListener("participants-updated", handleParticipantsUpdated);
       eventSource.close();
     };
-  }, [currentShift?.id, isOnline, loadShiftDetails, payload?.participants, refreshCurrentShift]);
+  }, [currentShift?.id, isOnline, loadShiftDetails, refreshCurrentShift]);
 
   const loadInviteCandidates = async () => {
     const response = await fetch("/api/users/invite-candidates", {

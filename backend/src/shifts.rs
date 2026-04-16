@@ -665,7 +665,7 @@ pub async fn get_admin_maintenance_detail(
         .as_ref()
         .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
     let user = require_session_user(&state, &headers).await?;
-    require_admin(&user)?;
+    require_lead_or_admin(&user)?;
 
     let detail = sqlx::query_as::<_, AdminMaintenanceDetailCore>(
         r#"
@@ -796,7 +796,7 @@ pub async fn get_admin_maintenance_photo(
         .as_ref()
         .ok_or_else(|| ApiError::service_unavailable("device photo storage is not configured"))?;
     let user = require_session_user(&state, &headers).await?;
-    require_admin(&user)?;
+    require_lead_or_admin(&user)?;
 
     let object_name = sqlx::query_scalar::<_, Option<String>>(
         r#"
