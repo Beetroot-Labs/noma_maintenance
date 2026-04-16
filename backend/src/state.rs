@@ -1,5 +1,10 @@
 use chrono::Duration;
+use serde::Serialize;
 use sqlx::PgPool;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use tokio::sync::broadcast;
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -7,6 +12,7 @@ pub struct AppState {
     pub db_pool: Option<PgPool>,
     pub storage: Option<StorageConfig>,
     pub auth: Option<AuthConfig>,
+    pub shift_events: ShiftEventHub,
 }
 
 #[derive(Clone)]
@@ -23,6 +29,46 @@ pub struct StorageConfig {
     pub bucket: String,
     pub device_photo_prefix: String,
     pub shift_signature_prefix: String,
+}
+
+#[derive(Clone, Serialize)]
+pub struct ShiftEventMessage {
+    #[serde(rename = "type")]
+    pub event_type: &'static str,
+    pub shift_id: Uuid,
+}
+
+#[derive(Clone, Default)]
+pub struct ShiftEventHub {
+    channels: Arc<Mutex<HashMap<Uuid, broadcast::Sender<ShiftEventMessage>>>>,
+}
+
+impl ShiftEventHub {
+    fn sender_for(&self, shift_id: Uuid) -> broadcast::Sender<ShiftEventMessage> {
+        let mut channels = self
+            .channels
+            .lock()
+            .expect("shift event channel registry lock poisoned");
+
+        if let Some(sender) = channels.get(&shift_id) {
+            return sender.clone();
+        }
+
+        let (sender, _) = broadcast::channel(32);
+        channels.insert(shift_id, sender.clone());
+        sender
+    }
+
+    pub fn subscribe(&self, shift_id: Uuid) -> broadcast::Receiver<ShiftEventMessage> {
+        self.sender_for(shift_id).subscribe()
+    }
+
+    pub fn publish_participants_updated(&self, shift_id: Uuid) {
+        let _ = self.sender_for(shift_id).send(ShiftEventMessage {
+            event_type: "participants-updated",
+            shift_id,
+        });
+    }
 }
 
 pub fn load_storage_config() -> anyhow::Result<Option<StorageConfig>> {

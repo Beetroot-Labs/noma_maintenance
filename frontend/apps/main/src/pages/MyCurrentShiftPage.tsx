@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Alert,
   Autocomplete,
@@ -33,6 +33,8 @@ import {
   HardHat,
   LoaderCircle,
   Phone,
+  Repeat,
+  Trash,
   UserPlus,
   X,
 } from "lucide-react";
@@ -209,9 +211,12 @@ export default function MyCurrentShiftPage() {
   const [selectedCandidate, setSelectedCandidate] = useState<InviteCandidate | null>(null);
   const [isAddingParticipant, setIsAddingParticipant] = useState(false);
   const [isCancellingShift, setIsCancellingShift] = useState(false);
+  const [isClosingShift, setIsClosingShift] = useState(false);
   const [isReloadingCache, setIsReloadingCache] = useState(false);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   const [actionsMenuAnchor, setActionsMenuAnchor] = useState<null | HTMLElement>(null);
+  const [participantActionKey, setParticipantActionKey] = useState<string | null>(null);
 
   const isShiftLead = Boolean(user && payload && user.id === payload.lead_user_id);
   const isActionsMenuOpen = Boolean(actionsMenuAnchor);
@@ -233,7 +238,7 @@ export default function MyCurrentShiftPage() {
     };
   }, []);
 
-  const loadShiftDetails = async (): Promise<ShiftWaitingRoomPayload | null> => {
+  const loadShiftDetails = useCallback(async (): Promise<ShiftWaitingRoomPayload | null> => {
     const shiftId = currentShift?.id;
     if (!shiftId) {
       return null;
@@ -259,7 +264,7 @@ export default function MyCurrentShiftPage() {
       storeShiftDetails(user.id, waitingRoomPayload);
     }
     return waitingRoomPayload;
-  };
+  }, [currentShift?.id, user?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -305,7 +310,68 @@ export default function MyCurrentShiftPage() {
     return () => {
       cancelled = true;
     };
-  }, [currentShift?.id, currentShift?.status, user?.id]);
+  }, [currentShift?.id, currentShift?.status, loadShiftDetails, user?.id]);
+
+  useEffect(() => {
+    if (
+      !currentShift?.id ||
+      !(
+        payload?.participants.some((participant) => participant.status === "INVITED") ||
+        currentShift.status === "CLOSE_REQUESTED" ||
+        currentShift.status === "READY_TO_COMMIT"
+      ) ||
+      !isOnline
+    ) {
+      return;
+    }
+
+    let disposed = false;
+    let isRefreshing = false;
+    const eventSource = new EventSource(`/api/shifts/${currentShift.id}/events`);
+
+    const refreshFromServer = () => {
+      if (isRefreshing || disposed) {
+        return;
+      }
+
+      isRefreshing = true;
+      void (async () => {
+        try {
+          await refreshCurrentShift();
+          const nextPayload = await loadShiftDetails();
+          if (!disposed) {
+            setPayload(nextPayload);
+            setError(null);
+          }
+        } catch (err) {
+          if (!disposed) {
+            setError(
+              err instanceof Error ? err.message : "Nem sikerült frissíteni a műszak részleteit.",
+            );
+          }
+        } finally {
+          isRefreshing = false;
+        }
+      })();
+    };
+
+    const handleParticipantsUpdated = () => {
+      refreshFromServer();
+    };
+
+    eventSource.addEventListener("participants-updated", handleParticipantsUpdated);
+    eventSource.onerror = () => {
+      if (!disposed) {
+        setError(null);
+      }
+    };
+
+    return () => {
+      disposed = true;
+      eventSource.removeEventListener("participants-updated", handleParticipantsUpdated);
+      eventSource.close();
+    };
+  }, [currentShift?.id, isOnline, loadShiftDetails, payload?.participants, refreshCurrentShift]);
 
   const loadInviteCandidates = async () => {
     const response = await fetch("/api/users/invite-candidates", {
@@ -370,6 +436,73 @@ export default function MyCurrentShiftPage() {
     }
   };
 
+  const refreshParticipantPayload = async () => {
+    const nextPayload = await loadShiftDetails();
+    setPayload(nextPayload);
+    if (user?.id) {
+      storeShiftDetails(user.id, nextPayload);
+    }
+  };
+
+  const handleReinviteParticipant = async (participantUserId: string) => {
+    if (!payload) {
+      return;
+    }
+    if (!isOnline) {
+      toast.error(backendUnavailableMessage);
+      return;
+    }
+
+    setParticipantActionKey(`reinvite:${participantUserId}`);
+    try {
+      const response = await fetch(`/api/shifts/${payload.id}/participants`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: participantUserId }),
+      });
+      if (!response.ok) {
+        throw new Error(await readApiErrorMessage(response, "Nem sikerült újra meghívni a résztvevőt."));
+      }
+      await refreshParticipantPayload();
+    } catch (err) {
+      const message = toActionErrorMessage(err, backendUnavailableMessage);
+      toast.error(message);
+    } finally {
+      setParticipantActionKey(null);
+    }
+  };
+
+  const handleRemoveParticipant = async (participantUserId: string) => {
+    if (!payload) {
+      return;
+    }
+    if (!isOnline) {
+      toast.error(backendUnavailableMessage);
+      return;
+    }
+
+    setParticipantActionKey(`remove:${participantUserId}`);
+    try {
+      const response = await fetch(
+        `/api/shifts/${payload.id}/participants/${participantUserId}`,
+        {
+          method: "DELETE",
+          credentials: "include",
+        },
+      );
+      if (!response.ok) {
+        throw new Error(await readApiErrorMessage(response, "Nem sikerült eltávolítani a résztvevőt."));
+      }
+      await refreshParticipantPayload();
+    } catch (err) {
+      const message = toActionErrorMessage(err, backendUnavailableMessage);
+      toast.error(message);
+    } finally {
+      setParticipantActionKey(null);
+    }
+  };
+
   const handleCancelShift = async () => {
     if (!payload) {
       return;
@@ -390,7 +523,7 @@ export default function MyCurrentShiftPage() {
       }
       await refreshCurrentShift();
       toast.success("A műszak megszakítása sikeres.");
-      navigate("/");
+      navigate("/home");
     } catch (err) {
       const message = toActionErrorMessage(err, backendUnavailableMessage);
       toast.error(message);
@@ -411,6 +544,10 @@ export default function MyCurrentShiftPage() {
   const handleOpenCancelDialog = () => {
     handleCloseActionsMenu();
     setCancelDialogOpen(true);
+  };
+
+  const handleOpenCloseDialog = () => {
+    setCloseDialogOpen(true);
   };
 
   const handleReloadBuildingCache = async () => {
@@ -441,6 +578,7 @@ export default function MyCurrentShiftPage() {
       return;
     }
 
+    setIsClosingShift(true);
     try {
       const response = await fetch(`/api/shifts/${payload.id}/close-request`, {
         method: "POST",
@@ -456,13 +594,19 @@ export default function MyCurrentShiftPage() {
     } catch (err) {
       const message = toActionErrorMessage(err, backendUnavailableMessage);
       toast.error(message);
+    } finally {
+      setIsClosingShift(false);
+      setCloseDialogOpen(false);
     }
   };
 
   const invitableCandidates = payload
     ? inviteCandidates.filter(
         (candidate) =>
-          !payload.participants.some((participant) => participant.user_id === candidate.id),
+          !payload.participants.some(
+            (participant) =>
+              participant.user_id === candidate.id && participant.status !== "DECLINED",
+          ),
       )
     : inviteCandidates;
 
@@ -470,12 +614,6 @@ export default function MyCurrentShiftPage() {
     <Layout>
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-          <IconButton
-            onClick={() => navigate(-1)}
-            aria-label="Vissza"
-          >
-            <ArrowLeft size={18} />
-          </IconButton>
           <Typography variant="h6" sx={{ fontWeight: 700 }}>
             Műszak
           </Typography>
@@ -567,25 +705,60 @@ export default function MyCurrentShiftPage() {
                 </Typography>
                 <List disablePadding>
                   {orderedParticipants.map((participant) => {
-                    const isLead = participant.user_id === payload.lead_user_id;
-                    const callNumber = participant.phone_number ?? (isLead ? payload.lead_user_phone : null);
-                    return (
-                    <ListItem
-                      key={participant.user_id}
-                      disableGutters
-                      secondaryAction={
-                        callNumber ? (
-                          <IconButton
-                            component="a"
-                            href={`tel:${callNumber}`}
-                            aria-label={`${participant.full_name} hívása`}
-                            sx={{ color: "primary.main" }}
-                          >
-                            <Phone size={18} />
-                          </IconButton>
-                        ) : null
-                      }
-                    >
+                     const isLead = participant.user_id === payload.lead_user_id;
+                     const callNumber = participant.phone_number ?? (isLead ? payload.lead_user_phone : null);
+                     const canReinviteParticipant =
+                       isShiftLead &&
+                       !isLead &&
+                       participant.status === "DECLINED" &&
+                       payload.status !== "CLOSE_REQUESTED";
+                     const canRemoveParticipant =
+                       isShiftLead &&
+                       !isLead &&
+                       payload.status === "READY_TO_START";
+                     const isReinvitingParticipant =
+                       participantActionKey === `reinvite:${participant.user_id}`;
+                     const isRemovingParticipant =
+                       participantActionKey === `remove:${participant.user_id}`;
+                     return (
+                     <ListItem
+                       key={participant.user_id}
+                       disableGutters
+                       secondaryAction={
+                         <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}>
+                           {callNumber ? (
+                             <IconButton
+                               component="a"
+                               href={`tel:${callNumber}`}
+                               aria-label={`${participant.full_name} hívása`}
+                               sx={{ color: "primary.main" }}
+                             >
+                               <Phone size={18} />
+                             </IconButton>
+                           ) : null}
+                           {canReinviteParticipant ? (
+                             <IconButton
+                               onClick={() => void handleReinviteParticipant(participant.user_id)}
+                               disabled={participantActionKey !== null}
+                               aria-label="Résztvevő újrahívása"
+                               sx={{ color: "primary.main" }}
+                             >
+                               <Repeat size={18} />
+                             </IconButton>
+                           ) : null}
+                           {canRemoveParticipant ? (
+                             <IconButton
+                               onClick={() => void handleRemoveParticipant(participant.user_id)}
+                               disabled={participantActionKey !== null}
+                               aria-label="Résztvevő eltávolítása"
+                               sx={{ color: "error.main" }}
+                             >
+                               <Trash size={18} />
+                             </IconButton>
+                           ) : null}
+                         </Box>
+                       }
+                     >
                       <ListItemText
                         primary={
                           <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.75 }}>
@@ -597,9 +770,11 @@ export default function MyCurrentShiftPage() {
                               sx={{ fontWeight: isLead ? 700 : 500, color: isLead ? "primary.main" : "text.primary" }}
                             >
                               {participant.full_name}
-                            </Typography>
-                          </Box>
-                        }
+                              {isReinvitingParticipant ? " (újrahívás...)" : null}
+                              {isRemovingParticipant ? " (eltávolítás...)" : null}
+                             </Typography>
+                           </Box>
+                         }
                         secondary={
                           isLead ? (
                             <Typography variant="caption" color="text.secondary">
@@ -633,11 +808,11 @@ export default function MyCurrentShiftPage() {
                 variant="contained"
                 color="primary"
                 fullWidth
-                onClick={() => void handleCloseShift()}
-                disabled={!isOnline}
+                onClick={handleOpenCloseDialog}
+                disabled={!isOnline || isClosingShift}
                 sx={{ mt: 1 }}
               >
-                Műszak lezárása
+                {isClosingShift ? "Lezárás..." : "Műszak lezárása"}
               </Button>
             ) : null}
             {isShiftLead && payload.status === "CLOSE_REQUESTED" && !areAllParticipantsConfirmed ? (
@@ -703,6 +878,26 @@ export default function MyCurrentShiftPage() {
             disabled={isCancellingShift || !isOnline}
           >
             {isCancellingShift ? "Megszakítás..." : "Igen, megszakítom"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={closeDialogOpen} onClose={() => setCloseDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Műszak lezárása</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            Biztosan le akarod zárni a jelenlegi műszakot? Ha lezárod a műszakot, utána új
+            karbantartás már nem indítható.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCloseDialogOpen(false)}>Mégse</Button>
+          <Button
+            variant="contained"
+            onClick={() => void handleCloseShift()}
+            disabled={isClosingShift || !isOnline}
+          >
+            {isClosingShift ? "Lezárás..." : "Igen, lezárom"}
           </Button>
         </DialogActions>
       </Dialog>

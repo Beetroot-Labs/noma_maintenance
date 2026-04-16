@@ -374,7 +374,7 @@ export default function ShiftSummaryPage() {
     if (isFromPendingList) {
       navigate("/pending-worksheets");
     } else {
-      navigate("/shift-details");
+      navigate("/shifts/current");
     }
   };
 

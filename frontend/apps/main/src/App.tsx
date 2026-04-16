@@ -7,6 +7,7 @@ import { NotificationProvider } from "@/components/notifications/NotificationPro
 import { MaintenanceProvider } from "@/context/MaintenanceContext";
 import { DemoUserProvider, useDemoUser } from "@/context/DemoUserContext";
 import { ShiftProvider, useShift } from "@/context/ShiftContext";
+import { hasActiveShiftAccess } from "@/lib/shiftAccess";
 import { theme } from "@/theme";
 import LoginPage from "./pages/LoginPage";
 import NewMaintenancePage from "./pages/NewMaintenancePage";
@@ -14,7 +15,6 @@ import MaintenancePage from "./pages/MaintenancePage";
 import DeviceDetailsPage from "./pages/DeviceDetailsPage";
 import NotFound from "./pages/NotFound";
 import StartShiftPage from "./pages/StartShiftPage";
-import ShiftWaitingRoomPage from "./pages/ShiftWaitingRoomPage";
 import MaintenanceDashboard from "./pages/MaintenanceDashboard";
 import MyCurrentShiftPage from "./pages/MyCurrentShiftPage";
 import ShiftHomePage from "./pages/ShiftHomePage";
@@ -64,7 +64,7 @@ const RedirectAuthenticatedUser = () => {
   }
 
   if (user) {
-    const nextPath = location.state?.from?.pathname ?? "/";
+    const nextPath = location.state?.from?.pathname ?? "/home";
     return <Navigate to={nextPath} replace />;
   }
 
@@ -77,31 +77,9 @@ const RequireRoles = ({ roles }: { roles: string[] }) => {
     return <Navigate to="/login" replace />;
   }
   if (!roles.includes(user.role)) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/home" replace />;
   }
   return <Outlet />;
-};
-
-const ShiftDashboardRoute = () => {
-  const { currentShift, isLoading } = useShift();
-
-  if (isLoading) {
-    return (
-      <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
-        <CircularProgress color="secondary" />
-      </Box>
-    );
-  }
-
-  if (!currentShift) {
-    return <Navigate to="/" replace />;
-  }
-
-  if (currentShift.status === "INVITING" || currentShift.status === "READY_TO_START") {
-    return <Navigate to={`/shifts/${currentShift.id}/waiting-room`} replace />;
-  }
-
-  return <MaintenanceDashboard />;
 };
 
 const RequireMaintenanceStartAllowed = () => {
@@ -119,7 +97,7 @@ const RequireMaintenanceStartAllowed = () => {
     currentShift &&
     currentShift.status === "CLOSE_REQUESTED"
   ) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to="/shifts/current" replace />;
   }
 
   return <Outlet />;
@@ -136,8 +114,8 @@ const RequireActiveShift = () => {
     );
   }
 
-  if (!currentShift) {
-    return <Navigate to="/" replace />;
+  if (!hasActiveShiftAccess(currentShift)) {
+    return <Navigate to="/home" replace />;
   }
 
   return <Outlet />;
@@ -187,9 +165,10 @@ const App = () => (
               <Routes>
                 <Route path="/login" element={<RedirectAuthenticatedUser />} />
                 <Route element={<RequireDemoUser />}>
-                  <Route path="/" element={<ShiftHomePage />} />
-                  <Route path="/dashboard" element={<ShiftDashboardRoute />} />
-                  <Route path="/shifts/:shiftId/waiting-room" element={<ShiftWaitingRoomPage />} />
+                  <Route path="/" element={<Navigate to="/home" replace />} />
+                  <Route path="/home" element={<ShiftHomePage />} />
+                  <Route path="/dashboard" element={<Navigate to="/shifts/current/maintenances" replace />} />
+                  <Route path="/shifts/:shiftId/waiting-room" element={<Navigate to="/shifts/current" replace />} />
                   <Route element={<RequireRoles roles={["admin", "lead_technician"]} />}>
                     <Route path="/admin/shifts" element={<AdminShiftsPage />} />
                     <Route path="/admin/shifts/:shiftId" element={<ShiftDetailsPage />} />
@@ -204,7 +183,9 @@ const App = () => (
                       <Route path="/scan" element={<Navigate to="/new-maintenance" replace />} />
                     </Route>
                     <Route path="/maintenance/:workId" element={<MaintenancePage />} />
-                    <Route path="/shift-details" element={<MyCurrentShiftPage />} />
+                    <Route path="/shift-details" element={<Navigate to="/shifts/current" replace />} />
+                    <Route path="/shifts/current" element={<MyCurrentShiftPage />} />
+                    <Route path="/shifts/current/maintenances" element={<MaintenanceDashboard />} />
                     <Route path="/shift-summary" element={<ShiftSummaryPage />} />
                     <Route path="/devices/:id" element={<DeviceDetailsPage />} />
                   </Route>

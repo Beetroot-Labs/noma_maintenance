@@ -3,9 +3,14 @@ use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use chrono::{DateTime, Utc};
 use cloud_storage::Object;
 use serde::{Deserialize, Serialize};
+use std::convert::Infallible;
+use std::time::Duration as StdDuration;
+use tokio_stream::StreamExt;
+use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 
 use crate::auth::{require_admin, require_lead_or_admin, require_session_user};
 use crate::error::ApiError;
@@ -106,6 +111,10 @@ pub struct CurrentShiftSummary {
 #[derive(Serialize)]
 pub struct CurrentShiftResponse {
     shift: Option<CurrentShiftSummary>,
+}
+
+fn notify_shift_participants_updated(state: &AppState, shift_id: uuid::Uuid) {
+    state.shift_events.publish_participants_updated(shift_id);
 }
 
 #[derive(Serialize, sqlx::FromRow)]
@@ -908,6 +917,12 @@ pub async fn get_current_shift_state(
         WHERE sp.tenant_id = $1
           AND sp.user_id = $2
           AND s.status IN ('INVITING', 'READY_TO_START', 'IN_PROGRESS', 'CLOSE_REQUESTED')
+          AND sp.status IN ('INVITED', 'ACCEPTED', 'CACHE_READY', 'CLOSE_CONFIRMED')
+          AND (
+            s.status <> 'CLOSE_REQUESTED'
+            OR sp.status <> 'CLOSE_CONFIRMED'
+            OR s.lead_user_id = $2
+          )
         ORDER BY
           CASE
             WHEN s.status IN ('IN_PROGRESS', 'CLOSE_REQUESTED') THEN 0
@@ -1064,8 +1079,8 @@ pub async fn create_shift(
 
     let shift_id: uuid::Uuid = sqlx::query_scalar(
         r#"
-        INSERT INTO shifts (tenant_id, building_id, lead_user_id, status)
-        VALUES ($1, $2, $3, 'INVITING')
+        INSERT INTO shifts (tenant_id, building_id, lead_user_id, status, started_at)
+        VALUES ($1, $2, $3, 'IN_PROGRESS', NOW())
         RETURNING id
         "#,
     )
@@ -1096,7 +1111,6 @@ pub async fn create_shift(
     .await
     .map_err(ApiError::internal)?;
 
-    refresh_shift_ready_state_tx(&mut tx, user.tenant_id, shift_id).await?;
     tx.commit().await.map_err(ApiError::internal)?;
 
     Ok(Json(CreateShiftResponse { shift_id }))
@@ -1299,7 +1313,7 @@ pub async fn commit_shift(
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn accept_shift_invitation(
+pub async fn mark_shift_join_ready(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(shift_id): Path<uuid::Uuid>,
@@ -1316,17 +1330,63 @@ pub async fn accept_shift_invitation(
         UPDATE shift_participants
         SET
             status = CASE
-                WHEN status = 'INVITED' THEN 'ACCEPTED'::shift_participant_status
+                WHEN status IN ('INVITED', 'ACCEPTED') THEN 'CACHE_READY'::shift_participant_status
                 ELSE status
             END,
             accepted_at = CASE
-                WHEN accepted_at IS NULL AND status = 'INVITED' THEN NOW()
+                WHEN accepted_at IS NULL AND status IN ('INVITED', 'ACCEPTED') THEN NOW()
                 ELSE accepted_at
+            END,
+            cache_ready_at = CASE
+                WHEN cache_ready_at IS NULL AND status IN ('INVITED', 'ACCEPTED') THEN NOW()
+                ELSE cache_ready_at
             END
         WHERE tenant_id = $1
           AND shift_id = $2
           AND user_id = $3
           AND status IN ('INVITED', 'ACCEPTED', 'CACHE_READY')
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(shift_id)
+    .bind(user.id)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    if updated.rows_affected() == 0 {
+        return Err(ApiError::forbidden(
+            "shift participant not found or not eligible to join",
+        ));
+    }
+
+    refresh_shift_ready_state_tx(&mut tx, user.tenant_id, shift_id).await?;
+    tx.commit().await.map_err(ApiError::internal)?;
+    notify_shift_participants_updated(&state, shift_id);
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn decline_shift_invitation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(shift_id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+
+    let updated = sqlx::query(
+        r#"
+        UPDATE shift_participants
+        SET status = 'DECLINED'
+        WHERE tenant_id = $1
+          AND shift_id = $2
+          AND user_id = $3
+          AND status IN ('INVITED', 'ACCEPTED')
         "#,
     )
     .bind(user.tenant_id)
@@ -1344,6 +1404,7 @@ pub async fn accept_shift_invitation(
 
     refresh_shift_ready_state_tx(&mut tx, user.tenant_id, shift_id).await?;
     tx.commit().await.map_err(ApiError::internal)?;
+    notify_shift_participants_updated(&state, shift_id);
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1416,7 +1477,28 @@ pub async fn add_shift_participant(
             invited_at
         )
         VALUES ($1, $2, $3, 'INVITED', NOW())
-        ON CONFLICT (shift_id, user_id) DO NOTHING
+        ON CONFLICT (shift_id, user_id) DO UPDATE
+        SET
+            status = CASE
+                WHEN shift_participants.status = 'DECLINED' THEN 'INVITED'::shift_participant_status
+                ELSE shift_participants.status
+            END,
+            invited_at = CASE
+                WHEN shift_participants.status = 'DECLINED' THEN NOW()
+                ELSE shift_participants.invited_at
+            END,
+            accepted_at = CASE
+                WHEN shift_participants.status = 'DECLINED' THEN NULL
+                ELSE shift_participants.accepted_at
+            END,
+            cache_ready_at = CASE
+                WHEN shift_participants.status = 'DECLINED' THEN NULL
+                ELSE shift_participants.cache_ready_at
+            END,
+            close_confirmed_at = CASE
+                WHEN shift_participants.status = 'DECLINED' THEN NULL
+                ELSE shift_participants.close_confirmed_at
+            END
         "#,
     )
     .bind(user.tenant_id)
@@ -1428,6 +1510,7 @@ pub async fn add_shift_participant(
 
     refresh_shift_ready_state_tx(&mut tx, user.tenant_id, shift_id).await?;
     tx.commit().await.map_err(ApiError::internal)?;
+    notify_shift_participants_updated(&state, shift_id);
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1490,50 +1573,7 @@ pub async fn remove_shift_participant(
 
     refresh_shift_ready_state_tx(&mut tx, user.tenant_id, shift_id).await?;
     tx.commit().await.map_err(ApiError::internal)?;
-
-    Ok(StatusCode::NO_CONTENT)
-}
-
-pub async fn mark_shift_cache_ready(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(shift_id): Path<uuid::Uuid>,
-) -> Result<impl IntoResponse, ApiError> {
-    let pool = state
-        .db_pool
-        .as_ref()
-        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
-    let user = require_session_user(&state, &headers).await?;
-    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
-
-    let updated = sqlx::query(
-        r#"
-        UPDATE shift_participants
-        SET
-            status = 'CACHE_READY',
-            accepted_at = COALESCE(accepted_at, NOW()),
-            cache_ready_at = COALESCE(cache_ready_at, NOW())
-        WHERE tenant_id = $1
-          AND shift_id = $2
-          AND user_id = $3
-          AND status IN ('ACCEPTED', 'CACHE_READY')
-        "#,
-    )
-    .bind(user.tenant_id)
-    .bind(shift_id)
-    .bind(user.id)
-    .execute(&mut *tx)
-    .await
-    .map_err(ApiError::internal)?;
-
-    if updated.rows_affected() == 0 {
-        return Err(ApiError::conflict(
-            "participant must accept invitation before cache-ready acknowledgement",
-        ));
-    }
-
-    refresh_shift_ready_state_tx(&mut tx, user.tenant_id, shift_id).await?;
-    tx.commit().await.map_err(ApiError::internal)?;
+    notify_shift_participants_updated(&state, shift_id);
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1637,83 +1677,57 @@ pub async fn get_shift_waiting_room(
     }))
 }
 
-pub async fn start_shift(
+pub async fn subscribe_shift_events(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(shift_id): Path<uuid::Uuid>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>>, ApiError> {
     let pool = state
         .db_pool
         .as_ref()
         .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
     let user = require_session_user(&state, &headers).await?;
-    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
 
-    let lead_user_id: Option<uuid::Uuid> = sqlx::query_scalar(
+    let has_access: Option<bool> = sqlx::query_scalar(
         r#"
-        SELECT lead_user_id
-        FROM shifts
-        WHERE tenant_id = $1
-          AND id = $2
-          AND status IN ('INVITING', 'READY_TO_START')
-        "#,
-    )
-    .bind(user.tenant_id)
-    .bind(shift_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(ApiError::internal)?;
-
-    let Some(lead_user_id) = lead_user_id else {
-        return Err(ApiError::forbidden("shift not found or cannot be started"));
-    };
-
-    if lead_user_id != user.id {
-        return Err(ApiError::forbidden(
-            "only the shift lead can start the shift",
-        ));
-    }
-
-    let not_ready_count: i64 = sqlx::query_scalar(
-        r#"
-        SELECT COUNT(*)
+        SELECT TRUE
         FROM shift_participants
         WHERE tenant_id = $1
           AND shift_id = $2
-          AND status <> 'CACHE_READY'
+          AND user_id = $3
         "#,
     )
     .bind(user.tenant_id)
     .bind(shift_id)
-    .fetch_one(&mut *tx)
+    .bind(user.id)
+    .fetch_optional(pool)
     .await
     .map_err(ApiError::internal)?;
 
-    if not_ready_count > 0 {
-        return Err(ApiError::conflict(
-            "all participants must be CACHE_READY before starting the shift",
+    if has_access.is_none() {
+        return Err(ApiError::forbidden(
+            "current user is not a shift participant",
         ));
     }
 
-    sqlx::query(
-        r#"
-        UPDATE shifts
-        SET status = 'IN_PROGRESS',
-            started_at = COALESCE(started_at, NOW())
-        WHERE tenant_id = $1
-          AND id = $2
-          AND status IN ('INVITING', 'READY_TO_START')
-        "#,
-    )
-    .bind(user.tenant_id)
-    .bind(shift_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(ApiError::internal)?;
+    let stream = BroadcastStream::new(state.shift_events.subscribe(shift_id)).filter_map(move |message| {
+        let event = match message {
+            Ok(message) => message,
+            Err(BroadcastStreamRecvError::Lagged(_)) => crate::state::ShiftEventMessage {
+                event_type: "participants-updated",
+                shift_id,
+            },
+        };
 
-    tx.commit().await.map_err(ApiError::internal)?;
+        let data = serde_json::to_string(&event).ok()?;
+        Some(Ok(Event::default().event(event.event_type).data(data)))
+    });
 
-    Ok(StatusCode::NO_CONTENT)
+    Ok(Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(StdDuration::from_secs(15))
+            .text("keep-alive"),
+    ))
 }
 
 pub async fn request_shift_close(
@@ -1774,6 +1788,7 @@ pub async fn request_shift_close(
     .map_err(ApiError::internal)?;
 
     tx.commit().await.map_err(ApiError::internal)?;
+    notify_shift_participants_updated(&state, shift_id);
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1864,6 +1879,7 @@ pub async fn confirm_shift_close(
 
     refresh_shift_close_state_tx(&mut tx, user.tenant_id, shift_id).await?;
     tx.commit().await.map_err(ApiError::internal)?;
+    notify_shift_participants_updated(&state, shift_id);
 
     Ok(StatusCode::NO_CONTENT)
 }

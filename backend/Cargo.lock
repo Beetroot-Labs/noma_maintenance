@@ -1262,6 +1262,7 @@ dependencies = [
  "simple_logger",
  "sqlx",
  "tokio",
+ "tokio-stream",
  "tower",
  "tower-http",
  "uuid",
@@ -2590,6 +2591,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

@@ -31,14 +31,14 @@ use crate::labeling::{
 };
 use crate::maintenance::{sync_maintenance_work, upload_maintenance_photo};
 use crate::shifts::{
-    accept_shift_invitation, add_shift_participant, cancel_shift, commit_shift,
+    add_shift_participant, cancel_shift, commit_shift,
     confirm_shift_close, create_shift, get_admin_maintenance_detail, get_admin_maintenance_photo,
     get_admin_shift_detail, get_current_shift_state, get_pending_worksheets,
     get_shift_maintenance_summary, get_shift_waiting_room, list_admin_shifts,
-    list_shift_invite_candidates, mark_shift_cache_ready, remove_shift_participant,
-    request_shift_close, start_shift, upload_shift_signature,
+    list_shift_invite_candidates, mark_shift_join_ready, remove_shift_participant,
+    request_shift_close, subscribe_shift_events, upload_shift_signature, decline_shift_invitation,
 };
-use crate::state::{AppState, AuthConfig, load_google_client_ids, load_storage_config};
+use crate::state::{AppState, AuthConfig, ShiftEventHub, load_google_client_ids, load_storage_config};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -120,6 +120,7 @@ async fn main() -> anyhow::Result<()> {
             session_duration: Duration::days(session_days),
             cookie_secure,
         }),
+        shift_events: ShiftEventHub::default(),
     };
 
     let api = Router::new()
@@ -152,12 +153,8 @@ async fn main() -> anyhow::Result<()> {
             "/shifts/{shift_id}/participants/{participant_user_id}",
             axum::routing::delete(remove_shift_participant),
         )
-        .route("/shifts/{shift_id}/accept", post(accept_shift_invitation))
-        .route(
-            "/shifts/{shift_id}/cache-ready",
-            post(mark_shift_cache_ready),
-        )
-        .route("/shifts/{shift_id}/start", post(start_shift))
+        .route("/shifts/{shift_id}/join-ready", post(mark_shift_join_ready))
+        .route("/shifts/{shift_id}/decline", post(decline_shift_invitation))
         .route(
             "/shifts/{shift_id}/close-request",
             post(request_shift_close),
@@ -176,6 +173,7 @@ async fn main() -> anyhow::Result<()> {
             "/shifts/{shift_id}/waiting-room",
             get(get_shift_waiting_room),
         )
+        .route("/shifts/{shift_id}/events", get(subscribe_shift_events))
         .route(
             "/shifts/{shift_id}/maintenance-summary",
             get(get_shift_maintenance_summary),

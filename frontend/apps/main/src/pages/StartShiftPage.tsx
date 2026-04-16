@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { rebuildBuildingSnapshot } from "@noma/shared";
 import { useNavigate } from "react-router-dom";
 import {
   Alert,
@@ -12,16 +13,14 @@ import {
   Typography,
 } from "@mui/material";
 import { Layout } from "@/components/Layout";
+import { useDemoUser } from "@/context/DemoUserContext";
 import { useShift } from "@/context/ShiftContext";
+import { pruneNonRetryableMaintenanceSyncItems } from "@/lib/maintenanceStore";
 
 type BuildingOption = {
   id: string;
   name: string;
   address: string;
-};
-
-type CreateShiftResponse = {
-  shift_id: string;
 };
 
 const readApiErrorMessage = async (response: Response, fallback: string) => {
@@ -38,9 +37,11 @@ const readApiErrorMessage = async (response: Response, fallback: string) => {
 
 export default function StartShiftPage() {
   const navigate = useNavigate();
+  const { user } = useDemoUser();
   const { refreshCurrentShift } = useShift();
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingShiftId, setPendingShiftId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [buildings, setBuildings] = useState<BuildingOption[]>([]);
   const [selectedBuilding, setSelectedBuilding] = useState<BuildingOption | null>(null);
@@ -82,8 +83,13 @@ export default function StartShiftPage() {
       return;
     }
     setIsSubmitting(true);
+    setPendingShiftId(null);
     setError(null);
     try {
+      if (!user?.tenantId) {
+        throw new Error("Hiányzik a tenant azonosító, ezért a műszak nem készíthető elő.");
+      }
+
       const response = await fetch("/api/shifts", {
         method: "POST",
         credentials: "include",
@@ -96,10 +102,30 @@ export default function StartShiftPage() {
         throw new Error(await readApiErrorMessage(response, "Nem sikerült létrehozni a műszakot."));
       }
 
-      const payload = (await response.json()) as CreateShiftResponse;
+      const payload = (await response.json()) as { shift_id?: string };
+      if (!payload.shift_id) {
+        throw new Error("A szerver nem adott vissza műszak azonosítót.");
+      }
+
+      setPendingShiftId(payload.shift_id);
+
+      await pruneNonRetryableMaintenanceSyncItems();
+      await rebuildBuildingSnapshot(user.tenantId, selectedBuilding.id);
+
+      const joinReadyResponse = await fetch(`/api/shifts/${payload.shift_id}/join-ready`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!joinReadyResponse.ok) {
+        throw new Error(
+          await readApiErrorMessage(joinReadyResponse, "Nem sikerült jelezni a csatlakozási kész állapotot."),
+        );
+      }
+
       await refreshCurrentShift();
-      navigate(`/shifts/${payload.shift_id}/waiting-room`);
+      navigate("/shifts/current");
     } catch (err) {
+      setPendingShiftId(null);
       setError(err instanceof Error ? err.message : "Nem sikerült létrehozni a műszakot.");
     } finally {
       setIsSubmitting(false);
@@ -121,6 +147,16 @@ export default function StartShiftPage() {
               <Box sx={{ py: 4, display: "grid", placeItems: "center" }}>
                 <CircularProgress color="secondary" />
               </Box>
+            ) : pendingShiftId ? (
+              <Box sx={{ py: 5, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                <CircularProgress color="secondary" />
+                <Typography variant="body1" sx={{ fontWeight: 600, textAlign: "center" }}>
+                  Műszak előkészítése folyamatban...
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ textAlign: "center", maxWidth: 360 }}>
+                  Várunk, amíg az épület eszközei gyorsítótárba kerülnek, és a műszakvezető cache állapota elkészül.
+                </Typography>
+              </Box>
             ) : (
               <>
                 <Autocomplete
@@ -132,7 +168,7 @@ export default function StartShiftPage() {
                 />
                 <Typography variant="body2" color="text.secondary">
                   A műszak létrehozásakor csak a műszakvezető kerül a résztvevők közé.
-                  További résztvevőket a várószobában lehet meghívni.
+                  A műszak azonnal elindul, további résztvevőket a jelenlegi műszaknál lehet meghívni.
                 </Typography>
                 <Button
                   variant="contained"

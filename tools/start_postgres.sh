@@ -9,17 +9,12 @@ DB_PORT="${POSTGRES_PORT:-5432}"
 export PGPASSWORD="${POSTGRES_PASSWORD}"
 BOOTSTRAP_URL="${POSTGRES_BOOTSTRAP_URL:-}"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-BUILD_DIR="${REPO_ROOT}/builds"
+BUILD_DIR="${REPO_ROOT}/postgres-dev"
 LOCAL_PG_DATA_DIR="${POSTGRES_DATA_DIR:-${BUILD_DIR}/postgres-data}"
 LOCAL_PG_LOG_FILE="${POSTGRES_LOG_FILE:-${BUILD_DIR}/postgres.log}"
 REQUESTED_PG_MAJOR="${POSTGRES_VERSION%%.*}"
 LOCAL_PG_OWNER="${SUDO_USER:-$(id -un)}"
 LOCAL_PG_SUPERUSER="${POSTGRES_LOCAL_SUPERUSER:-${LOCAL_PG_OWNER}}"
-
-if ! command -v psql >/dev/null 2>&1; then
-  echo "psql is not installed or not on PATH" >&2
-  exit 1
-fi
 
 can_use_sudo_postgres=false
 if command -v sudo >/dev/null 2>&1 && sudo -n -u postgres true >/dev/null 2>&1; then
@@ -44,11 +39,33 @@ detect_pg_bin_dir() {
   fi
 }
 
+detect_psql_bin() {
+  if [ -n "${REQUESTED_PG_MAJOR}" ] && [ -x "/usr/lib/postgresql/${REQUESTED_PG_MAJOR}/bin/psql" ]; then
+    printf '%s\n' "/usr/lib/postgresql/${REQUESTED_PG_MAJOR}/bin/psql"
+    return
+  fi
+
+  if [ -n "${PG_BIN_DIR:-}" ] && [ -x "${PG_BIN_DIR}/psql" ]; then
+    printf '%s\n' "${PG_BIN_DIR}/psql"
+    return
+  fi
+
+  if command -v psql >/dev/null 2>&1; then
+    command -v psql
+  fi
+}
+
 PG_BIN_DIR="$(detect_pg_bin_dir || true)"
 INITDB_BIN="${PG_BIN_DIR:+${PG_BIN_DIR}/initdb}"
 PG_CTL_BIN="${PG_BIN_DIR:+${PG_BIN_DIR}/pg_ctl}"
+PSQL_BIN="$(detect_psql_bin || true)"
 CREATEDB_BIN="${PG_BIN_DIR:+${PG_BIN_DIR}/createdb}"
 DROPPDB_BIN="${PG_BIN_DIR:+${PG_BIN_DIR}/dropdb}"
+
+if [ -z "${PSQL_BIN}" ] || [ ! -x "${PSQL_BIN}" ]; then
+  echo "psql is not installed for PostgreSQL ${REQUESTED_PG_MAJOR:-requested}" >&2
+  exit 1
+fi
 
 run_as_local_pg_owner() {
   if [ "$(id -un)" = "${LOCAL_PG_OWNER}" ]; then
@@ -100,17 +117,17 @@ start_local_postgres_if_possible() {
 
 bootstrap_psql() {
   if [ -n "${BOOTSTRAP_URL}" ]; then
-    psql "${BOOTSTRAP_URL}" -v ON_ERROR_STOP=1 "$@"
+    "${PSQL_BIN}" "${BOOTSTRAP_URL}" -v ON_ERROR_STOP=1 "$@"
     return
   fi
   if [ "${local_bootstrap_superuser}" = true ]; then
-    run_as_local_pg_owner env PGGSSENCMODE=disable psql "${local_socket_conn_args[@]}" -U "${LOCAL_PG_SUPERUSER}" -v ON_ERROR_STOP=1 postgres "$@"
+    run_as_local_pg_owner env PGGSSENCMODE=disable "${PSQL_BIN}" "${local_socket_conn_args[@]}" -U "${LOCAL_PG_SUPERUSER}" -v ON_ERROR_STOP=1 postgres "$@"
     return
   fi
 
   (
     cd /tmp
-    sudo -u postgres psql -v ON_ERROR_STOP=1 "${bootstrap_conn_args[@]}" postgres "$@"
+    sudo -u postgres "${PSQL_BIN}" -v ON_ERROR_STOP=1 "${bootstrap_conn_args[@]}" postgres "$@"
   )
 }
 
@@ -148,7 +165,7 @@ bootstrap_dropdb() {
 
 app_db_reachable=false
 if PGGSSENCMODE=disable pg_isready -h "${DB_HOST}" -p "${DB_PORT}" -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" >/dev/null 2>&1; then
-  if PGGSSENCMODE=disable psql \
+  if PGGSSENCMODE=disable "${PSQL_BIN}" \
     -h "${DB_HOST}" \
     -p "${DB_PORT}" \
     -U "${POSTGRES_USER}" \
@@ -253,7 +270,7 @@ if ! PGGSSENCMODE=disable pg_isready -h "${DB_HOST}" -p "${DB_PORT}" -U "${POSTG
 fi
 
 schema_already_initialized=false
-if PGGSSENCMODE=disable psql \
+if PGGSSENCMODE=disable "${PSQL_BIN}" \
   -h "${DB_HOST}" \
   -p "${DB_PORT}" \
   -U "${POSTGRES_USER}" \
@@ -264,7 +281,7 @@ fi
 
 if [ "${schema_already_initialized}" = true ]; then
   echo "Database schema already exists in '${POSTGRES_DB}'. Resetting via database/reset_prod.sql..."
-  PGGSSENCMODE=disable psql \
+  PGGSSENCMODE=disable "${PSQL_BIN}" \
     -h "${DB_HOST}" \
     -p "${DB_PORT}" \
     -U "${POSTGRES_USER}" \
@@ -274,7 +291,7 @@ if [ "${schema_already_initialized}" = true ]; then
   exit 0
 fi
 
-PGGSSENCMODE=disable psql \
+PGGSSENCMODE=disable "${PSQL_BIN}" \
   -h "${DB_HOST}" \
   -p "${DB_PORT}" \
   -U "${POSTGRES_USER}" \
@@ -282,7 +299,7 @@ PGGSSENCMODE=disable psql \
   -v ON_ERROR_STOP=1 \
   -f "${SCRIPT_DIR}/../database/setup.sql"
 
-PGGSSENCMODE=disable psql \
+PGGSSENCMODE=disable "${PSQL_BIN}" \
   -h "${DB_HOST}" \
   -p "${DB_PORT}" \
   -U "${POSTGRES_USER}" \

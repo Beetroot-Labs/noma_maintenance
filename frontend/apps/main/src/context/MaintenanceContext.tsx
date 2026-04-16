@@ -818,6 +818,8 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
       !currentShift ||
       !navigator.onLine ||
       !canConfirmShiftClose ||
+      (currentShift.my_participant_status !== "ACCEPTED" &&
+        currentShift.my_participant_status !== "CACHE_READY") ||
       currentShift.my_participant_status === "CLOSE_CONFIRMED" ||
       (currentShift.status !== "CLOSE_REQUESTED" && currentShift.status !== "READY_TO_COMMIT")
     ) {

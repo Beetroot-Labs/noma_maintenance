@@ -357,6 +357,7 @@ export default function MaintenanceDashboard() {
   const [allWorksPayload, setAllWorksPayload] = useState<ShiftMaintenanceSummaryPayload | null>(null);
   const [isLoadingAllWorks, setIsLoadingAllWorks] = useState(false);
   const [allWorksError, setAllWorksError] = useState<string | null>(null);
+  const canViewAllWorks = user?.role === "admin" || user?.role === "lead_technician";
 
   const orderedOwnWorks = useMemo(
     () => [...todaysWorks].sort(compareWorksByCompletionAndStart),
@@ -392,7 +393,7 @@ export default function MaintenanceDashboard() {
     let cancelled = false;
 
     const loadAllWorks = async () => {
-      if (!currentShift?.id) {
+      if (!currentShift?.id || !canViewAllWorks) {
         if (!cancelled) {
           setAllWorksPayload(null);
           setAllWorksError(null);
@@ -436,7 +437,7 @@ export default function MaintenanceDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [currentShift?.id]);
+  }, [canViewAllWorks, currentShift?.id]);
 
   return (
     <Layout>
@@ -469,22 +470,24 @@ export default function MaintenanceDashboard() {
             )}
           </Box>
 
-          <Tabs
-            value={activeTab}
-            onChange={(_, value: DashboardTabValue) => setActiveTab(value)}
-            variant="fullWidth"
-            sx={{
-              bgcolor: appColors.card,
-              borderRadius: 3,
-              border: `1px solid ${appColors.border}`,
-              px: 0.5,
-            }}
-          >
-            <Tab value="mine" label="Saját Munkák" />
-            <Tab value="all" label="Összes Munka" />
-          </Tabs>
+          {canViewAllWorks ? (
+            <Tabs
+              value={activeTab}
+              onChange={(_, value: DashboardTabValue) => setActiveTab(value)}
+              variant="fullWidth"
+              sx={{
+                bgcolor: appColors.card,
+                borderRadius: 3,
+                border: `1px solid ${appColors.border}`,
+                px: 0.5,
+              }}
+            >
+              <Tab value="mine" label="Saját Munkák" />
+              <Tab value="all" label="Összes Munka" />
+            </Tabs>
+          ) : null}
 
-          {activeTab === "mine" ? (
+          {!canViewAllWorks || activeTab === "mine" ? (
             orderedOwnWorks.length === 0 ? (
               <Card sx={{ boxShadow: "0 10px 24px rgba(31, 50, 58, 0.12)" }}>
                 <CardContent sx={{ textAlign: "center", py: 4 }}>

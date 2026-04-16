@@ -1,26 +1,42 @@
 import { useEffect, useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
-import { Badge, Box, Button, Card, CardActionArea, CardContent, CircularProgress, Typography } from "@mui/material";
+import { useNavigate } from "react-router-dom";
+import { Alert, Badge, Box, Button, Card, CardActionArea, CardContent, CircularProgress, Typography } from "@mui/material";
+import { rebuildBuildingSnapshot } from "@noma/shared";
 import { ChevronRight, ClipboardList, HardHat, Plus, Radio, Users } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import { useDemoUser } from "@/context/DemoUserContext";
 import { useShift } from "@/context/ShiftContext";
+import { pruneNonRetryableMaintenanceSyncItems } from "@/lib/maintenanceStore";
 import { appColors } from "@/theme";
 
 const waitingStatusLabel: Record<string, string> = {
   INVITED: "Meghívást kapott egy műszakhoz.",
-  ACCEPTED: "Belépett a műszakba.",
+  ACCEPTED: "A műszak előkészítése folyamatban.",
   CACHE_READY: "A műszak előkészítése kész.",
   DECLINED: "A műszak meghívása elutasítva.",
   CLOSE_CONFIRMED: "A műszak lezárása megerősítve.",
 };
 
+const readApiErrorMessage = async (response: Response, fallback: string) => {
+  try {
+    const payload = (await response.json()) as { error?: string };
+    if (payload.error) {
+      return payload.error;
+    }
+  } catch {
+    // Ignore malformed payload.
+  }
+  return fallback;
+};
+
 export default function ShiftHomePage() {
   const navigate = useNavigate();
   const { user } = useDemoUser();
-  const { currentShift, isLoading } = useShift();
+  const { currentShift, isLoading, refreshCurrentShift } = useShift();
   const isLeadOrAdmin = user?.role === "admin" || user?.role === "lead_technician";
   const [pendingCount, setPendingCount] = useState<number | null>(null);
+  const [inviteAction, setInviteAction] = useState<"accept" | "decline" | null>(null);
+  const [inviteActionError, setInviteActionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isLeadOrAdmin) return;
@@ -40,14 +56,61 @@ export default function ShiftHomePage() {
     );
   }
 
-  if (
-    currentShift?.status === "IN_PROGRESS" ||
-    currentShift?.status === "CLOSE_REQUESTED"
-  ) {
-    return <Navigate to="/dashboard" replace />;
-  }
-
   const canStartShift = isLeadOrAdmin;
+  const isInvited = currentShift?.my_participant_status === "INVITED";
+
+  const handleInviteAction = async (action: "accept" | "decline") => {
+    if (!currentShift) {
+      return;
+    }
+
+    setInviteAction(action);
+    setInviteActionError(null);
+    try {
+      if (action === "accept") {
+        if (!user?.tenantId) {
+          throw new Error("Hiányzik a tenant azonosító, ezért a cache előkészítése nem indítható.");
+        }
+
+        console.log("accept clicked, caching devices...");
+        await pruneNonRetryableMaintenanceSyncItems();
+        const cachePayload = await rebuildBuildingSnapshot(user.tenantId, currentShift.building_id);
+        console.log(
+          `${cachePayload.devices.length} devices cached in building '${cachePayload.building.name}'`,
+        );
+      }
+
+      const endpoint = action === "accept" ? "join-ready" : "decline";
+      const response = await fetch(`/api/shifts/${currentShift.id}/${endpoint}`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!response.ok) {
+        throw new Error(
+          await readApiErrorMessage(
+            response,
+            action === "accept"
+              ? "Nem sikerült elfogadni a meghívást."
+              : "Nem sikerült elutasítani a meghívást.",
+          ),
+        );
+      }
+      await refreshCurrentShift();
+      if (action === "accept") {
+        console.log("joined to shift");
+      }
+    } catch (error) {
+      setInviteActionError(
+        error instanceof Error
+          ? error.message
+          : action === "accept"
+            ? "Nem sikerült elfogadni a meghívást."
+            : "Nem sikerült elutasítani a meghívást.",
+      );
+    } finally {
+      setInviteAction(null);
+    }
+  };
 
   return (
     <Layout>
@@ -55,9 +118,6 @@ export default function ShiftHomePage() {
         <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
           <Typography variant="h5" sx={{ fontWeight: 800 }}>
             Műszak állapot
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Itt látható, hogy van-e aktív műszak, és innen lehet továbblépni.
           </Typography>
         </Box>
 
@@ -101,8 +161,15 @@ export default function ShiftHomePage() {
           </Card>
         ) : (
           <Card sx={{ boxShadow: "0 14px 36px rgba(15, 23, 42, 0.08)" }}>
-            <CardActionArea onClick={() => navigate(`/shifts/${currentShift.id}/waiting-room`)}>
-              <CardContent sx={{ display: "flex", alignItems: "center", gap: 2, py: 3 }}>
+            <CardActionArea
+              onClick={() => {
+                if (!isInvited) {
+                  navigate("/shifts/current");
+                }
+              }}
+            >
+              <CardContent sx={{ display: "flex", flexDirection: "column", gap: 2, py: 3 }}>
+                <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
                 <Box
                   sx={{
                     width: 56,
@@ -122,10 +189,39 @@ export default function ShiftHomePage() {
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
                     {waitingStatusLabel[currentShift.my_participant_status] ??
-                      "Aktív műszak várószoba érhető el."}
+                      "Aktuális műszak érhető el."}
                   </Typography>
                 </Box>
-                <ChevronRight size={20} color={appColors.primary} />
+                {!isInvited ? <ChevronRight size={20} color={appColors.primary} /> : null}
+                </Box>
+                {inviteActionError ? <Alert severity="error">{inviteActionError}</Alert> : null}
+                {isInvited ? (
+                  <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap" }}>
+                    <Button
+                      variant="contained"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void handleInviteAction("accept");
+                      }}
+                      disabled={inviteAction !== null}
+                    >
+                      {inviteAction === "accept" ? "Elfogadás..." : "Elfogadás"}
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      color="inherit"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void handleInviteAction("decline");
+                      }}
+                      disabled={inviteAction !== null}
+                    >
+                      {inviteAction === "decline" ? "Elutasítás..." : "Elutasítás"}
+                    </Button>
+                  </Box>
+                ) : null}
               </CardContent>
             </CardActionArea>
           </Card>

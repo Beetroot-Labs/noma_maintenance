@@ -77,7 +77,7 @@ export default function MaintenancePage() {
           <Typography variant="body2" color="text.secondary">
             A munka nem található
           </Typography>
-          <Button variant="text" onClick={() => navigate("/")}>
+          <Button variant="text" onClick={() => navigate("/home")}>
             Vissza a kezdőlapra
           </Button>
         </Box>
@@ -118,13 +118,13 @@ export default function MaintenancePage() {
 
     completeMaintenance(work.id);
     toast.success("Karbantartás befejezve!");
-    navigate("/dashboard");
+    navigate("/shifts/current");
   };
 
   const handleAbort = () => {
     abortMaintenance(work.id);
     toast.info("A karbantartás megszakítva.");
-    navigate("/");
+    navigate("/shifts/current");
   };
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
@@ -148,7 +148,7 @@ export default function MaintenancePage() {
     <Layout>
       <Box sx={{ display: "flex", flexDirection: "column", gap: 3, animation: "slideUp 0.3s ease-out" }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <IconButton onClick={() => navigate("/")}>
+          <IconButton onClick={() => navigate("/shifts/current")}>
             <ArrowLeft size={18} />
           </IconButton>
           <Box sx={{ flex: 1 }}>

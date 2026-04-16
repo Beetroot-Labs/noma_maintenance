@@ -33,14 +33,15 @@ import { appColors } from "@/theme";
 import { useDemoUser } from "@/context/DemoUserContext";
 import { useMaintenance } from "@/context/MaintenanceContext";
 import { useShift } from "@/context/ShiftContext";
+import { hasActiveShiftAccess } from "@/lib/shiftAccess";
 
 interface LayoutProps {
   children: ReactNode;
 }
 
 const navItems = [
-  { path: "/shift-details", label: "Műszak", icon: HardHat },
-  { path: "/dashboard", label: "Karbantartás", icon: Wrench },
+  { path: "/shifts/current", label: "Műszak", icon: HardHat },
+  { path: "/shifts/current/maintenances", label: "Karbantartás", icon: Wrench },
 ];
 
 export function Layout({ children }: LayoutProps) {
@@ -57,7 +58,9 @@ export function Layout({ children }: LayoutProps) {
   const isAdminView = location.pathname.startsWith("/admin");
   const canAccessAdminView = user?.role === "admin" || user?.role === "lead_technician";
   const isLeadOrAdmin = user?.role === "admin" || user?.role === "lead_technician";
-  const showBottomBar = Boolean(currentShift) && !isAdminView;
+  const showBottomBar =
+    hasActiveShiftAccess(currentShift) &&
+    (location.pathname === "/shifts/current" || location.pathname === "/shifts/current/maintenances");
   const canStartNewMaintenance = currentShift?.status !== "CLOSE_REQUESTED";
   const startActionDisabled = !currentWork && !canStartNewMaintenance;
 
@@ -105,7 +108,7 @@ export function Layout({ children }: LayoutProps) {
 
   const handleToggleView = () => {
     setMenuAnchor(null);
-    navigate(isAdminView ? "/" : "/admin/shifts");
+    navigate(isAdminView ? "/home" : "/admin/shifts");
   };
 
   const handleDrawerOpen = () => setDrawerOpen(true);
@@ -134,11 +137,18 @@ export function Layout({ children }: LayoutProps) {
                 </IconButton>
               ) : null}
               <Box
-                component="img"
-                src={`${import.meta.env.BASE_URL}logo-white.webp`}
-                alt="NoMa"
-                sx={{ height: 28, width: "auto" }}
-              />
+                component={Link}
+                to="/home"
+                aria-label="Kezdőlap"
+                sx={{ display: "inline-flex", alignItems: "center" }}
+              >
+                <Box
+                  component="img"
+                  src={`${import.meta.env.BASE_URL}logo-white.webp`}
+                  alt="NoMa"
+                  sx={{ height: 28, width: "auto" }}
+                />
+              </Box>
             </Box>
             {user && (
               <Box

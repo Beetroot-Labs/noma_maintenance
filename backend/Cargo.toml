@@ -19,6 +19,7 @@ sha2 = "0.10.9"
 simple_logger = "5.1.0"
 sqlx = { version = "0.8.6", default-features = false, features = ["postgres", "runtime-tokio-rustls", "macros", "chrono", "uuid"] }
 tokio = { version = "1", features = ["full", "rt-multi-thread"] }
+tokio-stream = { version = "0.1.17", features = ["sync"] }
 tower = "0.5.3"
 tower-http = { version = "0.6.8", features = ["cors", "fs", "set-header"] }
 uuid = { version = "1.19.0", features = ["v4", "serde"] }

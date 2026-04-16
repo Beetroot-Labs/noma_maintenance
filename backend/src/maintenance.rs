@@ -145,7 +145,7 @@ async fn ensure_shift_sync_allowed_tx(
         status.as_str(),
         "IN_PROGRESS" | "CLOSE_REQUESTED" | "READY_TO_COMMIT"
     ) {
-        return Err(ApiError::conflict(
+        return Err(ApiError::forbidden(
             "maintenance sync is only allowed while shift is active",
         ));
     }
