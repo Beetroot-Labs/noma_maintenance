@@ -6,6 +6,7 @@ import {
   Dialog,
   DialogContent,
   DialogTitle,
+  Fab,
   FormControl,
   InputLabel,
   LinearProgress,
@@ -24,7 +25,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { TriangleAlert } from "lucide-react";
+import { Plus, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getDeviceKindLabel, useAuth } from "@noma/shared";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -41,13 +42,25 @@ import {
   getSelectedCachedBuilding,
   hasOfflineCache,
   syncPendingBarcodeAssignments,
-} from "./lib/offlineCache";
+ } from "./lib/offlineCache";
+import { appColors } from "./theme";
 
 type LabelingHomeProps = {
   googleClientId: string;
 };
 
-type FilterKey = "code" | "floor" | "wing" | "room" | "locationDescription" | "kind" | "originalKind" | "brand" | "model";
+type FilterKey =
+  | "code"
+  | "floor"
+  | "wing"
+  | "room"
+  | "locationDescription"
+  | "kind"
+  | "originalKind"
+  | "brand"
+  | "model"
+  | "sourceDeviceCode"
+  | "additionalInfo";
 
 type ColumnFilterState = Record<FilterKey, string>;
 
@@ -61,6 +74,8 @@ const emptyFilters: ColumnFilterState = {
   originalKind: "",
   brand: "",
   model: "",
+  sourceDeviceCode: "",
+  additionalInfo: "",
 };
 
 const tableColumns: Array<{ key: FilterKey; label: string }> = [
@@ -73,6 +88,8 @@ const tableColumns: Array<{ key: FilterKey; label: string }> = [
   { key: "originalKind", label: "Eredeti Típus" },
   { key: "brand", label: "Márka" },
   { key: "model", label: "Modell" },
+  { key: "sourceDeviceCode", label: "Forrás ID" },
+  { key: "additionalInfo", label: "Megjegyzés" },
 ];
 
 const enumFilterKeys: FilterKey[] = ["floor", "wing", "kind", "brand"];
@@ -93,6 +110,14 @@ const readApiErrorMessage = async (response: Response, fallback: string) => {
 };
 
 export function LabelingHome({ googleClientId }: LabelingHomeProps) {
+  const accentFabSx = {
+    backgroundColor: appColors.accent,
+    color: appColors.accentIcon,
+    "&:hover": {
+      backgroundColor: "#BE9A54",
+    },
+  } as const;
+
   const { user, clearUser, isHydrated } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -107,6 +132,8 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
     originalKind: searchParams.get("originalKind") ?? "",
     brand: searchParams.get("brand") ?? "",
     model: searchParams.get("model") ?? "",
+    sourceDeviceCode: searchParams.get("sourceDeviceCode") ?? "",
+    additionalInfo: searchParams.get("additionalInfo") ?? "",
   };
   const [cacheDialogOpen, setCacheDialogOpen] = useState(false);
   const [availableBuildings, setAvailableBuildings] = useState<CachedBuilding[]>([]);
@@ -505,6 +532,8 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
       (left, right) => left.localeCompare(right, "hu-HU"),
     ),
     model: [],
+    sourceDeviceCode: [],
+    additionalInfo: [],
   };
 
   const renderBarcodeCell = (device: CachedDeviceListItem) => {
@@ -686,7 +715,14 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
         }}
       >
         <Stack spacing={1.5}>
-          <Box sx={{ px: 0.5, display: "flex", alignItems: "baseline", gap: 1.5 }}>
+          <Box
+            sx={{
+              px: 0.5,
+              display: "flex",
+              alignItems: "baseline",
+              gap: 1.5,
+            }}
+          >
             <Typography variant="h2">Eszközlista</Typography>
             {deviceRows.length > 0 && (
               <Typography variant="body2" color="text.secondary">
@@ -778,7 +814,7 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
                   <TableBody>
                     {filteredDeviceRows.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={8} sx={{ py: 4, textAlign: "center", color: "text.secondary" }}>
+                        <TableCell colSpan={tableColumns.length} sx={{ py: 4, textAlign: "center", color: "text.secondary" }}>
                           {deviceRows.length === 0
                             ? "Nincs betöltött eszköz a helyi gyorsítótárban."
                             : "Nincs a megadott szűrésnek megfelelő eszköz."}
@@ -803,6 +839,8 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
                           <TableCell>{device.originalKind ?? "-"}</TableCell>
                           <TableCell>{device.brand ?? "-"}</TableCell>
                           <TableCell>{device.model ?? "-"}</TableCell>
+                          <TableCell>{device.sourceDeviceCode ?? "-"}</TableCell>
+                          <TableCell>{device.additionalInfo ?? "-"}</TableCell>
                         </TableRow>
                       ))
                     )}
@@ -811,8 +849,23 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
               </TableContainer>
             )}
           </Paper>
+
         </Stack>
       </Box>
+
+      <Fab
+        aria-label="Berendezés hozzáadása"
+        onClick={() => navigate("/devices/new")}
+        sx={{
+          ...accentFabSx,
+          position: "fixed",
+          right: 32,
+          bottom: "calc(32px + env(safe-area-inset-bottom))",
+          zIndex: 1200,
+        }}
+      >
+        <Plus size={20} />
+      </Fab>
 
       <Menu
         anchorEl={filterMenuAnchor}

@@ -404,7 +404,8 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
   }
 
   const barcodeHasSyncError = device?.codeSyncState === "FAILED" && Boolean(device.code);
-  const shouldShowBarcodeFab = device ? device.code == null || device.codeSyncState === "FAILED" : false;
+  const shouldShowBarcodeFab =
+    device ? device.code == null || device.codeSyncState === "FAILED" : false;
 
   return (
     <Box
@@ -605,7 +606,7 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
                       />
                       <DetailRow
                         icon={<InfoOutlined fontSize="small" />}
-                        label="Eszköz azonosító"
+                        label="Eszközazonosító"
                         value={device.sourceDeviceCode ?? "Nincs megadva"}
                         onClick={() => handleOpenFieldEditor("sourceDeviceCode")}
                       />

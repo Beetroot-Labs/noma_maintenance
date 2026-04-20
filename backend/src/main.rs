@@ -25,20 +25,22 @@ use tower_http::set_header::SetResponseHeaderLayer;
 
 use crate::auth::{get_current_user, google_login, logout};
 use crate::labeling::{
-    assign_labeling_device_barcode, delete_labeling_device_photo, get_labeling_building_cache,
-    get_labeling_device_photo, list_labeling_buildings, update_labeling_device_details,
-    upload_labeling_device_photo,
+    assign_labeling_device_barcode, create_device, create_labeling_location,
+    delete_labeling_device_photo, get_labeling_building_cache, get_labeling_device_photo,
+    list_labeling_buildings, update_labeling_device_details, upload_labeling_device_photo,
 };
 use crate::maintenance::{sync_maintenance_work, upload_maintenance_photo};
 use crate::shifts::{
-    add_shift_participant, cancel_shift, commit_shift,
-    confirm_shift_close, create_shift, get_admin_maintenance_detail, get_admin_maintenance_photo,
+    add_shift_participant, cancel_shift, commit_shift, confirm_shift_close, create_shift,
+    decline_shift_invitation, get_admin_maintenance_detail, get_admin_maintenance_photo,
     get_admin_shift_detail, get_current_shift_state, get_pending_worksheets,
     get_shift_maintenance_summary, get_shift_waiting_room, list_admin_shifts,
     list_shift_invite_candidates, mark_shift_join_ready, remove_shift_participant,
-    request_shift_close, subscribe_shift_events, upload_shift_signature, decline_shift_invitation,
+    request_shift_close, subscribe_shift_events, upload_shift_signature,
 };
-use crate::state::{AppState, AuthConfig, ShiftEventHub, load_google_client_ids, load_storage_config};
+use crate::state::{
+    AppState, AuthConfig, ShiftEventHub, load_google_client_ids, load_storage_config,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -179,9 +181,14 @@ async fn main() -> anyhow::Result<()> {
             get(get_shift_maintenance_summary),
         )
         .route("/labeling/buildings", get(list_labeling_buildings))
+        .route("/labeling/devices", post(create_device))
         .route(
             "/labeling/devices/{device_id}/barcode",
             post(assign_labeling_device_barcode),
+        )
+        .route(
+            "/labeling/buildings/{building_id}/locations",
+            post(create_labeling_location),
         )
         .route(
             "/labeling/devices/{device_id}/photo",

@@ -9,6 +9,7 @@ import LogRocket from "logrocket";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { DeviceDetailsPage } from "./DeviceDetailsPage";
 import { LabelingHome } from "./LabelingHome";
+import { NewDeviceFormPage } from "./NewDeviceFormPage";
 import {
   BuildingCachePayload,
   cacheBuildingData,
@@ -112,6 +113,7 @@ export default function App() {
           <BrowserRouter basename={basename} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <Routes>
               <Route path="/" element={<LabelingHome googleClientId={googleClientId} />} />
+              <Route path="/devices/new" element={<NewDeviceFormPage googleClientId={googleClientId} />} />
               <Route
                 path="/devices/:id"
                 element={<DeviceDetailsPage googleClientId={googleClientId} />}

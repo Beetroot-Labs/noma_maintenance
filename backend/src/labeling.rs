@@ -38,6 +38,34 @@ pub struct UpdateDeviceDetailsRequest {
     additional_info: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct CreateDeviceLocationRequest {
+    floor: Option<String>,
+    wing: Option<String>,
+    room: Option<String>,
+    #[serde(rename = "locationDescription")]
+    location_description: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct CreateDeviceRequest {
+    #[serde(rename = "buildingId")]
+    building_id: uuid::Uuid,
+    #[serde(rename = "existingLocationId")]
+    existing_location_id: Option<uuid::Uuid>,
+    location: Option<CreateDeviceLocationRequest>,
+    kind: String,
+    brand: Option<String>,
+    model: Option<String>,
+    #[serde(rename = "serialNumber")]
+    serial_number: Option<String>,
+    #[serde(rename = "sourceDeviceCode")]
+    source_device_code: Option<String>,
+    #[serde(rename = "additionalInfo")]
+    additional_info: Option<String>,
+    barcode: Option<String>,
+}
+
 #[derive(Serialize, sqlx::FromRow)]
 pub struct BuildingSummary {
     id: uuid::Uuid,
@@ -92,6 +120,17 @@ struct DevicePhotoResponse {
 #[derive(Serialize)]
 struct DeviceDetailsUpdateResponse {
     device_id: uuid::Uuid,
+}
+
+#[derive(Serialize)]
+struct CreateDeviceResponse {
+    device_id: uuid::Uuid,
+    location_id: uuid::Uuid,
+}
+
+#[derive(Serialize)]
+struct CreateLocationResponse {
+    location_id: uuid::Uuid,
 }
 
 pub async fn list_labeling_buildings(
@@ -199,6 +238,255 @@ pub async fn get_labeling_building_cache(
         locations,
         devices,
     }))
+}
+
+pub async fn create_device(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<CreateDeviceRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+
+    let building_exists: Option<bool> = sqlx::query_scalar(
+        r#"
+        SELECT TRUE
+        FROM buildings
+        WHERE tenant_id = $1
+          AND id = $2
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(payload.building_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    if building_exists.is_none() {
+        return Err(ApiError::forbidden("building not found for current tenant"));
+    }
+
+    let kind = payload.kind.trim();
+    if kind.is_empty() {
+        return Err(ApiError::bad_request("device kind is required"));
+    }
+
+    if payload.existing_location_id.is_some() && payload.location.is_some() {
+        return Err(ApiError::bad_request(
+            "choose either an existing location or a new location payload",
+        ));
+    }
+
+    let location_id = if let Some(existing_location_id) = payload.existing_location_id {
+        let location_exists: Option<bool> = sqlx::query_scalar(
+            r#"
+            SELECT TRUE
+            FROM site_locations
+            WHERE tenant_id = $1
+              AND id = $2
+              AND building_id = $3
+            "#,
+        )
+        .bind(user.tenant_id)
+        .bind(existing_location_id)
+        .bind(payload.building_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+
+        if location_exists.is_none() {
+            return Err(ApiError::bad_request(
+                "selected location does not belong to the selected building",
+            ));
+        }
+
+        existing_location_id
+    } else if let Some(location) = payload.location {
+        if !has_any_location_value(&location) {
+            return Err(ApiError::bad_request("location details are required"));
+        }
+
+        sqlx::query_scalar(
+            r#"
+            INSERT INTO site_locations (
+                tenant_id,
+                building_id,
+                floor,
+                wing,
+                room,
+                location_description,
+                created_by
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING id
+            "#,
+        )
+        .bind(user.tenant_id)
+        .bind(payload.building_id)
+        .bind(normalize_optional_text(location.floor))
+        .bind(normalize_optional_text(location.wing))
+        .bind(normalize_optional_text(location.room))
+        .bind(normalize_optional_text(location.location_description))
+        .bind(user.id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?
+    } else {
+        return Err(ApiError::bad_request("location is required"));
+    };
+
+    let device_insert = sqlx::query_scalar(
+        r#"
+        INSERT INTO devices (
+            tenant_id,
+            location_id,
+            kind,
+            brand,
+            model,
+            serial_number,
+            source_device_code,
+            additional_info,
+            created_by
+        )
+        VALUES ($1, $2, $3::device_kind, $4, $5, $6, $7, $8, $9)
+        RETURNING id
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(location_id)
+    .bind(kind)
+    .bind(normalize_optional_text(payload.brand))
+    .bind(normalize_optional_text(payload.model))
+    .bind(normalize_optional_text(payload.serial_number))
+    .bind(normalize_optional_text(payload.source_device_code))
+    .bind(normalize_optional_text(payload.additional_info))
+    .bind(user.id)
+    .fetch_one(&mut *tx)
+    .await;
+
+    let device_id: uuid::Uuid = device_insert.map_err(map_device_details_update_error)?;
+
+    let barcode = normalize_optional_text(payload.barcode);
+    if let Some(barcode) = barcode {
+        let existing_code_owner: Option<Option<uuid::Uuid>> = sqlx::query_scalar(
+            r#"
+            SELECT device_id
+            FROM barcodes
+            WHERE tenant_id = $1
+              AND code = $2
+            "#,
+        )
+        .bind(user.tenant_id)
+        .bind(&barcode)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+
+        if let Some(Some(existing_device_id)) = existing_code_owner
+            && existing_device_id != device_id
+        {
+            return Err(ApiError::conflict(
+                "barcode has already been used and cannot be reassigned",
+            ));
+        }
+
+        sqlx::query(
+            r#"
+            INSERT INTO barcodes (tenant_id, code, device_id, deactivated_at, created_by)
+            VALUES ($1, $2, $3, NULL, $4)
+            ON CONFLICT (tenant_id, code) DO UPDATE
+            SET device_id = EXCLUDED.device_id,
+                deactivated_at = NULL
+            "#,
+        )
+        .bind(user.tenant_id)
+        .bind(barcode)
+        .bind(device_id)
+        .bind(user.id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    }
+
+    tx.commit().await.map_err(ApiError::internal)?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateDeviceResponse {
+            device_id,
+            location_id,
+        }),
+    ))
+}
+
+pub async fn create_labeling_location(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(building_id): Path<uuid::Uuid>,
+    Json(payload): Json<CreateDeviceLocationRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+
+    if !has_any_location_value(&payload) {
+        return Err(ApiError::bad_request("location details are required"));
+    }
+
+    let building_exists: Option<bool> = sqlx::query_scalar(
+        r#"
+        SELECT TRUE
+        FROM buildings
+        WHERE tenant_id = $1
+          AND id = $2
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(building_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    if building_exists.is_none() {
+        return Err(ApiError::forbidden("building not found for current tenant"));
+    }
+
+    let location_id: uuid::Uuid = sqlx::query_scalar(
+        r#"
+        INSERT INTO site_locations (
+            tenant_id,
+            building_id,
+            floor,
+            wing,
+            room,
+            location_description,
+            created_by
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING id
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(building_id)
+    .bind(normalize_optional_text(payload.floor))
+    .bind(normalize_optional_text(payload.wing))
+    .bind(normalize_optional_text(payload.room))
+    .bind(normalize_optional_text(payload.location_description))
+    .bind(user.id)
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateLocationResponse { location_id }),
+    ))
 }
 
 pub async fn upload_labeling_device_photo(
@@ -661,6 +949,18 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
                 Some(candidate)
             }
         })
+}
+
+fn has_any_location_value(location: &CreateDeviceLocationRequest) -> bool {
+    [
+        location.floor.as_deref(),
+        location.wing.as_deref(),
+        location.room.as_deref(),
+        location.location_description.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| !value.trim().is_empty())
 }
 
 fn map_device_details_update_error(err: sqlx::Error) -> ApiError {

@@ -35,6 +35,15 @@ export type CachedLocation = {
   location_description: string | null;
 };
 
+export type CachedLocationListItem = {
+  id: string;
+  buildingId: string;
+  floor: string | null;
+  wing: string | null;
+  room: string | null;
+  locationDescription: string | null;
+};
+
 export type CachedDevice = {
   id: string;
   location_id: string | null;
@@ -75,6 +84,8 @@ export type CachedDeviceListItem = {
   brand: string | null;
   model: string | null;
   serialNumber: string | null;
+  sourceDeviceCode: string | null;
+  additionalInfo: string | null;
 };
 
 export type CachedDeviceDetails = CachedDeviceListItem & {
@@ -518,6 +529,22 @@ export const getSelectedCachedBuilding = async (): Promise<CachedBuilding | null
   return getRecord<CachedBuilding>(BUILDINGS_STORE, selectedBuildingId);
 };
 
+export const getCachedLocationListItems = async (
+  buildingId: string,
+): Promise<CachedLocationListItem[]> => {
+  const locations = await getAllRecords<CachedLocation>(LOCATIONS_STORE);
+  return locations
+    .filter((location) => location.building_id === buildingId)
+    .map((location) => ({
+      id: location.id,
+      buildingId: location.building_id,
+      floor: location.floor,
+      wing: location.wing,
+      room: location.room,
+      locationDescription: location.location_description,
+    }));
+};
+
 export const getCachedDeviceListItems = async (): Promise<CachedDeviceListItem[]> => {
   const [locations, devices] = await Promise.all([
     getAllRecords<CachedLocation>(LOCATIONS_STORE),
@@ -543,6 +570,8 @@ export const getCachedDeviceListItems = async (): Promise<CachedDeviceListItem[]
       brand: device.brand,
       model: device.model,
       serialNumber: device.serial_number ?? null,
+      sourceDeviceCode: device.source_device_code ?? null,
+      additionalInfo: device.additional_info ?? null,
     };
   });
 };

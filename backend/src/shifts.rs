@@ -2,8 +2,8 @@ use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{IntoResponse, Response};
 use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
 use cloud_storage::Object;
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,7 @@ use std::time::Duration as StdDuration;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 
-use crate::auth::{require_admin, require_lead_or_admin, require_session_user};
+use crate::auth::{require_lead_or_admin, require_session_user};
 use crate::error::ApiError;
 use crate::state::AppState;
 use crate::storage::{image_content_type, shift_signature_object_name};
@@ -1710,18 +1710,19 @@ pub async fn subscribe_shift_events(
         ));
     }
 
-    let stream = BroadcastStream::new(state.shift_events.subscribe(shift_id)).filter_map(move |message| {
-        let event = match message {
-            Ok(message) => message,
-            Err(BroadcastStreamRecvError::Lagged(_)) => crate::state::ShiftEventMessage {
-                event_type: "participants-updated",
-                shift_id,
-            },
-        };
+    let stream =
+        BroadcastStream::new(state.shift_events.subscribe(shift_id)).filter_map(move |message| {
+            let event = match message {
+                Ok(message) => message,
+                Err(BroadcastStreamRecvError::Lagged(_)) => crate::state::ShiftEventMessage {
+                    event_type: "participants-updated",
+                    shift_id,
+                },
+            };
 
-        let data = serde_json::to_string(&event).ok()?;
-        Some(Ok(Event::default().event(event.event_type).data(data)))
-    });
+            let data = serde_json::to_string(&event).ok()?;
+            Some(Ok(Event::default().event(event.event_type).data(data)))
+        });
 
     Ok(Sse::new(stream).keep_alive(
         KeepAlive::new()

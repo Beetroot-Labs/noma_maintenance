@@ -326,6 +326,7 @@ pub fn require_lead_or_admin(user: &SessionUser) -> Result<(), ApiError> {
     ))
 }
 
+#[allow(dead_code)]
 pub fn require_admin(user: &SessionUser) -> Result<(), ApiError> {
     if user.role == "ADMIN" {
         return Ok(());
