@@ -5,6 +5,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use cloud_storage::Object;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::auth::require_session_user;
 use crate::error::ApiError;
@@ -36,6 +37,8 @@ pub struct UpdateDeviceDetailsRequest {
     source_device_code: Option<String>,
     #[serde(rename = "additionalInfo")]
     additional_info: Option<String>,
+    #[serde(rename = "isMaintainable")]
+    is_maintainable: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -83,7 +86,40 @@ struct CachedLocation {
     location_description: Option<String>,
 }
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(sqlx::FromRow)]
+struct CachedDeviceRow {
+    id: uuid::Uuid,
+    location_id: Option<uuid::Uuid>,
+    code: Option<String>,
+    kind: String,
+    additional_info: Option<String>,
+    brand: Option<String>,
+    model: Option<String>,
+    serial_number: Option<String>,
+    source_device_code: Option<String>,
+    device_photo_url: Option<String>,
+    original_kind: Option<String>,
+    is_maintainable: bool,
+}
+
+#[derive(Serialize)]
+struct CachedBarcodeHistoryEntry {
+    code: String,
+    created_at: String,
+    deactivated_at: Option<String>,
+    created_by: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct CachedBarcodeHistoryRow {
+    device_id: uuid::Uuid,
+    code: String,
+    created_at: String,
+    deactivated_at: Option<String>,
+    created_by: Option<String>,
+}
+
+#[derive(Serialize)]
 struct CachedDevice {
     id: uuid::Uuid,
     location_id: Option<uuid::Uuid>,
@@ -96,6 +132,8 @@ struct CachedDevice {
     source_device_code: Option<String>,
     device_photo_url: Option<String>,
     original_kind: Option<String>,
+    is_maintainable: bool,
+    barcode_history: Vec<CachedBarcodeHistoryEntry>,
 }
 
 #[derive(Serialize)]
@@ -198,7 +236,7 @@ pub async fn get_labeling_building_cache(
     .await
     .map_err(ApiError::internal)?;
 
-    let devices = sqlx::query_as::<_, CachedDevice>(
+    let device_rows = sqlx::query_as::<_, CachedDeviceRow>(
         r#"
         SELECT
             d.id,
@@ -214,7 +252,8 @@ pub async fn get_labeling_building_cache(
                 WHEN d.device_photo_url IS NULL THEN NULL
                 ELSE CONCAT('/api/labeling/devices/', d.id::text, '/photo')
             END AS device_photo_url,
-            d.original_kind
+            d.original_kind,
+            d.is_maintainable
         FROM devices d
         JOIN site_locations sl
           ON sl.tenant_id = d.tenant_id
@@ -232,6 +271,70 @@ pub async fn get_labeling_building_cache(
     .fetch_all(pool)
     .await
     .map_err(ApiError::internal)?;
+
+    let barcode_history_rows = sqlx::query_as::<_, CachedBarcodeHistoryRow>(
+        r#"
+        SELECT
+            b.device_id,
+            b.code,
+            b.created_at::text AS created_at,
+            b.deactivated_at::text AS deactivated_at,
+            creator.full_name AS created_by
+        FROM barcodes b
+        JOIN devices d
+          ON d.tenant_id = b.tenant_id
+         AND d.id = b.device_id
+        JOIN site_locations sl
+          ON sl.tenant_id = d.tenant_id
+         AND sl.id = d.location_id
+        LEFT JOIN users creator
+          ON creator.tenant_id = b.tenant_id
+         AND creator.id = b.created_by
+        WHERE b.tenant_id = $1
+          AND sl.building_id = $2
+        ORDER BY b.device_id, b.created_at DESC, b.id DESC
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(building_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let mut barcode_history_by_device: HashMap<uuid::Uuid, Vec<CachedBarcodeHistoryEntry>> =
+        HashMap::new();
+    for barcode_history in barcode_history_rows {
+        barcode_history_by_device
+            .entry(barcode_history.device_id)
+            .or_default()
+            .push(CachedBarcodeHistoryEntry {
+                code: barcode_history.code,
+                created_at: barcode_history.created_at,
+                deactivated_at: barcode_history.deactivated_at,
+                created_by: barcode_history.created_by,
+            });
+    }
+
+    let devices = device_rows
+        .into_iter()
+        .map(|device| CachedDevice {
+            id: device.id,
+            location_id: device.location_id,
+            code: device.code,
+            kind: device.kind,
+            additional_info: device.additional_info,
+            brand: device.brand,
+            model: device.model,
+            serial_number: device.serial_number,
+            source_device_code: device.source_device_code,
+            device_photo_url: device.device_photo_url,
+            original_kind: device.original_kind,
+            is_maintainable: device.is_maintainable,
+            barcode_history: barcode_history_by_device
+                .remove(&device.id)
+                .unwrap_or_default(),
+        })
+        .collect();
 
     Ok(Json(BuildingCacheResponse {
         building,
@@ -761,7 +864,8 @@ pub async fn update_labeling_device_details(
             model = $5,
             serial_number = $6,
             source_device_code = $7,
-            additional_info = $8
+            additional_info = $8,
+            is_maintainable = COALESCE($9, is_maintainable)
         WHERE tenant_id = $1 AND id = $2
         "#,
     )
@@ -773,6 +877,7 @@ pub async fn update_labeling_device_details(
     .bind(normalize_optional_text(payload.serial_number))
     .bind(normalize_optional_text(payload.source_device_code))
     .bind(normalize_optional_text(payload.additional_info))
+    .bind(payload.is_maintainable)
     .execute(&mut *tx)
     .await;
 

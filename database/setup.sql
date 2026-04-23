@@ -148,6 +148,7 @@ CREATE TABLE devices (
     model TEXT,
     serial_number TEXT,
     source_device_code TEXT,
+    is_maintainable BOOLEAN NOT NULL DEFAULT TRUE,
     device_photo_url TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
     created_by UUID REFERENCES users(id) ON DELETE SET NULL,

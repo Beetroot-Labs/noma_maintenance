@@ -826,7 +826,17 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
                           key={device.id}
                           hover
                           onClick={() => navigate(`/devices/${device.id}`)}
-                          sx={{ cursor: "pointer" }}
+                          sx={{
+                            cursor: "pointer",
+                            ...(!device.isMaintainable
+                              ? {
+                                  backgroundColor: "rgba(211, 47, 47, 0.06)",
+                                  "&.MuiTableRow-hover:hover": {
+                                    backgroundColor: "rgba(211, 47, 47, 0.12)",
+                                  },
+                                }
+                              : {}),
+                          }}
                         >
                           <TableCell>{renderBarcodeCell(device)}</TableCell>
                           <TableCell>{device.wing ?? "-"}</TableCell>

@@ -44,6 +44,20 @@ export type CachedLocationListItem = {
   locationDescription: string | null;
 };
 
+type CachedBarcodeHistoryEntry = {
+  code: string;
+  created_at: string;
+  deactivated_at: string | null;
+  created_by: string | null;
+};
+
+export type CachedBarcodeHistoryItem = {
+  code: string;
+  createdAt: string;
+  deactivatedAt: string | null;
+  createdBy: string | null;
+};
+
 export type CachedDevice = {
   id: string;
   location_id: string | null;
@@ -62,6 +76,9 @@ export type CachedDevice = {
   source_device_code: string | null;
   device_photo_url: string | null;
   original_kind: string | null;
+  is_maintainable?: boolean;
+  not_found?: boolean;
+  barcode_history?: CachedBarcodeHistoryEntry[];
 };
 
 export type BuildingCachePayload = {
@@ -75,6 +92,7 @@ export type CachedDeviceListItem = {
   code: string | null;
   codeSyncState: DeviceCodeSyncState;
   codeSyncError: string | null;
+  isMaintainable: boolean;
   floor: string | null;
   wing: string | null;
   room: string | null;
@@ -97,6 +115,7 @@ export type CachedDeviceDetails = CachedDeviceListItem & {
   sourceDeviceCode: string | null;
   devicePhotoUrl: string | null;
   cachedPhotoBlob: Blob | null;
+  barcodeHistory: CachedBarcodeHistoryItem[];
 };
 
 export type EditableDeviceDetails = {
@@ -104,6 +123,7 @@ export type EditableDeviceDetails = {
   wing: string | null;
   room: string | null;
   locationDescription: string | null;
+  isMaintainable: boolean;
   kind: string;
   brand: string | null;
   model: string | null;
@@ -285,6 +305,9 @@ const normalizeNullableText = (value: string | null | undefined): string | null 
   return trimmed ? trimmed : null;
 };
 
+const isMaintainableValue = (device: CachedDevice): boolean =>
+  device.is_maintainable ?? (device.not_found !== undefined ? !device.not_found : true);
+
 const toEditableDetails = (
   device: CachedDevice,
   location: CachedLocation | null,
@@ -293,6 +316,7 @@ const toEditableDetails = (
   wing: location?.wing ?? null,
   room: location?.room ?? null,
   locationDescription: location?.location_description ?? null,
+  isMaintainable: isMaintainableValue(device),
   kind: device.kind,
   brand: device.brand ?? null,
   model: device.model ?? null,
@@ -488,6 +512,11 @@ export const cacheBuildingData = async (
       tx.objectStore(DEVICES_STORE).put({
         ...device,
         kind: preserveLocalDetails ? existingDevice?.kind ?? device.kind : device.kind,
+        is_maintainable: preserveLocalDetails
+          ? existingDevice
+            ? isMaintainableValue(existingDevice)
+            : isMaintainableValue(device)
+          : isMaintainableValue(device),
         additional_info: preserveLocalDetails
           ? existingDevice?.additional_info ?? device.additional_info
           : device.additional_info,
@@ -561,6 +590,7 @@ export const getCachedDeviceListItems = async (): Promise<CachedDeviceListItem[]
       code: device.code ?? null,
       codeSyncState: device.code_sync_state ?? "SYNCED",
       codeSyncError: device.code_sync_error ?? null,
+      isMaintainable: isMaintainableValue(device),
       floor: location?.floor ?? null,
       wing: location?.wing ?? null,
       room: location?.room ?? null,
@@ -597,6 +627,7 @@ export const getCachedDeviceDetails = async (
   return {
     id: device.id,
     code: device.code ?? null,
+    isMaintainable: isMaintainableValue(device),
     floor: location?.floor ?? null,
     wing: location?.wing ?? null,
     room: location?.room ?? null,
@@ -611,6 +642,12 @@ export const getCachedDeviceDetails = async (
     sourceDeviceCode: device.source_device_code ?? null,
     devicePhotoUrl: device.device_photo_url ?? null,
     cachedPhotoBlob: cachedPhoto?.blob ?? null,
+    barcodeHistory: (device.barcode_history ?? []).map((entry) => ({
+      code: entry.code,
+      createdAt: entry.created_at,
+      deactivatedAt: entry.deactivated_at ?? null,
+      createdBy: entry.created_by ?? null,
+    })),
   };
 };
 
@@ -641,6 +678,10 @@ export const updateCachedDeviceDetails = async (
 
       const nextDevice: CachedDevice = {
         ...device,
+        is_maintainable:
+          updates.isMaintainable !== undefined
+            ? updates.isMaintainable
+            : isMaintainableValue(device),
         kind: updates.kind ?? device.kind,
         brand: updates.brand !== undefined ? normalizeNullableText(updates.brand) : device.brand,
         model: updates.model !== undefined ? normalizeNullableText(updates.model) : device.model,
@@ -954,6 +995,7 @@ export const syncPendingBarcodeAssignments = async (): Promise<void> => {
               if (details) {
                 devicesStore.put({
                   ...device,
+                  is_maintainable: details.isMaintainable ?? isMaintainableValue(device),
                   kind: details.kind,
                   brand: normalizeNullableText(details.brand),
                   model: normalizeNullableText(details.model),

@@ -22,6 +22,13 @@ import {
   Paper,
   Snackbar,
   Stack,
+  Switch,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
   TextField,
   Typography,
 } from "@mui/material";
@@ -50,7 +57,7 @@ type DeviceDetailsPageProps = {
   googleClientId: string;
 };
 
-type EditableFieldKey = keyof EditableDeviceDetails;
+type EditableFieldKey = Exclude<keyof EditableDeviceDetails, "isMaintainable">;
 const locationFieldKeys: EditableFieldKey[] = ["floor", "wing", "room", "locationDescription"];
 
 type DetailRowProps = {
@@ -104,6 +111,43 @@ function DetailRow({ icon, label, value, valueColor, valueAdornment, helperText,
   );
 }
 
+const formatBarcodeHistoryTimestamp = (value: string | null, fallback = "Nincs"): string => {
+  if (!value) {
+    return fallback;
+  }
+
+  const raw = value.trim();
+  const postgresTimestampMatch = raw.match(
+    /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.(\d+))?([+-]\d{2})(?::?(\d{2}))?$/,
+  );
+
+  let parsed: Date;
+  if (postgresTimestampMatch) {
+    const [, datePart, timePart, fractionPart, timezoneHours, timezoneMinutes] =
+      postgresTimestampMatch;
+    const milliseconds = (fractionPart ?? "").slice(0, 3).padEnd(3, "0");
+    const isoTimestamp = `${datePart}T${timePart}.${milliseconds}${timezoneHours}:${timezoneMinutes ?? "00"}`;
+    parsed = new Date(isoTimestamp);
+  } else {
+    const normalized = raw.includes("T") ? raw : raw.replace(" ", "T");
+    parsed = new Date(normalized);
+  }
+
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("hu-HU", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(parsed);
+};
+
 export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
   const accentFabSx = {
     backgroundColor: appColors.accent,
@@ -126,6 +170,7 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
   const [editingField, setEditingField] = useState<EditableFieldKey | null>(null);
   const [editingValue, setEditingValue] = useState("");
   const [isSavingField, setIsSavingField] = useState(false);
+  const [isSavingMaintainable, setIsSavingMaintainable] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const barcodeScannerContainerRef = useRef<HTMLDivElement | null>(null);
   const activeObjectUrlRef = useRef<string | null>(null);
@@ -336,6 +381,26 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
       await loadDeviceDetails(id);
     } finally {
       setIsUpdatingPhoto(false);
+    }
+  };
+
+  const handleToggleMaintainable = async (checked: boolean) => {
+    if (!id) {
+      return;
+    }
+
+    setIsSavingMaintainable(true);
+    try {
+      await updateCachedDeviceDetails(id, { isMaintainable: checked });
+      await loadDeviceDetails(id);
+    } catch (error) {
+      setBarcodeCameraError(
+        error instanceof Error
+          ? error.message
+          : "Nem sikerült frissíteni a karbantarthatósági jelölést.",
+      );
+    } finally {
+      setIsSavingMaintainable(false);
     }
   };
 
@@ -586,6 +651,32 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
                         value={getDeviceKindLabel(device.kind)}
                         onClick={() => handleOpenFieldEditor("kind")}
                       />
+                      <Stack
+                        direction="row"
+                        spacing={1}
+                        alignItems="center"
+                        justifyContent="space-between"
+                      >
+                        <DetailRow
+                          icon={<InfoOutlined fontSize="small" />}
+                          label="Karbantarthatóság"
+                          value={
+                            device.isMaintainable
+                              ? "A berendezés karbantartható"
+                              : "A berendezés nem karbantartható"
+                          }
+                          valueColor={!device.isMaintainable ? "error.main" : undefined}
+                        />
+                        <Switch
+                          checked={device.isMaintainable}
+                          disabled={isSavingMaintainable}
+                          onChange={(_, checked) => {
+                            void handleToggleMaintainable(checked);
+                          }}
+                          color="secondary"
+                          inputProps={{ "aria-label": "Eszköz karbantartható kapcsoló" }}
+                        />
+                      </Stack>
                       <DetailRow
                         icon={<Inventory2Outlined fontSize="small" />}
                         label="Modell"
@@ -695,6 +786,51 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
                       />
                     </Box>
                   </Box>
+                </Box>
+
+                <Box sx={{ px: 3, py: 2.5 }}>
+                  <Stack spacing={1.5}>
+                    <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                      Vonalkód előzmények
+                    </Typography>
+
+                    {device.barcodeHistory.length === 0 ? (
+                      <Typography color="text.secondary">
+                        Ehhez az eszközhöz még nincs mentett vonalkód előzmény.
+                      </Typography>
+                    ) : (
+                      <TableContainer
+                        component={Paper}
+                        variant="outlined"
+                        sx={{ borderRadius: "5px", borderColor: "divider", boxShadow: "none" }}
+                      >
+                        <Table size="small" aria-label="Vonalkód előzmények táblázat">
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ fontWeight: 700 }}>Vonalkód</TableCell>
+                              <TableCell sx={{ fontWeight: 700 }}>Létrehozva</TableCell>
+                              <TableCell sx={{ fontWeight: 700 }}>Inaktiválva</TableCell>
+                              <TableCell sx={{ fontWeight: 700 }}>Létrehozta</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {device.barcodeHistory.map((entry, index) => (
+                              <TableRow key={`${entry.code}-${entry.createdAt}-${index}`}>
+                                <TableCell>{entry.code}</TableCell>
+                                <TableCell>
+                                  {formatBarcodeHistoryTimestamp(entry.createdAt)}
+                                </TableCell>
+                                <TableCell>
+                                  {formatBarcodeHistoryTimestamp(entry.deactivatedAt, "Aktív")}
+                                </TableCell>
+                                <TableCell>{entry.createdBy ?? "Ismeretlen"}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    )}
+                  </Stack>
                 </Box>
               </Stack>
             )}
