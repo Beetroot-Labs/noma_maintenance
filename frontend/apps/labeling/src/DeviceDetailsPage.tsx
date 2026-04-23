@@ -8,6 +8,7 @@ import {
   Height,
   SensorDoor,
   Business,
+  MoreVert,
 } from "@mui/icons-material";
 import {
   Alert,
@@ -16,8 +17,11 @@ import {
   CircularProgress,
   Divider,
   Dialog,
+  DialogContent,
+  DialogTitle,
   Fab,
   IconButton,
+  Menu,
   MenuItem,
   Paper,
   Snackbar,
@@ -34,18 +38,21 @@ import {
 } from "@mui/material";
 import { Barcode, Camera, Flashlight, FlashlightOff, ImagePlus, MessageCircleMore, Repeat, ScanBarcode, Trash2, TriangleAlert, X } from "lucide-react";
 import { deviceKindLabels, getDeviceKindLabel, useAuth, useCode128Scanner, validateNomaBarcode } from "@noma/shared";
-import { ChangeEvent, ReactNode, useEffect, useRef, useState } from "react";
+import { ChangeEvent, MouseEvent, ReactNode, SyntheticEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import LoginPage from "./LoginPage";
+import { FilterableDeviceTable } from "./components/FilterableDeviceTable";
 import { LabelingAppBar } from "./components/LabelingAppBar";
 import {
   BuildingCachePayload,
+  CachedDeviceListItem,
   cacheBuildingData,
   assignCachedDeviceBarcode,
   CachedDeviceDetails,
   deleteCachedDevicePhoto,
   EditableDeviceDetails,
   getCachedDeviceDetails,
+  getCachedDeviceListItems,
   getSelectedCachedBuilding,
   replaceCachedDevicePhoto,
   syncPendingBarcodeAssignments,
@@ -148,6 +155,25 @@ const formatBarcodeHistoryTimestamp = (value: string | null, fallback = "Nincs")
   }).format(parsed);
 };
 
+const readApiErrorMessage = async (response: Response, fallback: string) => {
+  try {
+    const payload = (await response.json()) as { error?: string };
+    if (payload.error) {
+      return payload.error;
+    }
+  } catch {
+    // Ignore malformed error payloads.
+  }
+  return fallback;
+};
+
+const createMutationId = () => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+
 export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
   const accentFabSx = {
     backgroundColor: appColors.accent,
@@ -162,10 +188,17 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
   const { id } = useParams<{ id: string }>();
   const [buildingName, setBuildingName] = useState<string | null>(null);
   const [device, setDevice] = useState<CachedDeviceDetails | null>(null);
+  const [deviceRows, setDeviceRows] = useState<CachedDeviceListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [cachedPhotoUrl, setCachedPhotoUrl] = useState<string | null>(null);
   const [photoDialogOpen, setPhotoDialogOpen] = useState(false);
   const [barcodeDialogOpen, setBarcodeDialogOpen] = useState(false);
+  const [actionsMenuAnchorEl, setActionsMenuAnchorEl] = useState<HTMLElement | null>(null);
+  const [barcodeCorrectionDialogOpen, setBarcodeCorrectionDialogOpen] = useState(false);
+  const [selectedCorrectionDeviceId, setSelectedCorrectionDeviceId] = useState<string | null>(null);
+  const [barcodeCorrectionSuccessTargetDeviceId, setBarcodeCorrectionSuccessTargetDeviceId] =
+    useState<string | null>(null);
+  const [isCorrectingBarcode, setIsCorrectingBarcode] = useState(false);
   const [isUpdatingPhoto, setIsUpdatingPhoto] = useState(false);
   const [editingField, setEditingField] = useState<EditableFieldKey | null>(null);
   const [editingValue, setEditingValue] = useState("");
@@ -220,18 +253,21 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
   });
 
   const loadDeviceDetails = async (deviceId: string) => {
-    const [selectedBuilding, cachedDevice] = await Promise.all([
+    const [selectedBuilding, cachedDevice, cachedDeviceRows] = await Promise.all([
       getSelectedCachedBuilding(),
       getCachedDeviceDetails(deviceId),
+      getCachedDeviceListItems(),
     ]);
 
     setBuildingName(selectedBuilding?.name ?? null);
     setDevice(cachedDevice);
+    setDeviceRows(cachedDeviceRows);
   };
 
   useEffect(() => {
     if (!user || !id) {
       setDevice(null);
+      setDeviceRows([]);
       setIsLoading(false);
       return;
     }
@@ -430,31 +466,135 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
     }
   };
 
-  const handleSyncStatusClick = async () => {
-    if (!id) {
-      return;
-    }
-
+  const refreshSelectedBuildingCache = async () => {
     const selectedBuilding = await getSelectedCachedBuilding();
     if (!selectedBuilding) {
       return;
     }
 
+    const response = await fetch(`/api/labeling/buildings/${selectedBuilding.id}/cache`, {
+      credentials: "include",
+    });
+    if (!response.ok) {
+      throw new Error("Nem sikerült frissíteni az offline adatokat.");
+    }
+
+    const payload = (await response.json()) as BuildingCachePayload;
+    await cacheBuildingData(payload, selectedBuilding.id);
+  };
+
+  const handleSyncStatusClick = async () => {
+    if (!id) {
+      return;
+    }
+
+    await refreshSelectedBuildingCache();
+    await loadDeviceDetails(id);
+  };
+
+  const handleOpenActionsMenu = (event: MouseEvent<HTMLElement>) => {
+    setActionsMenuAnchorEl(event.currentTarget);
+  };
+
+  const handleCloseActionsMenu = () => {
+    setActionsMenuAnchorEl(null);
+  };
+
+  const handleOpenBarcodeCorrectionDialog = () => {
+    setSelectedCorrectionDeviceId(null);
+    setBarcodeCorrectionDialogOpen(true);
+  };
+
+  const handleStartBarcodeCorrection = () => {
+    handleCloseActionsMenu();
+    handleOpenBarcodeCorrectionDialog();
+  };
+
+  const handleCloseBarcodeCorrectionDialog = () => {
+    if (isCorrectingBarcode) {
+      return;
+    }
+    setBarcodeCorrectionDialogOpen(false);
+    setSelectedCorrectionDeviceId(null);
+  };
+
+  const handleSubmitBarcodeCorrection = async () => {
+    if (!id || !selectedCorrectionDeviceId) {
+      return;
+    }
+
+    const targetDeviceId = selectedCorrectionDeviceId;
+
+    setIsCorrectingBarcode(true);
     try {
-      const response = await fetch(`/api/labeling/buildings/${selectedBuilding.id}/cache`, {
+      const response = await fetch(`/api/labeling/devices/${id}/barcode-correction`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Mutation-Id": createMutationId(),
+        },
         credentials: "include",
+        body: JSON.stringify({ targetDeviceId }),
       });
+
       if (!response.ok) {
-        throw new Error("Nem sikerült frissíteni az offline adatokat.");
+        throw new Error(
+          await readApiErrorMessage(response, "Nem sikerült korrigálni a vonalkód-hozzárendelést."),
+        );
       }
 
-      const payload = (await response.json()) as BuildingCachePayload;
-      await cacheBuildingData(payload, selectedBuilding.id);
+      await refreshSelectedBuildingCache();
       await loadDeviceDetails(id);
+      setBarcodeCorrectionDialogOpen(false);
+      setSelectedCorrectionDeviceId(null);
+      setBarcodeCorrectionSuccessTargetDeviceId(targetDeviceId);
     } catch (error) {
-      throw error;
+      setBarcodeCameraError(
+        error instanceof Error
+          ? error.message
+          : "Nem sikerült korrigálni a vonalkód-hozzárendelést.",
+      );
+    } finally {
+      setIsCorrectingBarcode(false);
     }
   };
+
+  const handleCloseBarcodeCorrectionSuccessSnackbar = (
+    _: Event | SyntheticEvent,
+    reason?: string,
+  ) => {
+    if (reason === "clickaway") {
+      return;
+    }
+    setBarcodeCorrectionSuccessTargetDeviceId(null);
+  };
+
+  const handleOpenCorrectedTargetDevice = () => {
+    if (!barcodeCorrectionSuccessTargetDeviceId) {
+      return;
+    }
+
+    const targetDeviceId = barcodeCorrectionSuccessTargetDeviceId;
+    setBarcodeCorrectionSuccessTargetDeviceId(null);
+    navigate(`/devices/${targetDeviceId}`);
+  };
+
+  const correctionCandidateRows = useMemo(() => {
+    if (!device) {
+      return [];
+    }
+
+    return deviceRows.filter(
+      (row) =>
+        row.id !== device.id
+        && (row.barcodeCount === 0 || row.barcodeCount === 1 || row.maintenanceWorkCount === 0),
+    );
+  }, [device, deviceRows]);
+
+  const selectedCorrectionDevice = useMemo(
+    () => correctionCandidateRows.find((row) => row.id === selectedCorrectionDeviceId) ?? null,
+    [correctionCandidateRows, selectedCorrectionDeviceId],
+  );
 
   if (!isHydrated) {
     return (
@@ -471,6 +611,11 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
   const barcodeHasSyncError = device?.codeSyncState === "FAILED" && Boolean(device.code);
   const shouldShowBarcodeFab =
     device ? device.code == null || device.codeSyncState === "FAILED" : false;
+  const currentBarcodeCount =
+    device ? Math.max(device.barcodeCount, device.code ? 1 : 0) : 0;
+  const shouldShowMislabelAction = Boolean(device?.code);
+  const shouldShowCorrectionInfo =
+    currentBarcodeCount === 1 || (device?.maintenanceWorkCount ?? 0) === 0;
 
   return (
     <Box
@@ -560,6 +705,20 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
                       </Typography>
                     </Box>
 
+                    {shouldShowMislabelAction ? (
+                      <IconButton
+                        aria-label="Eszközműveletek"
+                        onClick={handleOpenActionsMenu}
+                        sx={{
+                          border: "1px solid",
+                          borderColor: "divider",
+                          borderRadius: "5px",
+                          alignSelf: { xs: "flex-end", sm: "center" },
+                        }}
+                      >
+                        <MoreVert fontSize="small" />
+                      </IconButton>
+                    ) : null}
                   </Box>
                 </Box>
 
@@ -838,6 +997,21 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
         </Stack>
       </Box>
 
+      <Menu
+        anchorEl={actionsMenuAnchorEl}
+        open={Boolean(actionsMenuAnchorEl)}
+        onClose={handleCloseActionsMenu}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+        PaperProps={{ sx: { borderRadius: "5px", mt: 0.5, minWidth: 280 } }}
+      >
+        {shouldShowMislabelAction ? (
+          <MenuItem onClick={handleStartBarcodeCorrection}>
+            Tévesen felcímkézett berendezés
+          </MenuItem>
+        ) : null}
+      </Menu>
+
       {device && (shouldShowBarcodeFab || !cachedPhotoUrl) && (
         <Stack
           spacing={1.25}
@@ -932,6 +1106,65 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
             </Stack>
           </Stack>
         </Box>
+      </Dialog>
+
+      <Dialog
+        open={barcodeCorrectionDialogOpen}
+        onClose={handleCloseBarcodeCorrectionDialog}
+        fullWidth
+        maxWidth="lg"
+        PaperProps={{ sx: { borderRadius: "5px" } }}
+      >
+        <DialogTitle>Tévesen felcímkézett berendezés</DialogTitle>
+        <DialogContent sx={{ pt: 1, pb: 3 }}>
+          <Stack spacing={2}>
+            <Typography color="text.secondary">
+              Válaszd ki azt a berendezést, amelyhez a jelenlegi aktív vonalkód valójában tartozik.
+            </Typography>
+
+            {shouldShowCorrectionInfo ? (
+              <Alert severity="info" variant="outlined">
+                Ennél a berendezésnél csak egy vonalkód található vagy még nincs hozzá karbantartás.
+                A korrekció emiatt főként a vonalkód hozzárendelést érinti.
+              </Alert>
+            ) : null}
+
+            <FilterableDeviceTable
+              rows={correctionCandidateRows}
+              selectedDeviceId={selectedCorrectionDeviceId}
+              onRowClick={(candidate) => setSelectedCorrectionDeviceId(candidate.id)}
+              maxHeight="min(52vh, 480px)"
+              loadingText="Eszközlista betöltése..."
+              emptyRowsText="Nincs olyan berendezés, amely megfelel a korrekció feltételeinek."
+              emptyFilteredRowsText="Nincs a megadott szűrésnek megfelelő célberendezés."
+            />
+
+            {selectedCorrectionDevice ? (
+              <Typography variant="body2" color="text.secondary">
+                Kiválasztott cél: {selectedCorrectionDevice.brand ?? "Ismeretlen márka"}{" "}
+                {selectedCorrectionDevice.model ?? "ismeretlen modell"}
+              </Typography>
+            ) : null}
+
+            <Stack direction="row" spacing={1.5} justifyContent="flex-end">
+              <Button
+                color="inherit"
+                onClick={handleCloseBarcodeCorrectionDialog}
+                disabled={isCorrectingBarcode}
+              >
+                Mégse
+              </Button>
+              <Button
+                variant="contained"
+                color="secondary"
+                onClick={() => void handleSubmitBarcodeCorrection()}
+                disabled={isCorrectingBarcode || !selectedCorrectionDevice}
+              >
+                {isCorrectingBarcode ? "Korrigálás..." : "Vonalkód korrigálása"}
+              </Button>
+            </Stack>
+          </Stack>
+        </DialogContent>
       </Dialog>
 
       <Dialog
@@ -1080,6 +1313,23 @@ export function DeviceDetailsPage({ googleClientId }: DeviceDetailsPageProps) {
           )}
         </Box>
       </Dialog>
+
+      <Snackbar
+        open={Boolean(barcodeCorrectionSuccessTargetDeviceId)}
+        autoHideDuration={7000}
+        onClose={handleCloseBarcodeCorrectionSuccessSnackbar}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert
+          severity="success"
+          variant="filled"
+          sx={{ width: "100%", cursor: "pointer" }}
+          onClick={handleOpenCorrectedTargetDevice}
+          onClose={() => setBarcodeCorrectionSuccessTargetDeviceId(null)}
+        >
+          Eszközadatok sikeresen átmozgatva. Kattints ide a megtekintéshez
+        </Alert>
+      </Snackbar>
 
       <Snackbar
         open={Boolean(barcodeCameraError)}

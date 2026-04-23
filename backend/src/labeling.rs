@@ -22,6 +22,12 @@ pub struct AssignBarcodeRequest {
 }
 
 #[derive(Deserialize)]
+pub struct CorrectBarcodeRequest {
+    #[serde(rename = "targetDeviceId")]
+    target_device_id: uuid::Uuid,
+}
+
+#[derive(Deserialize)]
 pub struct UpdateDeviceDetailsRequest {
     floor: Option<String>,
     wing: Option<String>,
@@ -100,6 +106,8 @@ struct CachedDeviceRow {
     device_photo_url: Option<String>,
     original_kind: Option<String>,
     is_maintainable: bool,
+    barcode_count: i64,
+    maintenance_work_count: i64,
 }
 
 #[derive(Serialize)]
@@ -119,11 +127,20 @@ struct CachedBarcodeHistoryRow {
     created_by: Option<String>,
 }
 
+#[derive(sqlx::FromRow)]
+struct DeviceCorrectionStats {
+    barcode_count: i64,
+    maintenance_work_count: i64,
+    device_photo_url: Option<String>,
+}
+
 #[derive(Serialize)]
 struct CachedDevice {
     id: uuid::Uuid,
     location_id: Option<uuid::Uuid>,
     code: Option<String>,
+    barcode_count: i64,
+    maintenance_work_count: i64,
     kind: String,
     additional_info: Option<String>,
     brand: Option<String>,
@@ -147,6 +164,15 @@ struct BuildingCacheResponse {
 struct BarcodeAssignmentResponse {
     device_id: uuid::Uuid,
     code: String,
+}
+
+#[derive(Serialize)]
+struct BarcodeCorrectionResponse {
+    source_device_id: uuid::Uuid,
+    target_device_id: uuid::Uuid,
+    source_code: String,
+    target_code: Option<String>,
+    moved_maintenance_work_count: i64,
 }
 
 #[derive(Serialize)]
@@ -242,6 +268,24 @@ pub async fn get_labeling_building_cache(
             d.id,
             d.location_id,
             b.code,
+            COALESCE(
+                (
+                    SELECT COUNT(*)
+                    FROM barcodes all_b
+                    WHERE all_b.tenant_id = d.tenant_id
+                      AND all_b.device_id = d.id
+                ),
+                0
+            ) AS barcode_count,
+            COALESCE(
+                (
+                    SELECT COUNT(*)
+                    FROM maintenance_works mw
+                    WHERE mw.tenant_id = d.tenant_id
+                      AND mw.device_id = d.id
+                ),
+                0
+            ) AS maintenance_work_count,
             d.kind::text AS kind,
             d.additional_info,
             d.brand,
@@ -321,6 +365,8 @@ pub async fn get_labeling_building_cache(
             id: device.id,
             location_id: device.location_id,
             code: device.code,
+            barcode_count: device.barcode_count,
+            maintenance_work_count: device.maintenance_work_count,
             kind: device.kind,
             additional_info: device.additional_info,
             brand: device.brand,
@@ -1044,6 +1090,291 @@ pub async fn assign_labeling_device_barcode(
     Ok((StatusCode::OK, Json(response_payload)).into_response())
 }
 
+pub async fn correct_labeling_device_barcode(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(source_device_id): Path<uuid::Uuid>,
+    Json(payload): Json<CorrectBarcodeRequest>,
+) -> Result<Response, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    let mutation_id = require_mutation_id(&headers)?;
+    let target_device_id = payload.target_device_id;
+
+    if source_device_id == target_device_id {
+        return Err(ApiError::bad_request(
+            "source and target devices must be different",
+        ));
+    }
+
+    let endpoint_key =
+        format!("LABELING_DEVICE_BARCODE_CORRECTION:{source_device_id}:{target_device_id}");
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+
+    if let Some(replayed) =
+        get_processed_mutation_response_tx(&mut tx, user.tenant_id, &endpoint_key, &mutation_id)
+            .await?
+    {
+        return Ok(replayed);
+    }
+
+    let source_stats: Option<DeviceCorrectionStats> = sqlx::query_as(
+        r#"
+        SELECT
+            COALESCE(
+                (
+                    SELECT COUNT(*)
+                    FROM barcodes b
+                    WHERE b.tenant_id = d.tenant_id
+                      AND b.device_id = d.id
+                ),
+                0
+            ) AS barcode_count,
+            COALESCE(
+                (
+                    SELECT COUNT(*)
+                    FROM maintenance_works mw
+                    WHERE mw.tenant_id = d.tenant_id
+                      AND mw.device_id = d.id
+                ),
+                0
+            ) AS maintenance_work_count,
+            d.device_photo_url
+        FROM devices d
+        WHERE d.tenant_id = $1
+          AND d.id = $2
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(source_device_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let target_stats: Option<DeviceCorrectionStats> = sqlx::query_as(
+        r#"
+        SELECT
+            COALESCE(
+                (
+                    SELECT COUNT(*)
+                    FROM barcodes b
+                    WHERE b.tenant_id = d.tenant_id
+                      AND b.device_id = d.id
+                ),
+                0
+            ) AS barcode_count,
+            COALESCE(
+                (
+                    SELECT COUNT(*)
+                    FROM maintenance_works mw
+                    WHERE mw.tenant_id = d.tenant_id
+                      AND mw.device_id = d.id
+                ),
+                0
+            ) AS maintenance_work_count,
+            d.device_photo_url
+        FROM devices d
+        WHERE d.tenant_id = $1
+          AND d.id = $2
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(target_device_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let Some(source_stats) = source_stats else {
+        return Err(ApiError::forbidden(
+            "source device not found for current tenant",
+        ));
+    };
+
+    let Some(target_stats) = target_stats else {
+        return Err(ApiError::forbidden(
+            "target device not found for current tenant",
+        ));
+    };
+
+    if source_stats.barcode_count < 1 {
+        return Err(ApiError::conflict(
+            "source device has no assigned barcode to correct",
+        ));
+    }
+
+    if !(target_stats.barcode_count == 0
+        || target_stats.barcode_count == 1
+        || target_stats.maintenance_work_count == 0)
+    {
+        return Err(ApiError::conflict(
+            "target device is not eligible for barcode correction",
+        ));
+    }
+
+    let source_active_code: Option<String> = sqlx::query_scalar(
+        r#"
+        SELECT code
+        FROM barcodes
+        WHERE tenant_id = $1
+          AND device_id = $2
+          AND deactivated_at IS NULL
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(source_device_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let Some(source_code) = source_active_code else {
+        return Err(ApiError::conflict(
+            "source device has no active barcode to correct",
+        ));
+    };
+
+    let target_active_code: Option<String> = sqlx::query_scalar(
+        r#"
+        SELECT code
+        FROM barcodes
+        WHERE tenant_id = $1
+          AND device_id = $2
+          AND deactivated_at IS NULL
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(target_device_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    sqlx::query(
+        r#"
+        UPDATE barcodes
+        SET deactivated_at = NOW()
+        WHERE tenant_id = $1
+          AND deactivated_at IS NULL
+          AND (device_id = $2 OR device_id = $3)
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(source_device_id)
+    .bind(target_device_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO barcodes (tenant_id, code, device_id, deactivated_at, created_by)
+        VALUES ($1, $2, $3, NULL, $4)
+        ON CONFLICT (tenant_id, code) DO UPDATE
+        SET device_id = EXCLUDED.device_id,
+            deactivated_at = NULL
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(&source_code)
+    .bind(target_device_id)
+    .bind(user.id)
+    .execute(&mut *tx)
+    .await
+    .map_err(map_barcode_correction_error)?;
+
+    if let Some(target_code) = &target_active_code
+        && target_code != &source_code
+    {
+        sqlx::query(
+            r#"
+            INSERT INTO barcodes (tenant_id, code, device_id, deactivated_at, created_by)
+            VALUES ($1, $2, $3, NULL, $4)
+            ON CONFLICT (tenant_id, code) DO UPDATE
+            SET device_id = EXCLUDED.device_id,
+                deactivated_at = NULL
+            "#,
+        )
+        .bind(user.tenant_id)
+        .bind(target_code)
+        .bind(source_device_id)
+        .bind(user.id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_barcode_correction_error)?;
+    }
+
+    if let Some(source_photo_url) = &source_stats.device_photo_url {
+        sqlx::query(
+            r#"
+            UPDATE devices
+            SET device_photo_url = CASE
+                WHEN id = $2 THEN NULL
+                WHEN id = $3 THEN $4
+                ELSE device_photo_url
+            END
+            WHERE tenant_id = $1
+              AND id IN ($2, $3)
+            "#,
+        )
+        .bind(user.tenant_id)
+        .bind(source_device_id)
+        .bind(target_device_id)
+        .bind(source_photo_url)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    }
+
+    let moved_maintenance_work_count: i64 =
+        if source_stats.maintenance_work_count > 0 && target_stats.maintenance_work_count == 0 {
+            let moved = sqlx::query(
+                r#"
+                UPDATE maintenance_works
+                SET device_id = $3
+                WHERE tenant_id = $1
+                  AND device_id = $2
+                "#,
+            )
+            .bind(user.tenant_id)
+            .bind(source_device_id)
+            .bind(target_device_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_barcode_correction_error)?;
+
+            moved.rows_affected() as i64
+        } else {
+            0
+        };
+
+    let response_payload = serde_json::json!(BarcodeCorrectionResponse {
+        source_device_id,
+        target_device_id,
+        source_code,
+        target_code: target_active_code,
+        moved_maintenance_work_count,
+    });
+
+    save_processed_mutation_response_tx(
+        &mut tx,
+        user.tenant_id,
+        &endpoint_key,
+        &mutation_id,
+        StatusCode::OK,
+        Some(response_payload.clone()),
+    )
+    .await?;
+
+    tx.commit().await.map_err(ApiError::internal)?;
+
+    Ok((StatusCode::OK, Json(response_payload)).into_response())
+}
+
 fn normalize_optional_text(value: Option<String>) -> Option<String> {
     value
         .map(|candidate| candidate.trim().to_string())
@@ -1066,6 +1397,26 @@ fn has_any_location_value(location: &CreateDeviceLocationRequest) -> bool {
     .into_iter()
     .flatten()
     .any(|value| !value.trim().is_empty())
+}
+
+fn map_barcode_correction_error(err: sqlx::Error) -> ApiError {
+    if let sqlx::Error::Database(db_error) = &err {
+        if db_error
+            .constraint()
+            .is_some_and(|name| name.starts_with("maintenance_works_one_active_per_"))
+        {
+            return ApiError::conflict(
+                "maintenance works could not be reassigned because of an active maintenance conflict",
+            );
+        }
+
+        let message = db_error.message().to_ascii_lowercase();
+        if message.contains("frozen shift") {
+            return ApiError::conflict("maintenance works of frozen shifts cannot be reassigned");
+        }
+    }
+
+    ApiError::internal(err)
 }
 
 fn map_device_details_update_error(err: sqlx::Error) -> ApiError {

@@ -1,8 +1,6 @@
 import {
-  Autocomplete,
   Box,
   Button,
-  Chip,
   Dialog,
   DialogContent,
   DialogTitle,
@@ -11,91 +9,39 @@ import {
   InputLabel,
   LinearProgress,
   MenuItem,
-  Menu,
-  Paper,
   Select,
   SelectChangeEvent,
   Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  TextField,
   Typography,
 } from "@mui/material";
-import { Plus, TriangleAlert } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { getDeviceKindLabel, useAuth } from "@noma/shared";
+import { Plus } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { useAuth } from "@noma/shared";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import LoginPage from "./LoginPage";
+import { FilterableDeviceTable } from "./components/FilterableDeviceTable";
 import { LabelingAppBar } from "./components/LabelingAppBar";
+import {
+  DeviceColumnFilterState,
+  emptyDeviceColumnFilters,
+} from "./lib/deviceTableFilters";
 import {
   BuildingCachePayload,
   CachedBuilding,
+  CachedDeviceListItem,
   cacheBuildingData,
   clearPendingSyncChanges,
-  CachedDeviceListItem,
   getPendingSyncChangesCount,
   getCachedDeviceListItems,
   getSelectedCachedBuilding,
   hasOfflineCache,
   syncPendingBarcodeAssignments,
- } from "./lib/offlineCache";
+} from "./lib/offlineCache";
 import { appColors } from "./theme";
 
 type LabelingHomeProps = {
   googleClientId: string;
 };
-
-type FilterKey =
-  | "code"
-  | "floor"
-  | "wing"
-  | "room"
-  | "locationDescription"
-  | "kind"
-  | "originalKind"
-  | "brand"
-  | "model"
-  | "sourceDeviceCode"
-  | "additionalInfo";
-
-type ColumnFilterState = Record<FilterKey, string>;
-
-const emptyFilters: ColumnFilterState = {
-  code: "",
-  floor: "",
-  wing: "",
-  room: "",
-  locationDescription: "",
-  kind: "",
-  originalKind: "",
-  brand: "",
-  model: "",
-  sourceDeviceCode: "",
-  additionalInfo: "",
-};
-
-const tableColumns: Array<{ key: FilterKey; label: string }> = [
-  { key: "code", label: "Kód" },
-  { key: "wing", label: "Szárny" },
-  { key: "floor", label: "Emelet" },
-  { key: "room", label: "Helyiség" },
-  { key: "locationDescription", label: "Hely leírása" },
-  { key: "kind", label: "Eszköz típusa" },
-  { key: "originalKind", label: "Eredeti Típus" },
-  { key: "brand", label: "Márka" },
-  { key: "model", label: "Modell" },
-  { key: "sourceDeviceCode", label: "Forrás ID" },
-  { key: "additionalInfo", label: "Megjegyzés" },
-];
-
-const enumFilterKeys: FilterKey[] = ["floor", "wing", "kind", "brand"];
-
-const normalizeForFilter = (s: string) =>
-  s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLocaleLowerCase("hu-HU");
 
 const readApiErrorMessage = async (response: Response, fallback: string) => {
   try {
@@ -122,7 +68,7 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const columnFilters: ColumnFilterState = {
+  const columnFilters: DeviceColumnFilterState = {
     code: searchParams.get("code") ?? "",
     floor: searchParams.get("floor") ?? "",
     wing: searchParams.get("wing") ?? "",
@@ -143,15 +89,11 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
   const [isPreparingCache, setIsPreparingCache] = useState(false);
   const [cacheError, setCacheError] = useState<string | null>(null);
   const [deviceRows, setDeviceRows] = useState<CachedDeviceListItem[]>([]);
+  const [filteredDeviceCount, setFilteredDeviceCount] = useState(0);
   const [isLoadingDeviceRows, setIsLoadingDeviceRows] = useState(false);
-  const [activeFilterKey, setActiveFilterKey] = useState<FilterKey | null>(null);
-  const [filterMenuAnchor, setFilterMenuAnchor] = useState<HTMLElement | null>(null);
-  // Pending text input value — committed to searchParams only when user clicks "Kész"
-  const [pendingTextFilter, setPendingTextFilter] = useState<string>("");
   const [unsyncedWarningOpen, setUnsyncedWarningOpen] = useState(false);
   const [unsyncedChangeCount, setUnsyncedChangeCount] = useState(0);
   const [allowDiscardUnsyncedSwitch, setAllowDiscardUnsyncedSwitch] = useState(false);
-  const filterInputRef = useRef<HTMLInputElement | null>(null);
   const hasCachedBuilding = Boolean(selectedBuildingName);
 
   const loadBuildingOptions = async () => {
@@ -282,68 +224,29 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
     };
   }, [user, hasCachedBuilding, selectedBuildingName]);
 
-  useEffect(() => {
-    if (!activeFilterKey || !filterMenuAnchor) {
-      return;
-    }
-
-    const focusTimer = window.setTimeout(() => {
-      filterInputRef.current?.focus();
-      filterInputRef.current?.select();
-    }, 0);
-
-    return () => {
-      window.clearTimeout(focusTimer);
-    };
-  }, [activeFilterKey, filterMenuAnchor]);
-
-  const filteredDeviceRows = useMemo(() =>
-    deviceRows
-      .filter((device) =>
-        tableColumns.every(({ key }) => {
-          const filterValue = normalizeForFilter(columnFilters[key].trim());
-          if (!filterValue) {
-            return true;
-          }
-
-          const cellValue =
-            key === "kind"
-              ? getDeviceKindLabel(device.kind)
-              : (device[key] ?? "-");
-
-          const normalizedCellValue = normalizeForFilter(String(cellValue));
-          return enumFilterKeys.includes(key)
-            ? normalizedCellValue === filterValue
-            : normalizedCellValue.includes(filterValue);
-        }),
-      )
-      .sort((a, b) => {
-        const nullLast = (val: string | null | undefined) => (val == null || val === "" ? 1 : 0);
-
-        const wingA = a.wing ?? null;
-        const wingB = b.wing ?? null;
-        if (nullLast(wingA) !== nullLast(wingB)) return nullLast(wingA) - nullLast(wingB);
-        const wingCmp = (wingA ?? "").localeCompare(wingB ?? "", "hu-HU");
-        if (wingCmp !== 0) return wingCmp;
-
-        const floorA = a.floor ?? null;
-        const floorB = b.floor ?? null;
-        if (nullLast(floorA) !== nullLast(floorB)) return nullLast(floorA) - nullLast(floorB);
-        const floorStartsWithNumber = (f: string | null) => f != null && /^\d/.test(f);
-        const aNum = floorStartsWithNumber(floorA) ? 0 : 1;
-        const bNum = floorStartsWithNumber(floorB) ? 0 : 1;
-        if (aNum !== bNum) return aNum - bNum;
-        const floorCmp = (floorA ?? "").localeCompare(floorB ?? "", "hu-HU", { numeric: true });
-        if (floorCmp !== 0) return floorCmp;
-
-        const roomA = a.room ?? null;
-        const roomB = b.room ?? null;
-        if (nullLast(roomA) !== nullLast(roomB)) return nullLast(roomA) - nullLast(roomB);
-        return (roomA ?? "").localeCompare(roomB ?? "", "hu-HU");
-      }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [deviceRows, columnFilters],
+  const handleTableFiltersChange = useCallback(
+    (nextFilters: DeviceColumnFilterState) => {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        (Object.keys(emptyDeviceColumnFilters) as Array<keyof DeviceColumnFilterState>).forEach(
+          (key) => {
+            const value = nextFilters[key].trim();
+            if (value) {
+              next.set(key, value);
+            } else {
+              next.delete(key);
+            }
+          },
+        );
+        return next;
+      }, { replace: true });
+    },
+    [setSearchParams],
   );
+
+  const handleFilteredRowsChange = useCallback((rows: CachedDeviceListItem[]) => {
+    setFilteredDeviceCount(rows.length);
+  }, []);
 
   if (!isHydrated) {
     return (
@@ -447,117 +350,6 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
 
     setCacheDialogOpen(false);
     setCacheError(null);
-  };
-
-  const handleOpenFilterMenu = (event: React.MouseEvent<HTMLElement>, key: FilterKey) => {
-    setActiveFilterKey(key);
-    setFilterMenuAnchor(event.currentTarget);
-    // Seed pending text input with current committed value
-    if (!enumFilterKeys.includes(key)) {
-      setPendingTextFilter(columnFilters[key] ?? "");
-    }
-  };
-
-  const handleCloseFilterMenu = () => {
-    setActiveFilterKey(null);
-    setFilterMenuAnchor(null);
-    setPendingTextFilter("");
-  };
-
-  const commitTextFilter = (key: FilterKey, value: string) => {
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      if (value.trim()) {
-        next.set(key, value.trim());
-      } else {
-        next.delete(key);
-      }
-      return next;
-    }, { replace: true });
-  };
-
-  const handleFilterChange = (key: FilterKey, value: string) => {
-    // Enum filters apply immediately; text filters wait for "Kész"
-    if (enumFilterKeys.includes(key)) {
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
-        if (value) {
-          next.set(key, value);
-        } else {
-          next.delete(key);
-        }
-        return next;
-      }, { replace: true });
-    } else {
-      setPendingTextFilter(value);
-    }
-  };
-
-  const handleClearFilter = (key: FilterKey) => {
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      next.delete(key);
-      return next;
-    }, { replace: true });
-    setPendingTextFilter("");
-    handleCloseFilterMenu();
-  };
-
-  const handleClearAllFilters = () => {
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      (Object.keys(emptyFilters) as FilterKey[]).forEach((k) => next.delete(k));
-      return next;
-    }, { replace: true });
-    handleCloseFilterMenu();
-  };
-
-  const activeFilterEntries = Object.entries(columnFilters).filter(([, value]) => value.trim() !== "");
-  const hasActiveFilters = activeFilterEntries.length > 0;
-  const enumFilterOptions: Record<FilterKey, string[]> = {
-    code: [],
-    floor: Array.from(new Set(deviceRows.map((device) => device.floor).filter((value): value is string => Boolean(value)))).sort(
-      (left, right) => left.localeCompare(right, "hu-HU"),
-    ),
-    wing: Array.from(new Set(deviceRows.map((device) => device.wing).filter((value): value is string => Boolean(value)))).sort(
-      (left, right) => left.localeCompare(right, "hu-HU"),
-    ),
-    room: [],
-    locationDescription: [],
-    kind: Array.from(new Set(deviceRows.map((device) => getDeviceKindLabel(device.kind)))).sort((left, right) =>
-      left.localeCompare(right, "hu-HU"),
-    ),
-    originalKind: [],
-    brand: Array.from(new Set(deviceRows.map((device) => device.brand).filter((value): value is string => Boolean(value)))).sort(
-      (left, right) => left.localeCompare(right, "hu-HU"),
-    ),
-    model: [],
-    sourceDeviceCode: [],
-    additionalInfo: [],
-  };
-
-  const renderBarcodeCell = (device: CachedDeviceListItem) => {
-    const hasBarcodeError = device.codeSyncState === "FAILED" && Boolean(device.code);
-
-    return (
-      <Box
-        sx={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 0.75,
-          color: hasBarcodeError ? "error.main" : "text.primary",
-        }}
-      >
-        <Typography
-          component="span"
-          variant="body2"
-          sx={{ color: "inherit", fontWeight: hasBarcodeError ? 700 : 400 }}
-        >
-          {device.code ?? "-"}
-        </Typography>
-        {hasBarcodeError ? <TriangleAlert size={16} aria-label="Vonalkód szinkronhiba" /> : null}
-      </Box>
-    );
   };
 
   const handleSyncStatusClick = async () => {
@@ -726,139 +518,19 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
             <Typography variant="h2">Eszközlista</Typography>
             {deviceRows.length > 0 && (
               <Typography variant="body2" color="text.secondary">
-                {filteredDeviceRows.length}/{deviceRows.length} berendezés megjelenítve
+                {filteredDeviceCount}/{deviceRows.length} berendezés megjelenítve
               </Typography>
             )}
           </Box>
 
-          {hasActiveFilters && (
-            <Paper
-              sx={{
-                borderRadius: "5px",
-                border: "1px solid",
-                borderColor: "divider",
-                background: "background.paper",
-                px: 1.5,
-                py: 1.25,
-              }}
-            >
-              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" alignItems="center">
-                <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                  Szűrés aktív
-                </Typography>
-                {activeFilterEntries.map(([key, value]) => {
-                  const column = tableColumns.find((item) => item.key === key);
-                  return (
-                    <Chip
-                      key={key}
-                      label={`${column?.label}: ${value}`}
-                      size="small"
-                      onDelete={() => handleClearFilter(key as FilterKey)}
-                    />
-                  );
-                })}
-                <Button size="small" color="secondary" onClick={handleClearAllFilters}>
-                  Összes szűrő törlése
-                </Button>
-              </Stack>
-            </Paper>
-          )}
-
-          <Paper
-            sx={{
-              borderRadius: "5px",
-              overflow: "hidden",
-              border: "1px solid",
-              borderColor: "divider",
-              background: "background.paper",
-            }}
-          >
-            {isLoadingDeviceRows ? (
-              <Box sx={{ px: 2, py: 3 }}>
-                <Stack spacing={1.25}>
-                  <Typography variant="body2" color="text.secondary">
-                    Offline eszközlista betöltése...
-                  </Typography>
-                  <LinearProgress color="secondary" />
-                </Stack>
-              </Box>
-            ) : (
-              <TableContainer sx={{ maxHeight: "calc(100vh - 230px)" }}>
-                <Table stickyHeader size="small" aria-label="Eszközök">
-                  <TableHead>
-                    <TableRow>
-                      {tableColumns.map((column) => {
-                        const isFiltered = columnFilters[column.key].trim() !== "";
-                        return (
-                          <TableCell key={column.key} sx={{ p: 0 }}>
-                            <Button
-                              fullWidth
-                              color="inherit"
-                              onClick={(event) => handleOpenFilterMenu(event, column.key)}
-                              sx={{
-                                justifyContent: "flex-start",
-                                borderRadius: 0,
-                                px: 1.5,
-                                py: 1.25,
-                                color: isFiltered ? "secondary.main" : "text.primary",
-                                fontWeight: isFiltered ? 700 : 600,
-                              }}
-                            >
-                              {column.label}
-                            </Button>
-                          </TableCell>
-                        );
-                      })}
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {filteredDeviceRows.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={tableColumns.length} sx={{ py: 4, textAlign: "center", color: "text.secondary" }}>
-                          {deviceRows.length === 0
-                            ? "Nincs betöltött eszköz a helyi gyorsítótárban."
-                            : "Nincs a megadott szűrésnek megfelelő eszköz."}
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      filteredDeviceRows.map((device) => (
-                        <TableRow
-                          key={device.id}
-                          hover
-                          onClick={() => navigate(`/devices/${device.id}`)}
-                          sx={{
-                            cursor: "pointer",
-                            ...(!device.isMaintainable
-                              ? {
-                                  backgroundColor: "rgba(211, 47, 47, 0.06)",
-                                  "&.MuiTableRow-hover:hover": {
-                                    backgroundColor: "rgba(211, 47, 47, 0.12)",
-                                  },
-                                }
-                              : {}),
-                          }}
-                        >
-                          <TableCell>{renderBarcodeCell(device)}</TableCell>
-                          <TableCell>{device.wing ?? "-"}</TableCell>
-                          <TableCell>{device.floor ?? "-"}</TableCell>
-                          <TableCell>{device.room ?? "-"}</TableCell>
-                          <TableCell>{device.locationDescription ?? "-"}</TableCell>
-                          <TableCell sx={{ whiteSpace: "nowrap" }}>
-                            {getDeviceKindLabel(device.kind)}
-                          </TableCell>
-                          <TableCell>{device.originalKind ?? "-"}</TableCell>
-                          <TableCell>{device.brand ?? "-"}</TableCell>
-                          <TableCell>{device.model ?? "-"}</TableCell>
-                          <TableCell>{device.sourceDeviceCode ?? "-"}</TableCell>
-                          <TableCell>{device.additionalInfo ?? "-"}</TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            )}
-          </Paper>
+          <FilterableDeviceTable
+            rows={deviceRows}
+            isLoading={isLoadingDeviceRows}
+            filters={columnFilters}
+            onFiltersChange={handleTableFiltersChange}
+            onFilteredRowsChange={handleFilteredRowsChange}
+            onRowClick={(device) => navigate(`/devices/${device.id}`)}
+          />
 
         </Stack>
       </Box>
@@ -876,89 +548,6 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
       >
         <Plus size={20} />
       </Fab>
-
-      <Menu
-        anchorEl={filterMenuAnchor}
-        open={Boolean(filterMenuAnchor && activeFilterKey)}
-        onClose={handleCloseFilterMenu}
-        anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
-        transformOrigin={{ vertical: "top", horizontal: "left" }}
-        PaperProps={{
-          sx: {
-            mt: 0.5,
-            width: 280,
-            maxWidth: "calc(100vw - 32px)",
-            borderRadius: "5px",
-            p: 1.5,
-            overflow: "visible",
-          },
-        }}
-      >
-        {activeFilterKey && (
-          <Stack spacing={1.25}>
-            <Typography variant="body2" sx={{ fontWeight: 700 }}>
-              Szűrés: {tableColumns.find((column) => column.key === activeFilterKey)?.label}
-            </Typography>
-            {enumFilterKeys.includes(activeFilterKey) ? (
-              <Autocomplete
-                autoHighlight
-                openOnFocus
-                disablePortal
-                fullWidth
-                options={enumFilterOptions[activeFilterKey]}
-                value={columnFilters[activeFilterKey] || null}
-                onChange={(_, value) => handleFilterChange(activeFilterKey, value ?? "")}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    inputRef={filterInputRef}
-                    size="small"
-                    label="Választható érték"
-                  />
-                )}
-              />
-            ) : (
-              <TextField
-                size="small"
-                fullWidth
-                inputRef={filterInputRef}
-                label="Szűrőszöveg"
-                value={pendingTextFilter}
-                onChange={(event) => handleFilterChange(activeFilterKey, event.target.value)}
-                onKeyDown={(event) => {
-                  // Prevent Menu from intercepting keystrokes (e.g. focus-by-letter behaviour)
-                  event.stopPropagation();
-                  if (event.key === "Enter") {
-                    commitTextFilter(activeFilterKey, pendingTextFilter);
-                    handleCloseFilterMenu();
-                  }
-                }}
-              />
-            )}
-            <Stack direction="row" spacing={1} justifyContent="flex-end">
-              {(enumFilterKeys.includes(activeFilterKey)
-                ? columnFilters[activeFilterKey].trim() !== ""
-                : pendingTextFilter.trim() !== "" || columnFilters[activeFilterKey].trim() !== ""
-              ) && (
-                <Button color="error" onClick={() => handleClearFilter(activeFilterKey)}>
-                  Szűrő törlése
-                </Button>
-              )}
-              <Button
-                color="secondary"
-                onClick={() => {
-                  if (!enumFilterKeys.includes(activeFilterKey)) {
-                    commitTextFilter(activeFilterKey, pendingTextFilter);
-                  }
-                  handleCloseFilterMenu();
-                }}
-              >
-                Kész
-              </Button>
-            </Stack>
-          </Stack>
-        )}
-      </Menu>
     </Box>
   );
 }

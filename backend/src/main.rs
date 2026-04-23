@@ -25,9 +25,10 @@ use tower_http::set_header::SetResponseHeaderLayer;
 
 use crate::auth::{get_current_user, google_login, logout};
 use crate::labeling::{
-    assign_labeling_device_barcode, create_device, create_labeling_location,
-    delete_labeling_device_photo, get_labeling_building_cache, get_labeling_device_photo,
-    list_labeling_buildings, update_labeling_device_details, upload_labeling_device_photo,
+    assign_labeling_device_barcode, correct_labeling_device_barcode, create_device,
+    create_labeling_location, delete_labeling_device_photo, get_labeling_building_cache,
+    get_labeling_device_photo, list_labeling_buildings, update_labeling_device_details,
+    upload_labeling_device_photo,
 };
 use crate::maintenance::{sync_maintenance_work, upload_maintenance_photo};
 use crate::shifts::{
@@ -190,6 +191,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/labeling/devices/{device_id}/barcode",
             post(assign_labeling_device_barcode),
+        )
+        .route(
+            "/labeling/devices/{device_id}/barcode-correction",
+            post(correct_labeling_device_barcode),
         )
         .route(
             "/labeling/buildings/{building_id}/locations",

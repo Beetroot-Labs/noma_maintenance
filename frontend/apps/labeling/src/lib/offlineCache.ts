@@ -62,6 +62,8 @@ export type CachedDevice = {
   id: string;
   location_id: string | null;
   code?: string | null;
+  barcode_count?: number;
+  maintenance_work_count?: number;
   code_sync_state?: DeviceCodeSyncState;
   code_sync_error?: string | null;
   code_updated_at?: string | null;
@@ -90,6 +92,8 @@ export type BuildingCachePayload = {
 export type CachedDeviceListItem = {
   id: string;
   code: string | null;
+  barcodeCount: number;
+  maintenanceWorkCount: number;
   codeSyncState: DeviceCodeSyncState;
   codeSyncError: string | null;
   isMaintainable: boolean;
@@ -251,15 +255,6 @@ const getAllRecords = async <T>(storeName: string): Promise<T[]> => {
   });
 };
 
-const fetchPhotoBlob = async (url: string): Promise<Blob> => {
-  const response = await fetch(url, { cache: "no-store", credentials: "include" });
-  if (!response.ok) {
-    throw new Error("failed to fetch device photo");
-  }
-
-  return response.blob();
-};
-
 const barcodeOutboxId = (deviceId: string) => `DEVICE_BARCODE:${deviceId}`;
 const photoOutboxId = (deviceId: string) => `DEVICE_PHOTO:${deviceId}`;
 const detailsOutboxId = (deviceId: string) => `DEVICE_DETAILS:${deviceId}`;
@@ -308,6 +303,16 @@ const normalizeNullableText = (value: string | null | undefined): string | null 
 const isMaintainableValue = (device: CachedDevice): boolean =>
   device.is_maintainable ?? (device.not_found !== undefined ? !device.not_found : true);
 
+const barcodeCountValue = (device: CachedDevice): number => {
+  const explicitCount = typeof device.barcode_count === "number" ? device.barcode_count : null;
+  const historyCount = Array.isArray(device.barcode_history) ? device.barcode_history.length : null;
+  const fallbackCount = device.code ? 1 : 0;
+  return Math.max(explicitCount ?? historyCount ?? fallbackCount, fallbackCount);
+};
+
+const maintenanceWorkCountValue = (device: CachedDevice): number =>
+  typeof device.maintenance_work_count === "number" ? device.maintenance_work_count : 0;
+
 const toEditableDetails = (
   device: CachedDevice,
   location: CachedLocation | null,
@@ -329,7 +334,6 @@ const readSyncError = async (
   response: Response,
 ): Promise<{ message: string; retryable: boolean | null }> => {
   const defaultMessage = "Sikertelen szinkronizáció.";
-  const defaultRetryable = isRetryableHttpStatus(response.status);
   try {
     const payload = (await response.json()) as {
       error?: string;
@@ -588,6 +592,8 @@ export const getCachedDeviceListItems = async (): Promise<CachedDeviceListItem[]
     return {
       id: device.id,
       code: device.code ?? null,
+      barcodeCount: barcodeCountValue(device),
+      maintenanceWorkCount: maintenanceWorkCountValue(device),
       codeSyncState: device.code_sync_state ?? "SYNCED",
       codeSyncError: device.code_sync_error ?? null,
       isMaintainable: isMaintainableValue(device),
@@ -627,6 +633,8 @@ export const getCachedDeviceDetails = async (
   return {
     id: device.id,
     code: device.code ?? null,
+    barcodeCount: barcodeCountValue(device),
+    maintenanceWorkCount: maintenanceWorkCountValue(device),
     isMaintainable: isMaintainableValue(device),
     floor: location?.floor ?? null,
     wing: location?.wing ?? null,
