@@ -1,6 +1,6 @@
 import { Box, CircularProgress, CssBaseline, GlobalStyles, ThemeProvider } from "@mui/material";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation, useParams } from "react-router-dom";
 import { useEffect } from "react";
 import LogRocket from "logrocket";
 import { NotificationProvider } from "@/components/notifications/NotificationProvider";
@@ -21,6 +21,7 @@ import ShiftHomePage from "./pages/ShiftHomePage";
 import ShiftSummaryPage from "./pages/ShiftSummaryPage";
 import PendingWorksheetsPage from "./pages/PendingWorksheetsPage";
 import AdminShiftsPage from "./pages/AdminShiftsPage";
+import AdminDevicesPage from "./pages/AdminDevicesPage";
 import ShiftDetailsPage from "./pages/ShiftDetailsPage";
 import MaintenanceDetailsPage from "./pages/MaintenanceDetailsPage";
 
@@ -121,6 +122,16 @@ const RequireActiveShift = () => {
   return <Outlet />;
 };
 
+const RedirectLegacyAdminMaintenanceRoute = () => {
+  const { maintenanceId } = useParams<{ maintenanceId: string }>();
+
+  if (!maintenanceId) {
+    return <Navigate to="/admin/shifts" replace />;
+  }
+
+  return <Navigate to={`/admin/maintenances/${maintenanceId}`} replace />;
+};
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider theme={theme}>
@@ -171,10 +182,12 @@ const App = () => (
                   <Route path="/shifts/:shiftId/waiting-room" element={<Navigate to="/shifts/current" replace />} />
                   <Route element={<RequireRoles roles={["admin", "lead_technician"]} />}>
                     <Route path="/admin/shifts" element={<AdminShiftsPage />} />
+                    <Route path="/admin/devices" element={<AdminDevicesPage />} />
+                    <Route path="/admin/maintenances/:maintenanceId" element={<MaintenanceDetailsPage />} />
                     <Route path="/admin/shifts/:shiftId" element={<ShiftDetailsPage />} />
                     <Route
                       path="/admin/shifts/:shiftId/maintenances/:maintenanceId"
-                      element={<MaintenanceDetailsPage />}
+                      element={<RedirectLegacyAdminMaintenanceRoute />}
                     />
                   </Route>
                   <Route element={<RequireActiveShift />}>

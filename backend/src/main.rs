@@ -32,11 +32,12 @@ use crate::labeling::{
 use crate::maintenance::{sync_maintenance_work, upload_maintenance_photo};
 use crate::shifts::{
     add_shift_participant, cancel_shift, commit_shift, confirm_shift_close, create_shift,
-    decline_shift_invitation, get_admin_maintenance_detail, get_admin_maintenance_photo,
-    get_admin_shift_detail, get_current_shift_state, get_pending_worksheets,
-    get_shift_maintenance_summary, get_shift_waiting_room, list_admin_shifts,
-    list_shift_invite_candidates, mark_shift_join_ready, remove_shift_participant,
-    request_shift_close, subscribe_shift_events, upload_shift_signature,
+    decline_shift_invitation, get_admin_maintenance_detail, get_admin_maintenance_detail_by_id,
+    get_admin_maintenance_photo, get_admin_shift_detail, get_current_shift_state,
+    get_pending_worksheets, get_shift_maintenance_summary, get_shift_waiting_room,
+    list_admin_shifts, list_shift_invite_candidates, mark_shift_join_ready,
+    remove_shift_participant, request_shift_close, subscribe_shift_events,
+    upload_shift_signature,
 };
 use crate::state::{
     AppState, AuthConfig, ShiftEventHub, load_google_client_ids, load_storage_config,
@@ -132,6 +133,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/auth/logout", post(logout))
         .route("/admin/shifts", get(list_admin_shifts))
         .route("/admin/shifts/{shift_id}", get(get_admin_shift_detail))
+        .route(
+            "/admin/maintenances/{maintenance_id}",
+            get(get_admin_maintenance_detail_by_id),
+        )
         .route(
             "/admin/shifts/{shift_id}/maintenances/{maintenance_id}",
             get(get_admin_maintenance_detail),

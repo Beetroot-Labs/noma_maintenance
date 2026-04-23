@@ -20,6 +20,7 @@ import {
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import {
+  Fan,
   CircleUser,
   ClipboardList,
   HardHat,
@@ -42,6 +43,11 @@ interface LayoutProps {
 const navItems = [
   { path: "/shifts/current", label: "Műszak", icon: HardHat },
   { path: "/shifts/current/maintenances", label: "Karbantartás", icon: Wrench },
+];
+
+const adminNavItems = [
+  { path: "/admin/shifts", label: "Műszakok", icon: HardHat },
+  { path: "/admin/devices", label: "Berendezések", icon: Fan },
 ];
 
 export function Layout({ children }: LayoutProps) {
@@ -113,6 +119,7 @@ export function Layout({ children }: LayoutProps) {
 
   const handleDrawerOpen = () => setDrawerOpen(true);
   const handleDrawerClose = () => setDrawerOpen(false);
+  const matchesMenuPath = (path: string) => location.pathname === path || location.pathname.startsWith(`${path}/`);
 
   return (
     <Box sx={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
@@ -131,7 +138,7 @@ export function Layout({ children }: LayoutProps) {
         <Container maxWidth="lg" sx={{ height: 56, display: "flex", alignItems: "center" }}>
           <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2, width: "100%" }}>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              {isDesktop && !isAdminView ? (
+              {(isAdminView ? canAccessAdminView : isDesktop) ? (
                 <IconButton onClick={handleDrawerOpen} aria-label="Menü megnyitása" sx={{ color: appColors.accent}}>
                   <MenuIcon size={20} />
                 </IconButton>
@@ -391,6 +398,49 @@ export function Layout({ children }: LayoutProps) {
               </ListItemIcon>
               <ListItemText primary={currentWork ? "Munka folytatása" : "Munka indítása"} />
             </ListItemButton>
+          </List>
+        </Drawer>
+      ) : canAccessAdminView ? (
+        <Drawer
+          anchor="left"
+          open={drawerOpen}
+          onClose={handleDrawerClose}
+          PaperProps={{
+            sx: {
+              width: 260,
+              bgcolor: appColors.primary,
+              color: appColors.primaryForeground,
+            },
+          }}
+        >
+          <Box sx={{ p: 2 }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+              Admin
+            </Typography>
+          </Box>
+          <Divider sx={{ borderColor: appColors.border }} />
+          <List sx={{ px: 1 }}>
+            {adminNavItems.map(({ path, label, icon: Icon }) => (
+              <ListItemButton
+                key={path}
+                component={Link}
+                to={path}
+                onClick={handleDrawerClose}
+                selected={matchesMenuPath(path)}
+                sx={{
+                  borderRadius: 2,
+                  "&.Mui-selected": {
+                    bgcolor: alpha(appColors.accent, 0.15),
+                    color: appColors.accent,
+                  },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 36, color: "inherit" }}>
+                  <Icon size={18} />
+                </ListItemIcon>
+                <ListItemText primary={label} />
+              </ListItemButton>
+            ))}
           </List>
         </Drawer>
       ) : null}

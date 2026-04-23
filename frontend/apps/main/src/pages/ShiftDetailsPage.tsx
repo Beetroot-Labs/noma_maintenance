@@ -441,7 +441,7 @@ export default function ShiftDetailsPage() {
                           hover
                           onClick={() =>
                             navigate(
-                              `/admin/shifts/${payload.shift_id}/maintenances/${maintenance.maintenance_id}`,
+                              `/admin/maintenances/${maintenance.maintenance_id}`,
                             )
                           }
                           sx={{ cursor: "pointer" }}

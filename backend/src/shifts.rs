@@ -655,75 +655,127 @@ pub async fn get_admin_shift_detail(
     }))
 }
 
-pub async fn get_admin_maintenance_detail(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path((shift_id, maintenance_id)): Path<(uuid::Uuid, uuid::Uuid)>,
-) -> Result<impl IntoResponse, ApiError> {
-    let pool = state
-        .db_pool
-        .as_ref()
-        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
-    let user = require_session_user(&state, &headers).await?;
-    require_lead_or_admin(&user)?;
-
-    let detail = sqlx::query_as::<_, AdminMaintenanceDetailCore>(
-        r#"
-        SELECT
-            mw.id AS maintenance_id,
-            mw.shift_id,
-            mw.status::text AS maintenance_status,
-            bc.code AS barcode,
-            d.kind::text AS kind,
-            d.brand,
-            d.model,
-            d.serial_number,
-            d.source_device_code,
-            mu.full_name AS maintainer_user_name,
-            mw.started_at,
-            mw.finished_at,
-            mw.aborted_at,
-            mw.malfunction_description,
-            mw.followup_service_required,
-            ARRAY(SELECT UNNEST(mw.followup_service_reasons)::text) AS followup_service_reasons,
-            mw.followup_service_reason_other,
-            mw.note,
-            b.name AS building_name,
-            b.address AS building_address,
-            l.floor,
-            l.wing,
-            l.room,
-            l.location_description
-        FROM maintenance_works mw
-        JOIN shifts s
-          ON s.tenant_id = mw.tenant_id
-         AND s.id = mw.shift_id
-        JOIN devices d
-          ON d.tenant_id = mw.tenant_id
-         AND d.id = mw.device_id
-        LEFT JOIN site_locations l
-          ON l.tenant_id = d.tenant_id
-         AND l.id = d.location_id
-        LEFT JOIN barcodes bc
-          ON bc.tenant_id = d.tenant_id
-         AND bc.device_id = d.id
-         AND bc.deactivated_at IS NULL
-        JOIN buildings b
-          ON b.tenant_id = s.tenant_id
-         AND b.id = s.building_id
-        JOIN users mu
-          ON mu.tenant_id = mw.tenant_id
-         AND mu.id = mw.maintainer_user_id
-        WHERE mw.tenant_id = $1
-          AND mw.shift_id = $2
-          AND mw.id = $3
-        "#,
-    )
-    .bind(user.tenant_id)
-    .bind(shift_id)
-    .bind(maintenance_id)
-    .fetch_optional(pool)
-    .await
+async fn fetch_admin_maintenance_detail_response(
+    pool: &sqlx::PgPool,
+    tenant_id: uuid::Uuid,
+    maintenance_id: uuid::Uuid,
+    shift_id_filter: Option<uuid::Uuid>,
+) -> Result<AdminMaintenanceDetailResponse, ApiError> {
+    let detail = if let Some(shift_id) = shift_id_filter {
+        sqlx::query_as::<_, AdminMaintenanceDetailCore>(
+            r#"
+            SELECT
+                mw.id AS maintenance_id,
+                mw.shift_id,
+                mw.status::text AS maintenance_status,
+                bc.code AS barcode,
+                d.kind::text AS kind,
+                d.brand,
+                d.model,
+                d.serial_number,
+                d.source_device_code,
+                mu.full_name AS maintainer_user_name,
+                mw.started_at,
+                mw.finished_at,
+                mw.aborted_at,
+                mw.malfunction_description,
+                mw.followup_service_required,
+                ARRAY(SELECT UNNEST(mw.followup_service_reasons)::text) AS followup_service_reasons,
+                mw.followup_service_reason_other,
+                mw.note,
+                b.name AS building_name,
+                b.address AS building_address,
+                l.floor,
+                l.wing,
+                l.room,
+                l.location_description
+            FROM maintenance_works mw
+            JOIN shifts s
+              ON s.tenant_id = mw.tenant_id
+             AND s.id = mw.shift_id
+            JOIN devices d
+              ON d.tenant_id = mw.tenant_id
+             AND d.id = mw.device_id
+            LEFT JOIN site_locations l
+              ON l.tenant_id = d.tenant_id
+             AND l.id = d.location_id
+            LEFT JOIN barcodes bc
+              ON bc.tenant_id = d.tenant_id
+             AND bc.device_id = d.id
+             AND bc.deactivated_at IS NULL
+            JOIN buildings b
+              ON b.tenant_id = s.tenant_id
+             AND b.id = s.building_id
+            JOIN users mu
+              ON mu.tenant_id = mw.tenant_id
+             AND mu.id = mw.maintainer_user_id
+            WHERE mw.tenant_id = $1
+              AND mw.shift_id = $2
+              AND mw.id = $3
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(shift_id)
+        .bind(maintenance_id)
+        .fetch_optional(pool)
+        .await
+    } else {
+        sqlx::query_as::<_, AdminMaintenanceDetailCore>(
+            r#"
+            SELECT
+                mw.id AS maintenance_id,
+                mw.shift_id,
+                mw.status::text AS maintenance_status,
+                bc.code AS barcode,
+                d.kind::text AS kind,
+                d.brand,
+                d.model,
+                d.serial_number,
+                d.source_device_code,
+                mu.full_name AS maintainer_user_name,
+                mw.started_at,
+                mw.finished_at,
+                mw.aborted_at,
+                mw.malfunction_description,
+                mw.followup_service_required,
+                ARRAY(SELECT UNNEST(mw.followup_service_reasons)::text) AS followup_service_reasons,
+                mw.followup_service_reason_other,
+                mw.note,
+                b.name AS building_name,
+                b.address AS building_address,
+                l.floor,
+                l.wing,
+                l.room,
+                l.location_description
+            FROM maintenance_works mw
+            JOIN shifts s
+              ON s.tenant_id = mw.tenant_id
+             AND s.id = mw.shift_id
+            JOIN devices d
+              ON d.tenant_id = mw.tenant_id
+             AND d.id = mw.device_id
+            LEFT JOIN site_locations l
+              ON l.tenant_id = d.tenant_id
+             AND l.id = d.location_id
+            LEFT JOIN barcodes bc
+              ON bc.tenant_id = d.tenant_id
+             AND bc.device_id = d.id
+             AND bc.deactivated_at IS NULL
+            JOIN buildings b
+              ON b.tenant_id = s.tenant_id
+             AND b.id = s.building_id
+            JOIN users mu
+              ON mu.tenant_id = mw.tenant_id
+             AND mu.id = mw.maintainer_user_id
+            WHERE mw.tenant_id = $1
+              AND mw.id = $2
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(maintenance_id)
+        .fetch_optional(pool)
+        .await
+    }
     .map_err(ApiError::internal)?
     .ok_or_else(|| ApiError::forbidden("maintenance not found for current tenant"))?;
 
@@ -746,14 +798,14 @@ pub async fn get_admin_maintenance_detail(
         ORDER BY mp.created_at ASC, mp.id ASC
         "#,
     )
-    .bind(user.tenant_id)
-    .bind(shift_id)
-    .bind(maintenance_id)
+    .bind(tenant_id)
+    .bind(detail.shift_id)
+    .bind(detail.maintenance_id)
     .fetch_all(pool)
     .await
     .map_err(ApiError::internal)?;
 
-    Ok(Json(AdminMaintenanceDetailResponse {
+    Ok(AdminMaintenanceDetailResponse {
         maintenance_id: detail.maintenance_id,
         shift_id: detail.shift_id,
         maintenance_status: detail.maintenance_status,
@@ -779,7 +831,44 @@ pub async fn get_admin_maintenance_detail(
         room: detail.room,
         location_description: detail.location_description,
         photos,
-    }))
+    })
+}
+
+pub async fn get_admin_maintenance_detail(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((shift_id, maintenance_id)): Path<(uuid::Uuid, uuid::Uuid)>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    require_lead_or_admin(&user)?;
+
+    let payload =
+        fetch_admin_maintenance_detail_response(pool, user.tenant_id, maintenance_id, Some(shift_id))
+            .await?;
+
+    Ok(Json(payload))
+}
+
+pub async fn get_admin_maintenance_detail_by_id(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(maintenance_id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    require_lead_or_admin(&user)?;
+
+    let payload = fetch_admin_maintenance_detail_response(pool, user.tenant_id, maintenance_id, None)
+        .await?;
+
+    Ok(Json(payload))
 }
 
 pub async fn get_admin_maintenance_photo(

@@ -114,7 +114,7 @@ const formatFollowupReasons = (payload: MaintenanceDetailsPayload) =>
 
 export default function MaintenanceDetailsPage() {
   const navigate = useNavigate();
-  const { shiftId, maintenanceId } = useParams<{ shiftId: string; maintenanceId: string }>();
+  const { maintenanceId } = useParams<{ maintenanceId: string }>();
   const [payload, setPayload] = useState<MaintenanceDetailsPayload | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -123,7 +123,7 @@ export default function MaintenanceDetailsPage() {
     let cancelled = false;
 
     const load = async () => {
-      if (!shiftId || !maintenanceId) {
+      if (!maintenanceId) {
         setPayload(null);
         setError("A karbantartás azonosítója hiányzik.");
         setIsLoading(false);
@@ -133,7 +133,7 @@ export default function MaintenanceDetailsPage() {
       setIsLoading(true);
       setError(null);
       try {
-        const response = await fetch(`/api/admin/shifts/${shiftId}/maintenances/${maintenanceId}`, {
+        const response = await fetch(`/api/admin/maintenances/${maintenanceId}`, {
           credentials: "include",
           cache: "no-store",
         });
@@ -159,7 +159,7 @@ export default function MaintenanceDetailsPage() {
     return () => {
       cancelled = true;
     };
-  }, [maintenanceId, shiftId]);
+  }, [maintenanceId]);
 
   const galleryPhotos = useMemo<MaintenancePhoto[]>(
     () =>
@@ -187,7 +187,7 @@ export default function MaintenanceDetailsPage() {
       <Layout>
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <IconButton onClick={() => navigate(shiftId ? `/admin/shifts/${shiftId}` : "/admin/shifts")} aria-label="Vissza">
+            <IconButton onClick={() => navigate(-1)} aria-label="Vissza">
               <ArrowLeft size={18} />
             </IconButton>
             <Typography variant="h5" sx={{ fontWeight: 800 }}>
@@ -218,7 +218,7 @@ export default function MaintenanceDetailsPage() {
     <Layout>
       <Box sx={{ display: "flex", flexDirection: "column", gap: 3, animation: "slideUp 0.3s ease-out" }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <IconButton onClick={() => navigate(`/admin/shifts/${payload.shift_id}`)} aria-label="Vissza">
+          <IconButton onClick={() => navigate(-1)} aria-label="Vissza">
             <ArrowLeft size={18} />
           </IconButton>
           <Box sx={{ flex: 1 }}>
