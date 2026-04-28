@@ -492,21 +492,40 @@ CREATE FUNCTION prevent_modifying_maintenance_of_frozen_shift()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
+DECLARE
+    current_status shift_status;
+    current_report_url TEXT;
 BEGIN
     IF TG_OP IN ('UPDATE', 'DELETE') THEN
-        PERFORM assert_shift_not_frozen(
-            OLD.tenant_id,
-            OLD.shift_id,
-            'Maintenance works of a frozen shift cannot be modified.'
-        );
+        SELECT status, report_url
+        INTO current_status, current_report_url
+        FROM shifts
+        WHERE tenant_id = OLD.tenant_id
+          AND id = OLD.shift_id;
+
+        IF current_status = 'CANCELLED'
+           OR (
+                current_status IN ('READY_TO_COMMIT', 'COMMITTED')
+                AND current_report_url IS NOT NULL
+           ) THEN
+            RAISE EXCEPTION 'Maintenance works of a frozen shift cannot be modified.';
+        END IF;
     END IF;
 
     IF TG_OP IN ('INSERT', 'UPDATE') THEN
-        PERFORM assert_shift_not_frozen(
-            NEW.tenant_id,
-            NEW.shift_id,
-            'Maintenance works cannot be added to or reassigned into a frozen shift.'
-        );
+        SELECT status, report_url
+        INTO current_status, current_report_url
+        FROM shifts
+        WHERE tenant_id = NEW.tenant_id
+          AND id = NEW.shift_id;
+
+        IF current_status = 'CANCELLED'
+           OR (
+                current_status IN ('READY_TO_COMMIT', 'COMMITTED')
+                AND current_report_url IS NOT NULL
+           ) THEN
+            RAISE EXCEPTION 'Maintenance works cannot be added to or reassigned into a frozen shift.';
+        END IF;
     END IF;
 
     RETURN COALESCE(NEW, OLD);

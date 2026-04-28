@@ -1,7 +1,7 @@
 import { Alert, Box, Typography } from "@mui/material";
 import { Layout } from "@/components/Layout";
 
-export default function AdminDevicesPage() {
+export default function DevicesPage() {
   return (
     <Layout>
       <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>

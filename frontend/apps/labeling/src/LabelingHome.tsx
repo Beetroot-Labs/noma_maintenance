@@ -37,6 +37,7 @@ import {
   hasOfflineCache,
   syncPendingBarcodeAssignments,
 } from "./lib/offlineCache";
+import { clearLastAddedLocation } from "./lib/lastAddedLocation";
 import { appColors } from "./theme";
 
 type LabelingHomeProps = {
@@ -290,6 +291,9 @@ export function LabelingHome({ googleClientId }: LabelingHomeProps) {
 
       const payload = (await response.json()) as BuildingCachePayload;
       await cacheBuildingData(payload, selectedBuildingId);
+      if (isSwitchingBuilding && user) {
+        clearLastAddedLocation(user.id);
+      }
       setSelectedBuildingName(payload.building.name);
       setDeviceRows(await getCachedDeviceListItems());
       setCacheDialogOpen(false);

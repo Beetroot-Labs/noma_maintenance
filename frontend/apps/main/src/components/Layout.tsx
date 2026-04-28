@@ -28,6 +28,7 @@ import {
   Menu as MenuIcon,
   Play,
   ScanBarcode,
+  Users,
   Wrench,
 } from "lucide-react";
 import { appColors } from "@/theme";
@@ -48,6 +49,7 @@ const navItems = [
 const adminNavItems = [
   { path: "/admin/shifts", label: "Műszakok", icon: HardHat },
   { path: "/admin/devices", label: "Berendezések", icon: Fan },
+  { path: "/admin/users", label: "Felhasználók", icon: Users },
 ];
 
 export function Layout({ children }: LayoutProps) {

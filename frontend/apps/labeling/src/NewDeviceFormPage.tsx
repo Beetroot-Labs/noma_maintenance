@@ -34,6 +34,10 @@ import {
   getCachedLocationListItems,
   getSelectedCachedBuilding,
 } from "./lib/offlineCache";
+import {
+  getLastAddedLocation,
+  setLastAddedLocation,
+} from "./lib/lastAddedLocation";
 
 type NewDeviceFormPageProps = {
   googleClientId: string;
@@ -130,6 +134,10 @@ export function NewDeviceFormPage({ googleClientId }: NewDeviceFormPageProps) {
   const filterInputRef = useRef<HTMLInputElement | null>(null);
   const locationRowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
   const [pendingScrollLocationId, setPendingScrollLocationId] = useState<string | null>(null);
+  const lastAddedLocation = useMemo(
+    () => (user ? getLastAddedLocation(user.id) : null),
+    [user, locationRows, selectedBuilding],
+  );
 
   const selectedLocation = useMemo(
     () => locationRows.find((location) => location.id === selectedLocationId) ?? null,
@@ -411,6 +419,21 @@ export function NewDeviceFormPage({ googleClientId }: NewDeviceFormPageProps) {
     setAddLocationDialogOpen(true);
   };
 
+  const handleSelectLastAddedLocation = () => {
+    if (!selectedBuilding || !lastAddedLocation || lastAddedLocation.buildingId !== selectedBuilding.id) {
+      return;
+    }
+
+    setLocationFilters({
+      ...emptyLocationFilters,
+      wing: lastAddedLocation.wing ?? "",
+      floor: lastAddedLocation.floor ?? "",
+      room: lastAddedLocation.room ?? "",
+    });
+    setSelectedLocationId(lastAddedLocation.locationId);
+    setPendingScrollLocationId(lastAddedLocation.locationId);
+  };
+
   const handleCloseAddLocationDialog = () => {
     if (isCreatingLocation) {
       return;
@@ -513,6 +536,15 @@ export function NewDeviceFormPage({ googleClientId }: NewDeviceFormPageProps) {
 
       const payload = (await response.json()) as { device_id: string; location_id: string };
       await refreshBuildingCache(selectedBuilding.id, payload.location_id);
+      if (user && selectedLocation) {
+        setLastAddedLocation(user.id, {
+          buildingId: selectedBuilding.id,
+          locationId: selectedLocation.id,
+          floor: selectedLocation.floor,
+          wing: selectedLocation.wing,
+          room: selectedLocation.room,
+        });
+      }
       navigate(`/devices/${payload.device_id}`);
     } catch (error) {
       setCreateDeviceError(
@@ -827,14 +859,24 @@ export function NewDeviceFormPage({ googleClientId }: NewDeviceFormPageProps) {
                 ? `Kiválasztott lokáció: ${selectedLocation.wing ?? "-"} / ${selectedLocation.floor ?? "-"} / ${selectedLocation.room ?? "-"}`
                 : "Nincs kiválasztott lokáció."}
             </Typography>
-            <Button
-              variant="outlined"
-              color="secondary"
-              onClick={handleOpenAddLocationDialog}
-              disabled={!selectedBuilding || isLoadingLocations}
-            >
-              Új lokáció hozzáadása
-            </Button>
+            <Stack direction="row" spacing={1}>
+              <Button
+                variant="outlined"
+                color="secondary"
+                onClick={handleSelectLastAddedLocation}
+                disabled={!selectedBuilding || isLoadingLocations || !lastAddedLocation || lastAddedLocation.buildingId !== selectedBuilding.id}
+              >
+                Legutóbb hozzáadott lokáció
+              </Button>
+              <Button
+                variant="outlined"
+                color="secondary"
+                onClick={handleOpenAddLocationDialog}
+                disabled={!selectedBuilding || isLoadingLocations}
+              >
+                Új lokáció hozzáadása
+              </Button>
+            </Stack>
           </Stack>
 
           <Paper

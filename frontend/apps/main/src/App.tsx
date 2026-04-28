@@ -20,8 +20,10 @@ import MyCurrentShiftPage from "./pages/MyCurrentShiftPage";
 import ShiftHomePage from "./pages/ShiftHomePage";
 import ShiftSummaryPage from "./pages/ShiftSummaryPage";
 import PendingWorksheetsPage from "./pages/PendingWorksheetsPage";
-import AdminShiftsPage from "./pages/AdminShiftsPage";
-import AdminDevicesPage from "./pages/AdminDevicesPage";
+import ShiftsPage from "./pages/admin/ShiftsPage";
+import DevicesPage from "./pages/admin/DevicesPage";
+import UsersPage from "./pages/admin/UsersPage";
+import UserDetailsPage from "./pages/admin/UserDetailsPage";
 import ShiftDetailsPage from "./pages/ShiftDetailsPage";
 import MaintenanceDetailsPage from "./pages/MaintenanceDetailsPage";
 
@@ -181,8 +183,10 @@ const App = () => (
                   <Route path="/dashboard" element={<Navigate to="/shifts/current/maintenances" replace />} />
                   <Route path="/shifts/:shiftId/waiting-room" element={<Navigate to="/shifts/current" replace />} />
                   <Route element={<RequireRoles roles={["admin", "lead_technician"]} />}>
-                    <Route path="/admin/shifts" element={<AdminShiftsPage />} />
-                    <Route path="/admin/devices" element={<AdminDevicesPage />} />
+                    <Route path="/admin/shifts" element={<ShiftsPage />} />
+                    <Route path="/admin/devices" element={<DevicesPage />} />
+                    <Route path="/admin/users" element={<UsersPage />} />
+                    <Route path="/admin/users/:userId" element={<UserDetailsPage />} />
                     <Route path="/admin/maintenances/:maintenanceId" element={<MaintenanceDetailsPage />} />
                     <Route path="/admin/shifts/:shiftId" element={<ShiftDetailsPage />} />
                     <Route

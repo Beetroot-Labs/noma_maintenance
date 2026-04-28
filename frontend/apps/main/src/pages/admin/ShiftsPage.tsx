@@ -213,7 +213,7 @@ const LiveShiftCard = ({
   );
 };
 
-export default function AdminShiftsPage() {
+export default function ShiftsPage() {
   const navigate = useNavigate();
   const [payload, setPayload] = useState<AdminShiftsPayload | null>(null);
   const [isLoading, setIsLoading] = useState(true);

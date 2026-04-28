@@ -12,7 +12,7 @@ use std::time::Duration as StdDuration;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 
-use crate::auth::{require_lead_or_admin, require_session_user};
+use crate::auth::{require_admin, require_lead_or_admin, require_session_user};
 use crate::error::ApiError;
 use crate::state::AppState;
 use crate::storage::{image_content_type, shift_signature_object_name};
@@ -23,6 +23,46 @@ pub struct InviteCandidate {
     full_name: String,
     email: String,
     role: String,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct AdminUserRow {
+    id: uuid::Uuid,
+    full_name: String,
+    email: String,
+    role: String,
+}
+
+#[derive(Deserialize)]
+pub struct CreateAdminUserRequest {
+    full_name: String,
+    email: String,
+    phone_number: Option<String>,
+    role: String,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct CreatedAdminUserRow {
+    id: uuid::Uuid,
+    full_name: String,
+    email: String,
+    role: String,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct AdminUserDetailsRow {
+    id: uuid::Uuid,
+    full_name: String,
+    email: String,
+    phone_number: Option<String>,
+    role: String,
+    is_active: bool,
+    created_at: DateTime<Utc>,
+    email_verified_at: Option<DateTime<Utc>>,
+    last_login_at: Option<DateTime<Utc>>,
+    shifts_led_count: i64,
+    shifts_joined_count: i64,
+    maintenances_count: i64,
 }
 
 #[derive(Deserialize)]
@@ -354,6 +394,247 @@ pub async fn list_shift_invite_candidates(
     .map_err(ApiError::internal)?;
 
     Ok(Json(users))
+}
+
+pub async fn list_admin_users(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    require_lead_or_admin(&user)?;
+
+    let users = sqlx::query_as::<_, AdminUserRow>(
+        r#"
+        SELECT id, full_name, email::text AS email, role::text AS role
+        FROM users
+        WHERE tenant_id = $1
+          AND is_active = TRUE
+        ORDER BY full_name, email
+        "#,
+    )
+    .bind(user.tenant_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(Json(users))
+}
+
+fn normalize_user_role(role: &str) -> Option<&'static str> {
+    match role.trim() {
+        "ADMIN" | "admin" => Some("ADMIN"),
+        "LEAD_TECHNICIAN" | "lead_technician" => Some("LEAD_TECHNICIAN"),
+        "TECHNICIAN" | "technician" => Some("TECHNICIAN"),
+        "VIEWER" | "viewer" => Some("VIEWER"),
+        _ => None,
+    }
+}
+
+pub async fn create_admin_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<CreateAdminUserRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    require_admin(&user)?;
+
+    let full_name = payload.full_name.trim();
+    if full_name.is_empty() {
+        return Err(ApiError::bad_request("full name is required"));
+    }
+
+    let email = payload.email.trim();
+    if email.is_empty() {
+        return Err(ApiError::bad_request("email is required"));
+    }
+
+    let Some(role) = normalize_user_role(&payload.role) else {
+        return Err(ApiError::bad_request("invalid role"));
+    };
+
+    let phone_number = payload
+        .phone_number
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    let email_in_use: Option<bool> = sqlx::query_scalar(
+        r#"
+        SELECT TRUE
+        FROM users
+        WHERE tenant_id = $1
+          AND email = $2
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(email)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    if email_in_use.is_some() {
+        return Err(ApiError::conflict("Az e-mail cím már használatban van."));
+    }
+
+    let created_user = sqlx::query_as::<_, CreatedAdminUserRow>(
+        r#"
+        INSERT INTO users (
+            tenant_id,
+            full_name,
+            email,
+            phone_number,
+            role,
+            email_verified_at,
+            is_active
+        )
+        VALUES ($1, $2, $3, $4, $5::user_role, NOW(), TRUE)
+        RETURNING id, full_name, email::text AS email, role::text AS role
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(full_name)
+    .bind(email)
+    .bind(phone_number.as_deref())
+    .bind(role)
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok((axum::http::StatusCode::CREATED, Json(created_user)))
+}
+
+async fn load_admin_user_detail_by_id(
+    pool: &sqlx::PgPool,
+    tenant_id: uuid::Uuid,
+    user_id: uuid::Uuid,
+) -> Result<AdminUserDetailsRow, ApiError> {
+    sqlx::query_as::<_, AdminUserDetailsRow>(
+        r#"
+        SELECT
+            u.id,
+            u.full_name,
+            u.email::text AS email,
+            u.phone_number,
+            u.role::text AS role,
+            u.is_active,
+            u.created_at,
+            u.email_verified_at,
+            u.last_login_at,
+            (
+                SELECT COUNT(*)::bigint
+                FROM shifts s
+                WHERE s.tenant_id = u.tenant_id
+                  AND s.lead_user_id = u.id
+            ) AS shifts_led_count,
+            (
+                SELECT COUNT(*)::bigint
+                FROM shift_participants sp
+                WHERE sp.tenant_id = u.tenant_id
+                  AND sp.user_id = u.id
+            ) AS shifts_joined_count,
+            (
+                SELECT COUNT(*)::bigint
+                FROM maintenance_works mw
+                WHERE mw.tenant_id = u.tenant_id
+                  AND mw.maintainer_user_id = u.id
+            ) AS maintenances_count
+        FROM users u
+        WHERE u.tenant_id = $1
+          AND u.id = $2
+          AND u.is_active = TRUE
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(|| ApiError::forbidden("user not found for current tenant"))
+}
+
+pub async fn update_admin_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(user_id): Path<uuid::Uuid>,
+    Json(payload): Json<CreateAdminUserRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    require_admin(&user)?;
+
+    let full_name = payload.full_name.trim();
+    if full_name.is_empty() {
+        return Err(ApiError::bad_request("full name is required"));
+    }
+
+    let Some(role) = normalize_user_role(&payload.role) else {
+        return Err(ApiError::bad_request("invalid role"));
+    };
+
+    let phone_number = payload
+        .phone_number
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    let updated_user_id: Option<uuid::Uuid> = sqlx::query_scalar(
+        r#"
+        UPDATE users
+        SET
+            full_name = $3,
+            phone_number = $4,
+            role = $5::user_role
+        WHERE tenant_id = $1
+          AND id = $2
+          AND is_active = TRUE
+        RETURNING id
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(user_id)
+    .bind(full_name)
+    .bind(phone_number.as_deref())
+    .bind(role)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    if updated_user_id.is_none() {
+        return Err(ApiError::forbidden("user not found for current tenant"));
+    }
+
+    let detail = load_admin_user_detail_by_id(pool, user.tenant_id, user_id).await?;
+    Ok(Json(detail))
+}
+
+pub async fn get_admin_user_detail(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(user_id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    require_lead_or_admin(&user)?;
+
+    let detail = load_admin_user_detail_by_id(pool, user.tenant_id, user_id).await?;
+
+    Ok(Json(detail))
 }
 
 pub async fn list_admin_shifts(
