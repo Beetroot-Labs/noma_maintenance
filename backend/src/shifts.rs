@@ -16,7 +16,7 @@ use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use crate::auth::{require_admin, require_lead_or_admin, require_session_user};
 use crate::error::ApiError;
 use crate::state::AppState;
-use crate::storage::{image_content_type, shift_signature_object_name};
+use crate::storage::{device_photo_api_path, image_content_type, shift_signature_object_name};
 
 #[derive(Serialize, sqlx::FromRow)]
 pub struct InviteCandidate {
@@ -96,6 +96,49 @@ pub struct AdminDevicesResponse {
     total_count: i64,
     page: i64,
     page_size: i64,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct AdminDeviceDetailCore {
+    device_id: uuid::Uuid,
+    barcode: Option<String>,
+    barcode_count: i64,
+    building_name: String,
+    building_address: String,
+    wing: Option<String>,
+    floor: Option<String>,
+    room: Option<String>,
+    location_description: Option<String>,
+    kind: String,
+    original_kind: Option<String>,
+    brand: Option<String>,
+    model: Option<String>,
+    serial_number: Option<String>,
+    source_device_code: Option<String>,
+    additional_info: Option<String>,
+    is_maintainable: bool,
+    device_photo_url: Option<String>,
+    created_at: DateTime<Utc>,
+    latest_maintenance_at: Option<DateTime<Utc>>,
+    maintenance_count: i64,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct AdminDeviceMaintenanceHistoryRow {
+    maintenance_id: uuid::Uuid,
+    shift_id: uuid::Uuid,
+    status: String,
+    maintainer_user_name: String,
+    started_at: DateTime<Utc>,
+    finished_at: Option<DateTime<Utc>>,
+    aborted_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Serialize)]
+pub struct AdminDeviceDetailResponse {
+    #[serde(flatten)]
+    detail: AdminDeviceDetailCore,
+    maintenances: Vec<AdminDeviceMaintenanceHistoryRow>,
 }
 
 #[derive(Deserialize, Default)]
@@ -706,6 +749,124 @@ pub async fn list_admin_devices(
         total_count,
         page,
         page_size,
+    }))
+}
+
+pub async fn get_admin_device_detail(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(device_id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    require_lead_or_admin(&user)?;
+
+    let mut detail = sqlx::query_as::<_, AdminDeviceDetailCore>(
+        r#"
+        SELECT
+            d.id AS device_id,
+            bc.code AS barcode,
+            COALESCE(
+                (
+                    SELECT COUNT(*)::bigint
+                    FROM barcodes all_b
+                    WHERE all_b.tenant_id = d.tenant_id
+                      AND all_b.device_id = d.id
+                ),
+                0
+            ) AS barcode_count,
+            b.name AS building_name,
+            b.address AS building_address,
+            sl.wing,
+            sl.floor,
+            sl.room,
+            sl.location_description,
+            d.kind::text AS kind,
+            d.original_kind,
+            d.brand,
+            d.model,
+            d.serial_number,
+            d.source_device_code,
+            d.additional_info,
+            d.is_maintainable,
+            CASE
+                WHEN d.device_photo_url IS NULL THEN NULL
+                ELSE FORMAT('/api/labeling/devices/%s/photo', d.id::text)
+            END AS device_photo_url,
+            d.created_at,
+            lm.latest_maintenance_at,
+            COALESCE(
+                (
+                    SELECT COUNT(*)::bigint
+                    FROM maintenance_works mw
+                    WHERE mw.tenant_id = d.tenant_id
+                      AND mw.device_id = d.id
+                ),
+                0
+            ) AS maintenance_count
+        FROM devices d
+        LEFT JOIN site_locations sl
+          ON sl.tenant_id = d.tenant_id
+         AND sl.id = d.location_id
+        LEFT JOIN buildings b
+          ON b.tenant_id = sl.tenant_id
+         AND b.id = sl.building_id
+        LEFT JOIN barcodes bc
+          ON bc.tenant_id = d.tenant_id
+         AND bc.device_id = d.id
+         AND bc.deactivated_at IS NULL
+        LEFT JOIN LATERAL (
+            SELECT MAX(mw.started_at) AS latest_maintenance_at
+            FROM maintenance_works mw
+            WHERE mw.tenant_id = d.tenant_id
+              AND mw.device_id = d.id
+        ) lm ON TRUE
+        WHERE d.tenant_id = $1
+          AND d.id = $2
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(device_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(|| ApiError::forbidden("device not found for current tenant"))?;
+
+    if detail.device_photo_url.is_some() {
+        detail.device_photo_url = Some(device_photo_api_path(device_id));
+    }
+
+    let maintenances = sqlx::query_as::<_, AdminDeviceMaintenanceHistoryRow>(
+        r#"
+        SELECT
+            mw.id AS maintenance_id,
+            mw.shift_id,
+            mw.status::text AS status,
+            mu.full_name AS maintainer_user_name,
+            mw.started_at,
+            mw.finished_at,
+            mw.aborted_at
+        FROM maintenance_works mw
+        JOIN users mu
+          ON mu.tenant_id = mw.tenant_id
+         AND mu.id = mw.maintainer_user_id
+        WHERE mw.tenant_id = $1
+          AND mw.device_id = $2
+        ORDER BY COALESCE(mw.finished_at, mw.aborted_at, mw.started_at) DESC, mw.id DESC
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(device_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(Json(AdminDeviceDetailResponse {
+        detail,
+        maintenances,
     }))
 }
 

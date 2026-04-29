@@ -22,6 +22,7 @@ import ShiftSummaryPage from "./pages/ShiftSummaryPage";
 import PendingWorksheetsPage from "./pages/PendingWorksheetsPage";
 import ShiftsPage from "./pages/admin/ShiftsPage";
 import DevicesPage from "./pages/admin/DevicesPage";
+import AdminDeviceDetailsPage from "./pages/admin/DeviceDetailsPage";
 import UsersPage from "./pages/admin/UsersPage";
 import UserDetailsPage from "./pages/admin/UserDetailsPage";
 import ShiftDetailsPage from "./pages/ShiftDetailsPage";
@@ -185,6 +186,7 @@ const App = () => (
                   <Route element={<RequireRoles roles={["admin", "lead_technician"]} />}>
                     <Route path="/admin/shifts" element={<ShiftsPage />} />
                     <Route path="/admin/devices" element={<DevicesPage />} />
+                    <Route path="/admin/devices/:deviceId" element={<AdminDeviceDetailsPage />} />
                     <Route path="/admin/users" element={<UsersPage />} />
                     <Route path="/admin/users/:userId" element={<UserDetailsPage />} />
                     <Route path="/admin/maintenances/:maintenanceId" element={<MaintenanceDetailsPage />} />

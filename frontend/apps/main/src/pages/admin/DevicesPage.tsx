@@ -30,7 +30,7 @@ import {
 import { getDeviceKindLabel } from "@noma/shared";
 import { ArrowDownNarrowWide, ArrowUpWideNarrow, DiamondMinus, X } from "lucide-react";
 import { MouseEvent, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { getAdminDevicesStateStorageKey } from "@/lib/adminDevicesState";
 
@@ -161,6 +161,7 @@ const getRowBrandModel = (row: AdminDeviceRow) => {
 const supportsPresenceFilter = (key: DeviceFilterKey) => presenceFilterKeys.includes(key);
 
 export default function DevicesPage() {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [buildings, setBuildings] = useState<AdminBuilding[]>([]);
   const [selectedBuildingName, setSelectedBuildingName] = useState<string | null>(null);
@@ -673,8 +674,13 @@ export default function DevicesPage() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    rows.map((row) => (
-                      <TableRow key={row.device_id} hover>
+                  rows.map((row) => (
+                    <TableRow
+                      key={row.device_id}
+                      hover
+                      onClick={() => navigate(`/admin/devices/${row.device_id}`)}
+                      sx={{ cursor: "pointer" }}
+                    >
                         <TableCell>{renderNullableValue(row.barcode)}</TableCell>
                         <TableCell>{renderNullableValue(getRowWingOrBuilding(row))}</TableCell>
                         <TableCell>{renderNullableValue(row.floor)}</TableCell>
