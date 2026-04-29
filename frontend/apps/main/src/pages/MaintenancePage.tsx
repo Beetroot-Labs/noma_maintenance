@@ -497,8 +497,16 @@ export default function MaintenancePage() {
                     placeholder="Írja le a megfigyeléseket, elvégzett feladatokat vagy talált problémákat..."
                     value={work.notes}
                     onChange={(event) => updateNotes(work.id, event.target.value)}
+                    inputProps={{
+                      autoComplete: "off",
+                      autoCorrect: "off",
+                      autoCapitalize: "off",
+                      spellCheck: false,
+                      style: { overflowY: "auto" },
+                    }}
                     multiline
                     minRows={4}
+                    maxRows={10}
                     fullWidth
                   />
                 ) : (
