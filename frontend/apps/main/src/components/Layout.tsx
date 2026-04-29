@@ -456,7 +456,7 @@ export function Layout({ children }: LayoutProps) {
       >
         {canAccessAdminView ? (
           <MenuItem onClick={handleToggleView}>
-            {isAdminView ? "Maintenance view" : "Admin view"}
+            {isAdminView ? "Karbantartói nézet" : "Admin nézet"}
           </MenuItem>
         ) : null}
         {canAccessAdminView ? <Divider sx={{ borderColor: "rgba(0, 0, 0, 0.12)" }} /> : null}

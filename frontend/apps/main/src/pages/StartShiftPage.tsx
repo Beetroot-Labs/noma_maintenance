@@ -15,6 +15,7 @@ import {
 import { Layout } from "@/components/Layout";
 import { useDemoUser } from "@/context/DemoUserContext";
 import { useShift } from "@/context/ShiftContext";
+import { storeAdminDevicesStateForBuilding } from "@/lib/adminDevicesState";
 import { pruneNonRetryableMaintenanceSyncItems } from "@/lib/maintenanceStore";
 
 type BuildingOption = {
@@ -122,6 +123,7 @@ export default function StartShiftPage() {
         );
       }
 
+      storeAdminDevicesStateForBuilding(selectedBuilding.id, selectedBuilding.name);
       await refreshCurrentShift();
       navigate("/shifts/current");
     } catch (err) {

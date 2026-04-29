@@ -36,8 +36,8 @@ use crate::shifts::{
     create_admin_user, decline_shift_invitation, get_admin_maintenance_detail,
     get_admin_maintenance_detail_by_id, get_admin_maintenance_photo, get_admin_shift_detail,
     get_admin_user_detail, get_current_shift_state, get_pending_worksheets,
-    get_shift_maintenance_summary, get_shift_waiting_room, list_admin_shifts,
-    list_admin_users, list_shift_invite_candidates, mark_shift_join_ready,
+    get_shift_maintenance_summary, get_shift_waiting_room, list_admin_buildings,
+    list_admin_devices, list_admin_shifts, list_admin_users, list_shift_invite_candidates, mark_shift_join_ready,
     remove_shift_participant, request_shift_close, subscribe_shift_events,
     update_admin_user, upload_shift_signature,
 };
@@ -134,7 +134,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/auth/me", get(get_current_user))
         .route("/auth/logout", post(logout))
         .route("/admin/shifts", get(list_admin_shifts))
+        .route("/admin/buildings", get(list_admin_buildings))
         .route("/admin/users", get(list_admin_users).post(create_admin_user))
+        .route("/admin/devices", get(list_admin_devices))
         .route("/admin/users/{user_id}", get(get_admin_user_detail).patch(update_admin_user))
         .route("/admin/shifts/{shift_id}", get(get_admin_shift_detail))
         .route(

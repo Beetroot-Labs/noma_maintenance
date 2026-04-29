@@ -6,6 +6,7 @@ import { ChevronRight, ClipboardList, HardHat, Plus, Radio, Users } from "lucide
 import { Layout } from "@/components/Layout";
 import { useDemoUser } from "@/context/DemoUserContext";
 import { useShift } from "@/context/ShiftContext";
+import { storeAdminDevicesStateForBuilding } from "@/lib/adminDevicesState";
 import { pruneNonRetryableMaintenanceSyncItems } from "@/lib/maintenanceStore";
 import { appColors } from "@/theme";
 
@@ -97,6 +98,7 @@ export default function ShiftHomePage() {
       }
       await refreshCurrentShift();
       if (action === "accept") {
+        storeAdminDevicesStateForBuilding(currentShift.building_id, currentShift.building_name);
         console.log("joined to shift");
       }
     } catch (error) {

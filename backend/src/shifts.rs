@@ -1,12 +1,13 @@
 use axum::Json;
 use axum::body::Bytes;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
 use cloud_storage::Object;
 use serde::{Deserialize, Serialize};
+use sqlx::{Postgres, QueryBuilder};
 use std::convert::Infallible;
 use std::time::Duration as StdDuration;
 use tokio_stream::StreamExt;
@@ -63,6 +64,63 @@ pub struct AdminUserDetailsRow {
     shifts_led_count: i64,
     shifts_joined_count: i64,
     maintenances_count: i64,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct AdminBuildingSummary {
+    id: uuid::Uuid,
+    name: String,
+    address: String,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct AdminDeviceRow {
+    device_id: uuid::Uuid,
+    barcode: Option<String>,
+    building_name: String,
+    wing: Option<String>,
+    floor: Option<String>,
+    room: Option<String>,
+    kind: String,
+    original_kind: Option<String>,
+    brand: Option<String>,
+    model: Option<String>,
+    source_device_code: Option<String>,
+    latest_maintenance_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Serialize)]
+pub struct AdminDevicesResponse {
+    selected_building_name: String,
+    rows: Vec<AdminDeviceRow>,
+    total_count: i64,
+    page: i64,
+    page_size: i64,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ListAdminDevicesQuery {
+    building_id: Option<uuid::Uuid>,
+    page: Option<i64>,
+    sort_by: Option<String>,
+    sort_dir: Option<String>,
+    barcode: Option<String>,
+    barcode_presence: Option<String>,
+    wing_or_building: Option<String>,
+    wing_or_building_presence: Option<String>,
+    floor: Option<String>,
+    floor_presence: Option<String>,
+    room: Option<String>,
+    room_presence: Option<String>,
+    device_type: Option<String>,
+    device_type_presence: Option<String>,
+    brand_model: Option<String>,
+    brand_model_presence: Option<String>,
+    identifier: Option<String>,
+    identifier_presence: Option<String>,
+    maintained_at: Option<String>,
+    maintained_at_presence: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -422,6 +480,233 @@ pub async fn list_admin_users(
     .map_err(ApiError::internal)?;
 
     Ok(Json(users))
+}
+
+const ADMIN_DEVICE_TYPE_SQL: &str = "COALESCE(NULLIF(BTRIM(d.original_kind), ''), CASE d.kind::text \
+    WHEN 'WINDOW_AIR_CONDITIONER' THEN 'Ablakklíma' \
+    WHEN 'FAN_COIL' THEN 'Fan-coil' \
+    WHEN 'COMFORT_FAN_COIL' THEN 'Komfort fan-coil' \
+    WHEN 'AIR_CURTAIN' THEN 'Légfüggöny' \
+    WHEN 'SPLIT_UNIT' THEN 'Split klíma' \
+    WHEN 'SPLIT_INDOOR_UNIT' THEN 'Split beltéri egység' \
+    WHEN 'SERVER_ROOM_SPLIT_INDOOR_UNIT' THEN 'Szervertermi split beltéri egység' \
+    WHEN 'AIR_HANDLING_UNIT' THEN 'Légkezelő' \
+    WHEN 'VRV_INDOOR_UNIT' THEN 'VRV beltéri egység' \
+    WHEN 'VRV_OUTDOOR_UNIT' THEN 'VRV kültéri egység' \
+    WHEN 'CONDENSER' THEN 'Kondenzátor' \
+    WHEN 'FAN' THEN 'Ventilátor' \
+    WHEN 'LIQUID_CHILLER' THEN 'Folyadékhűtő' \
+    ELSE d.kind::text \
+END)";
+
+const ADMIN_DEVICE_WING_OR_BUILDING_SQL: &str = "COALESCE(NULLIF(BTRIM(sl.wing), ''), b.name)";
+const ADMIN_DEVICE_WING_SQL: &str = "NULLIF(BTRIM(sl.wing), '')";
+const ADMIN_DEVICE_BRAND_MODEL_SQL: &str = "NULLIF(BTRIM(CONCAT_WS(' ', d.brand, d.model)), '')";
+const ADMIN_DEVICE_MAINTAINED_AT_FILTER_SQL: &str = "TO_CHAR(lm.latest_maintenance_at, 'YYYY.MM.DD')";
+
+fn push_admin_device_presence_filter(
+    query: &mut QueryBuilder<'_, Postgres>,
+    expression: &str,
+    presence: Option<&str>,
+) {
+    match presence {
+        Some("missing") => {
+            query.push(" AND ");
+            query.push(expression);
+            query.push(" IS NULL");
+        }
+        Some("present") => {
+            query.push(" AND ");
+            query.push(expression);
+            query.push(" IS NOT NULL");
+        }
+        _ => {}
+    }
+}
+
+fn push_admin_device_text_filter(
+    query: &mut QueryBuilder<'_, Postgres>,
+    expression: &str,
+    value: Option<&str>,
+) {
+    if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
+        query.push(" AND ");
+        query.push(expression);
+        query.push(" ILIKE ");
+        query.push_bind(format!("%{value}%"));
+    }
+}
+
+fn append_admin_device_filters(
+    query: &mut QueryBuilder<'_, Postgres>,
+    filters: &ListAdminDevicesQuery,
+) {
+    push_admin_device_presence_filter(query, "NULLIF(BTRIM(bc.code), '')", filters.barcode_presence.as_deref());
+    push_admin_device_presence_filter(query, ADMIN_DEVICE_WING_SQL, filters.wing_or_building_presence.as_deref());
+    push_admin_device_presence_filter(query, "NULLIF(BTRIM(sl.floor), '')", filters.floor_presence.as_deref());
+    push_admin_device_presence_filter(query, "NULLIF(BTRIM(sl.room), '')", filters.room_presence.as_deref());
+    push_admin_device_presence_filter(query, "NULLIF(BTRIM(d.original_kind), '')", filters.device_type_presence.as_deref());
+    push_admin_device_presence_filter(query, ADMIN_DEVICE_BRAND_MODEL_SQL, filters.brand_model_presence.as_deref());
+    push_admin_device_presence_filter(query, "NULLIF(BTRIM(d.source_device_code), '')", filters.identifier_presence.as_deref());
+    push_admin_device_presence_filter(query, "lm.latest_maintenance_at", filters.maintained_at_presence.as_deref());
+    push_admin_device_text_filter(query, "bc.code", filters.barcode.as_deref());
+    push_admin_device_text_filter(
+        query,
+        ADMIN_DEVICE_WING_OR_BUILDING_SQL,
+        filters.wing_or_building.as_deref(),
+    );
+    push_admin_device_text_filter(query, "sl.floor", filters.floor.as_deref());
+    push_admin_device_text_filter(query, "sl.room", filters.room.as_deref());
+    push_admin_device_text_filter(query, ADMIN_DEVICE_TYPE_SQL, filters.device_type.as_deref());
+    push_admin_device_text_filter(
+        query,
+        ADMIN_DEVICE_BRAND_MODEL_SQL,
+        filters.brand_model.as_deref(),
+    );
+    push_admin_device_text_filter(
+        query,
+        "d.source_device_code",
+        filters.identifier.as_deref(),
+    );
+    push_admin_device_text_filter(
+        query,
+        ADMIN_DEVICE_MAINTAINED_AT_FILTER_SQL,
+        filters.maintained_at.as_deref(),
+    );
+}
+
+fn append_admin_device_order_by(
+    query: &mut QueryBuilder<'_, Postgres>,
+    sort_by: Option<&str>,
+    sort_dir: Option<&str>,
+) {
+    let sort_expression = match sort_by {
+        Some("barcode") => "bc.code",
+        Some("wingOrBuilding") => ADMIN_DEVICE_WING_OR_BUILDING_SQL,
+        Some("floor") => "sl.floor",
+        Some("room") => "sl.room",
+        Some("deviceType") => ADMIN_DEVICE_TYPE_SQL,
+        Some("brandModel") => ADMIN_DEVICE_BRAND_MODEL_SQL,
+        Some("identifier") => "d.source_device_code",
+        Some("maintainedAt") => "lm.latest_maintenance_at",
+        _ => {
+            query.push(
+                " ORDER BY COALESCE(NULLIF(BTRIM(sl.wing), ''), b.name) ASC NULLS LAST, sl.floor ASC NULLS LAST, sl.room ASC NULLS LAST, d.created_at ASC, d.id ASC",
+            );
+            return;
+        }
+    };
+
+    let descending = matches!(sort_dir, Some("desc"));
+    query.push(" ORDER BY ");
+    query.push(sort_expression);
+    query.push(if descending {
+        " DESC NULLS LAST, d.id DESC"
+    } else {
+        " ASC NULLS LAST, d.id ASC"
+    });
+}
+
+pub async fn list_admin_buildings(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    require_lead_or_admin(&user)?;
+
+    let buildings = sqlx::query_as::<_, AdminBuildingSummary>(
+        r#"
+        SELECT id, name, address
+        FROM buildings
+        WHERE tenant_id = $1
+        ORDER BY name
+        "#,
+    )
+    .bind(user.tenant_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(Json(buildings))
+}
+
+pub async fn list_admin_devices(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(params): Query<ListAdminDevicesQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    require_lead_or_admin(&user)?;
+
+    let building_id = params
+        .building_id
+        .ok_or_else(|| ApiError::bad_request("building id is required"))?;
+    let page = params.page.unwrap_or(1).max(1);
+    let page_size = 100_i64;
+    let offset = (page - 1) * page_size;
+
+    let selected_building_name: String = sqlx::query_scalar(
+        r#"
+        SELECT name
+        FROM buildings
+        WHERE tenant_id = $1
+          AND id = $2
+        "#,
+    )
+    .bind(user.tenant_id)
+    .bind(building_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(|| ApiError::forbidden("building not found for current tenant"))?;
+
+    let mut count_query = QueryBuilder::new(
+        "SELECT COUNT(*)::bigint FROM devices d JOIN site_locations sl ON sl.tenant_id = d.tenant_id AND sl.id = d.location_id JOIN buildings b ON b.tenant_id = sl.tenant_id AND b.id = sl.building_id LEFT JOIN barcodes bc ON bc.tenant_id = d.tenant_id AND bc.device_id = d.id AND bc.deactivated_at IS NULL LEFT JOIN LATERAL (SELECT MAX(mw.started_at) AS latest_maintenance_at FROM maintenance_works mw WHERE mw.tenant_id = d.tenant_id AND mw.device_id = d.id) lm ON TRUE WHERE d.tenant_id = ",
+    );
+    count_query.push_bind(user.tenant_id);
+    count_query.push(" AND sl.building_id = ");
+    count_query.push_bind(building_id);
+    append_admin_device_filters(&mut count_query, &params);
+    let total_count: i64 = count_query
+        .build_query_scalar()
+        .fetch_one(pool)
+        .await
+        .map_err(ApiError::internal)?;
+
+    let mut rows_query = QueryBuilder::new(
+        "SELECT d.id AS device_id, bc.code AS barcode, b.name AS building_name, sl.wing, sl.floor, sl.room, d.kind::text AS kind, d.original_kind, d.brand, d.model, d.source_device_code, lm.latest_maintenance_at FROM devices d JOIN site_locations sl ON sl.tenant_id = d.tenant_id AND sl.id = d.location_id JOIN buildings b ON b.tenant_id = sl.tenant_id AND b.id = sl.building_id LEFT JOIN barcodes bc ON bc.tenant_id = d.tenant_id AND bc.device_id = d.id AND bc.deactivated_at IS NULL LEFT JOIN LATERAL (SELECT MAX(mw.started_at) AS latest_maintenance_at FROM maintenance_works mw WHERE mw.tenant_id = d.tenant_id AND mw.device_id = d.id) lm ON TRUE WHERE d.tenant_id = ",
+    );
+    rows_query.push_bind(user.tenant_id);
+    rows_query.push(" AND sl.building_id = ");
+    rows_query.push_bind(building_id);
+    append_admin_device_filters(&mut rows_query, &params);
+    append_admin_device_order_by(&mut rows_query, params.sort_by.as_deref(), params.sort_dir.as_deref());
+    rows_query.push(" LIMIT ");
+    rows_query.push_bind(page_size);
+    rows_query.push(" OFFSET ");
+    rows_query.push_bind(offset);
+
+    let rows = rows_query
+        .build_query_as::<AdminDeviceRow>()
+        .fetch_all(pool)
+        .await
+        .map_err(ApiError::internal)?;
+
+    Ok(Json(AdminDevicesResponse {
+        selected_building_name,
+        rows,
+        total_count,
+        page,
+        page_size,
+    }))
 }
 
 fn normalize_user_role(role: &str) -> Option<&'static str> {
