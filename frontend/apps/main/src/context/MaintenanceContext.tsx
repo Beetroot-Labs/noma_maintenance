@@ -47,6 +47,7 @@ interface MaintenanceContextType {
 const MaintenanceContext = createContext<MaintenanceContextType | undefined>(undefined);
 const legacyMaintenanceStorageKey = "noma:maintenance-state";
 const maxPersistedPastWorks = 50;
+const maintenancePersistDebounceMs = 300;
 
 type StoredMaintenancePhoto = {
   id: string;
@@ -151,6 +152,18 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     new Map(),
   );
   const activeShiftId = currentShift?.id ?? null;
+  const photoPersistenceSignature = JSON.stringify(
+    [currentWork, ...todaysWorks, ...pastWorks]
+      .filter((work): work is MaintenanceWork => Boolean(work))
+      .flatMap((work) =>
+        work.photos.map((photo) => ({
+          id: photo.id,
+          url: photo.url,
+          description: photo.description,
+          timestamp: photo.timestamp.toISOString(),
+        })),
+      ),
+  );
 
   const shiftManager: ShiftManager = {
     name: "Ivanics Károly",
@@ -471,9 +484,6 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
   }, [currentWork, pastWorks, todaysWorks]);
 
   useEffect(() => {
-    if (!user?.tenantId || !user.id || !isMaintenanceStateLoaded) {
-      return;
-    }
     const works = [currentWork, ...todaysWorks, ...pastWorks].filter(
       (work): work is MaintenanceWork => Boolean(work),
     );
@@ -485,6 +495,13 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
         });
       }
     }
+  }, [photoPersistenceSignature]);
+
+  useEffect(() => {
+    if (!user?.tenantId || !user.id || !isMaintenanceStateLoaded) {
+      return;
+    }
+
     const persistedPastWorks = pastWorks
       .sort((a, b) => {
         const aTime = a.endTime?.getTime() ?? a.startTime.getTime();
@@ -498,9 +515,16 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
       pastWorks: persistedPastWorks.map(serializeWork),
       workdayClosed,
     };
-    saveMaintenanceState(user.tenantId, user.id, payload).catch((error) => {
-      console.warn("Nem sikerült menteni a karbantartási adatokat.", error);
-    });
+
+    const timeoutId = window.setTimeout(() => {
+      saveMaintenanceState(user.tenantId, user.id, payload).catch((error) => {
+        console.warn("Nem sikerült menteni a karbantartási adatokat.", error);
+      });
+    }, maintenancePersistDebounceMs);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
   }, [
     currentWork,
     pastWorks,
