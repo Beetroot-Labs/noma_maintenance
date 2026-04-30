@@ -5,6 +5,8 @@ export interface MaintenancePhoto {
   timestamp: Date;
 }
 
+export type MaintenanceKind = "ROUTINE" | "SERVICE";
+
 export type FollowupServiceReason =
   | "MAIN_COMPONENT_REPLACEMENT"
   | "CLEANING"
@@ -48,6 +50,8 @@ export interface MaintenanceWork {
   hvacLocation: string;
   executorId: string;
   status: "in-progress" | "completed";
+  maintenanceKind: MaintenanceKind;
+  issueNumber: string;
   isMalfunctioning: boolean;
   followupServiceRequired: boolean;
   followupServiceReasons: FollowupServiceReason[];

@@ -6,7 +6,7 @@ import {
   type OutboxSyncItemResult,
 } from "@noma/shared";
 import { getPhotoById } from "@/lib/photoStore";
-import type { MaintenanceWorkSyncState } from "@/types/maintenance";
+import type { MaintenanceKind, MaintenanceWorkSyncState } from "@/types/maintenance";
 
 const DB_NAME = "noma-maintenance-state";
 const DB_VERSION = 2;
@@ -45,6 +45,8 @@ export type QueueMaintenanceWorkSyncInput = {
   shiftId: string;
   deviceId: string;
   status: "IN_PROGRESS" | "FINISHED" | "ABORTED";
+  kind: MaintenanceKind;
+  issueNumber: string | null;
   startedAt: string;
   finishedAt: string | null;
   abortedAt: string | null;
@@ -406,6 +408,8 @@ export const syncPendingMaintenanceMutations = async (): Promise<void> => {
               shift_id: work.shiftId,
               device_id: work.deviceId,
               status: work.status,
+              kind: work.kind,
+              issue_number: work.issueNumber,
               started_at: work.startedAt,
               finished_at: work.finishedAt,
               aborted_at: work.abortedAt,
@@ -471,6 +475,8 @@ export const syncPendingMaintenanceMutations = async (): Promise<void> => {
               shift_id: work.shiftId,
               device_id: work.deviceId,
               status: work.status,
+              kind: work.kind,
+              issue_number: work.issueNumber,
               started_at: work.startedAt,
               finished_at: work.finishedAt,
               aborted_at: work.abortedAt,

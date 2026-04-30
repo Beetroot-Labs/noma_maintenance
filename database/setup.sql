@@ -273,6 +273,11 @@ CREATE TYPE maintenance_work_status AS ENUM (
     'ABORTED'
 );
 
+CREATE TYPE maintenance_kind AS ENUM (
+    'ROUTINE',
+    'SERVICE'
+);
+
 CREATE TYPE maintenance_followup_reason AS ENUM (
     'MAIN_COMPONENT_REPLACEMENT',
     'CLEANING',
@@ -291,6 +296,8 @@ CREATE TABLE maintenance_works (
     device_id UUID NOT NULL,
     maintainer_user_id UUID NOT NULL,
     status maintenance_work_status NOT NULL DEFAULT 'IN_PROGRESS',
+    kind maintenance_kind NOT NULL DEFAULT 'ROUTINE',
+    issue_number TEXT,
     started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     finished_at TIMESTAMPTZ,
     aborted_at TIMESTAMPTZ,
@@ -313,6 +320,12 @@ CREATE TABLE maintenance_works (
         ON DELETE RESTRICT,
     CONSTRAINT maintenance_works_malfunction_description_not_empty CHECK (
         malfunction_description IS NULL OR NULLIF(BTRIM(malfunction_description), '') IS NOT NULL
+    ),
+    CONSTRAINT maintenance_works_issue_number_not_empty CHECK (
+        issue_number IS NULL OR NULLIF(BTRIM(issue_number), '') IS NOT NULL
+    ),
+    CONSTRAINT maintenance_works_issue_number_required_for_service CHECK (
+        kind <> 'SERVICE' OR NULLIF(BTRIM(issue_number), '') IS NOT NULL
     ),
     CONSTRAINT maintenance_works_followup_reasons_only_when_required CHECK (
         followup_service_required OR cardinality(followup_service_reasons) = 0

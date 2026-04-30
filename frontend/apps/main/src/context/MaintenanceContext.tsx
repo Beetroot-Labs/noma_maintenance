@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, ReactNode } from "react";
 import type {
   FollowupServiceReason,
+  MaintenanceKind,
   MaintenancePhoto,
   MaintenanceWork,
   MaintenanceWorkSyncState,
@@ -32,6 +33,8 @@ interface MaintenanceContextType {
   shiftManager: ShiftManager;
   startMaintenance: (hvacId: string) => Promise<string | null>;
   canConfirmShiftClose: boolean;
+  setMaintenanceKind: (workId: string, kind: MaintenanceKind) => void;
+  updateIssueNumber: (workId: string, issueNumber: string) => void;
   updateNotes: (workId: string, notes: string) => void;
   addPhoto: (workId: string, photo: MaintenancePhoto) => void;
   setFollowupServiceRequired: (workId: string, required: boolean) => void;
@@ -103,6 +106,8 @@ const deserializeWork = (work: StoredMaintenanceWork): MaintenanceWork | null =>
 
   return {
     ...candidate,
+    maintenanceKind: candidate.maintenanceKind === "SERVICE" ? "SERVICE" : "ROUTINE",
+    issueNumber: candidate.issueNumber ?? "",
     followupServiceRequired: Boolean(candidate.followupServiceRequired),
     followupServiceReasons: Array.isArray(candidate.followupServiceReasons)
       ? candidate.followupServiceReasons
@@ -542,6 +547,8 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
         shiftId: work.shiftId,
         deviceId: work.deviceId,
         status: "FINISHED",
+        kind: work.maintenanceKind,
+        issueNumber: work.maintenanceKind === "SERVICE" ? work.issueNumber.trim() || null : null,
         startedAt: work.startTime.toISOString(),
         finishedAt: work.endTime?.toISOString() ?? null,
         abortedAt: null,
@@ -599,6 +606,8 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
       hvacLocation: hvacInfo.location,
       executorId: user?.id || "unknown",
       status: "in-progress",
+      maintenanceKind: "ROUTINE",
+      issueNumber: "",
       isMalfunctioning: false,
       followupServiceRequired: false,
       followupServiceReasons: [],
@@ -612,6 +621,32 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     setTodaysWorks((prev) => [...prev, newWork]);
 
     return newWork.id;
+  };
+
+  const setMaintenanceKind = (workId: string, kind: MaintenanceKind) => {
+    const apply = (work: MaintenanceWork): MaintenanceWork => ({
+      ...work,
+      maintenanceKind: kind,
+    });
+
+    if (currentWork?.id === workId) {
+      setCurrentWork(apply(currentWork));
+    }
+    setTodaysWorks((prev) => prev.map((work) => (work.id === workId ? apply(work) : work)));
+    setPastWorks((prev) => prev.map((work) => (work.id === workId ? apply(work) : work)));
+  };
+
+  const updateIssueNumber = (workId: string, issueNumber: string) => {
+    const apply = (work: MaintenanceWork): MaintenanceWork => ({
+      ...work,
+      issueNumber,
+    });
+
+    if (currentWork?.id === workId) {
+      setCurrentWork(apply(currentWork));
+    }
+    setTodaysWorks((prev) => prev.map((work) => (work.id === workId ? apply(work) : work)));
+    setPastWorks((prev) => prev.map((work) => (work.id === workId ? apply(work) : work)));
   };
 
   const updateNotes = (workId: string, notes: string) => {
@@ -888,6 +923,8 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
         shiftManager,
         startMaintenance,
         canConfirmShiftClose,
+        setMaintenanceKind,
+        updateIssueNumber,
         updateNotes,
         addPhoto,
         setFollowupServiceRequired,

@@ -21,6 +21,8 @@ pub struct SyncMaintenanceWorkRequest {
     shift_id: uuid::Uuid,
     device_id: uuid::Uuid,
     status: String,
+    kind: Option<String>,
+    issue_number: Option<String>,
     started_at: DateTime<Utc>,
     finished_at: Option<DateTime<Utc>>,
     aborted_at: Option<DateTime<Utc>>,
@@ -66,6 +68,19 @@ fn normalize_work_status(status: &str) -> Result<&'static str, ApiError> {
         "FINISHED" => Ok("FINISHED"),
         "ABORTED" => Ok("ABORTED"),
         _ => Err(ApiError::bad_request("invalid maintenance work status")),
+    }
+}
+
+fn normalize_maintenance_kind(kind: Option<&str>) -> Result<&'static str, ApiError> {
+    match kind
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_uppercase)
+        .as_deref()
+    {
+        Some("ROUTINE") | None => Ok("ROUTINE"),
+        Some("SERVICE") => Ok("SERVICE"),
+        _ => Err(ApiError::bad_request("invalid maintenance kind")),
     }
 }
 
@@ -167,6 +182,8 @@ pub async fn sync_maintenance_work(
     let mutation_id = require_mutation_id(&headers)?;
     let endpoint_key = format!("MAINTENANCE_WORK_SYNC:{work_id}");
     let normalized_status = normalize_work_status(&payload.status)?;
+    let normalized_kind = normalize_maintenance_kind(payload.kind.as_deref())?;
+    let issue_number = normalize_optional_text(payload.issue_number);
     let malfunction_description = normalize_optional_text(payload.malfunction_description);
     let followup_service_required = payload.followup_service_required.unwrap_or(false);
     let followup_service_reasons = normalize_followup_reasons(payload.followup_service_reasons)?;
@@ -198,6 +215,12 @@ pub async fn sync_maintenance_work(
     if !has_other_reason && followup_service_reason_other.is_some() {
         return Err(ApiError::bad_request(
             "other follow-up service reason text is only allowed with OTHER",
+        ));
+    }
+
+    if normalized_kind == "SERVICE" && issue_number.is_none() {
+        return Err(ApiError::bad_request(
+            "issue number is required for service maintenance",
         ));
     }
 
@@ -240,6 +263,8 @@ pub async fn sync_maintenance_work(
             device_id,
             maintainer_user_id,
             status,
+            kind,
+            issue_number,
             started_at,
             finished_at,
             aborted_at,
@@ -256,20 +281,24 @@ pub async fn sync_maintenance_work(
             $4,
             $5,
             $6::maintenance_work_status,
-            $7,
+            $7::maintenance_kind,
             $8,
             $9,
             $10,
             $11,
-            $12::maintenance_followup_reason[],
+            $12,
             $13,
-            $14
+            $14::maintenance_followup_reason[],
+            $15,
+            $16
         )
         ON CONFLICT (id) DO UPDATE
         SET
             shift_id = EXCLUDED.shift_id,
             device_id = EXCLUDED.device_id,
             status = EXCLUDED.status,
+            kind = EXCLUDED.kind,
+            issue_number = EXCLUDED.issue_number,
             started_at = EXCLUDED.started_at,
             finished_at = EXCLUDED.finished_at,
             aborted_at = EXCLUDED.aborted_at,
@@ -289,6 +318,8 @@ pub async fn sync_maintenance_work(
     .bind(payload.device_id)
     .bind(user.id)
     .bind(normalized_status)
+    .bind(normalized_kind)
+    .bind(issue_number)
     .bind(payload.started_at)
     .bind(payload.finished_at)
     .bind(payload.aborted_at)

@@ -14,6 +14,7 @@ import {
   TextField,
   ToggleButton,
   ToggleButtonGroup,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import {
@@ -23,6 +24,7 @@ import {
   CheckCircle,
   Blocks,
   Cpu,
+  Info,
   MapPin,
   MoreVertical,
   Pencil,
@@ -37,6 +39,7 @@ import { useDemoUser } from "@/context/DemoUserContext";
 import {
   followupServiceReasonLabels,
   followupServiceReasonOrder,
+  type MaintenanceKind,
 } from "@/types/maintenance";
 import { appColors } from "@/theme";
 import { formatDateTime } from "@/lib/date";
@@ -44,6 +47,12 @@ import { toast } from "@/lib/toast";
 import { getDeviceKindIcon } from "@/lib/deviceKind";
 
 const inlineFollowupReasons = followupServiceReasonOrder.filter((reason) => reason !== "OTHER");
+const maintenanceKindLabels: Record<MaintenanceKind, string> = {
+  ROUTINE: "Rutin karbantartás",
+  SERVICE: "Szervíz",
+};
+const issueNumberTooltip =
+  "Az igénylési számot a megbízótól kapott bejelentő emailben találod. Q123456";
 
 export default function MaintenancePage() {
   const { workId } = useParams<{ workId: string }>();
@@ -51,6 +60,8 @@ export default function MaintenancePage() {
   const {
     todaysWorks,
     pastWorks,
+    setMaintenanceKind,
+    updateIssueNumber,
     updateNotes,
     addPhoto,
     setFollowupServiceRequired,
@@ -96,13 +107,20 @@ export default function MaintenancePage() {
   const hasSelectedFollowupReason = work.followupServiceReasons.length > 0;
   const requiresOtherReason = work.followupServiceReasons.includes("OTHER");
   const hasOtherReason = work.followupServiceReasonOther.trim().length > 0;
+  const requiresIssueNumber = work.maintenanceKind === "SERVICE";
+  const hasIssueNumber = work.issueNumber.trim().length > 0;
   const requiresPhoto = !work.followupServiceRequired;
   const canCompleteMaintenance =
+    (!requiresIssueNumber || hasIssueNumber) &&
     (!requiresPhoto || hasPhoto) &&
     (!work.followupServiceRequired ||
       (hasSelectedFollowupReason && (!requiresOtherReason || hasOtherReason)));
 
   const handleComplete = () => {
+    if (requiresIssueNumber && !hasIssueNumber) {
+      toast.error("Szervíz esetén az igénylési szám megadása kötelező.");
+      return;
+    }
     if (requiresPhoto && !hasPhoto) {
       toast.error("A befejezéshez legalább egy fotót töltsön fel");
       return;
@@ -136,6 +154,10 @@ export default function MaintenancePage() {
   };
 
   const handleSaveEdits = () => {
+    if (requiresIssueNumber && !hasIssueNumber) {
+      toast.error("Szervíz esetén az igénylési szám megadása kötelező.");
+      return;
+    }
     markEdited(work.id);
     setIsEditing(false);
     toast.success("Módosítások elmentve.");
@@ -276,7 +298,7 @@ export default function MaintenancePage() {
 
             <Card sx={{ boxShadow: "0 10px 24px rgba(31, 50, 58, 0.12)" }}>
               <CardHeader title="Karbantartás" titleTypographyProps={{ variant: "subtitle1", fontWeight: 700 }} />
-              <CardContent>
+              <CardContent sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
                 <Box
                   sx={{
                     display: "grid",
@@ -361,6 +383,65 @@ export default function MaintenancePage() {
                       </Box>
                     </Box>
                   )}
+                </Box>
+                <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+                  <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                    Munka jellege
+                  </Typography>
+                  <ToggleButtonGroup
+                    exclusive
+                    color="secondary"
+                    value={work.maintenanceKind}
+                    onChange={(_, value: MaintenanceKind | null) => {
+                      if (!value || !canEdit) {
+                        return;
+                      }
+                      setMaintenanceKind(work.id, value);
+                    }}
+                    aria-label="Munka jellege"
+                    sx={{
+                      width: { xs: "100%", sm: "auto" },
+                      alignSelf: "flex-start",
+                      "& .MuiToggleButtonGroup-grouped": {
+                        textTransform: "none",
+                        px: 1.5,
+                      },
+                    }}
+                  >
+                    <ToggleButton value="ROUTINE" disabled={!canEdit} sx={{ flex: 1 }}>
+                      {maintenanceKindLabels.ROUTINE}
+                    </ToggleButton>
+                    <ToggleButton value="SERVICE" disabled={!canEdit} sx={{ flex: 1 }}>
+                      {maintenanceKindLabels.SERVICE}
+                    </ToggleButton>
+                  </ToggleButtonGroup>
+                  {requiresIssueNumber ? (
+                    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                          Igénylési szám
+                        </Typography>
+                        <Tooltip title={issueNumberTooltip}>
+                          <Box
+                            component="span"
+                            sx={{ display: "inline-flex", color: "text.secondary", cursor: "help" }}
+                          >
+                            <Info size={16} />
+                          </Box>
+                        </Tooltip>
+                      </Box>
+                      <TextField
+                        value={work.issueNumber}
+                        onChange={(event) => updateIssueNumber(work.id, event.target.value)}
+                        placeholder="Q123456"
+                        disabled={!canEdit}
+                        required
+                        error={!hasIssueNumber}
+                        helperText={!hasIssueNumber ? "Szervíz esetén kötelező." : " "}
+                        fullWidth
+                      />
+                    </Box>
+                  ) : null}
                 </Box>
               </CardContent>
             </Card>
@@ -609,11 +690,14 @@ export default function MaintenancePage() {
         )}
 
         {!isCompleted &&
-        ((requiresPhoto && !hasPhoto) ||
+        ((requiresIssueNumber && !hasIssueNumber) ||
+          (requiresPhoto && !hasPhoto) ||
           (work.followupServiceRequired && !hasSelectedFollowupReason) ||
           (requiresOtherReason && !hasOtherReason)) && (
           <Typography variant="body2" color="text.secondary" sx={{ textAlign: "center" }}>
-            {requiresPhoto && !hasPhoto
+            {requiresIssueNumber && !hasIssueNumber
+              ? "Szervíz esetén az igénylési szám megadása kötelező"
+              : requiresPhoto && !hasPhoto
               ? "A munka lezárásához töltsön fel legalább egy fotót"
               : !hasSelectedFollowupReason
                 ? "További szervíz esetén legalább egy ok megadása kötelező"
