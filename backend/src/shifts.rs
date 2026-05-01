@@ -220,7 +220,6 @@ struct ShiftParticipantView {
     phone_number: Option<String>,
     status: String,
     invited_at: DateTime<Utc>,
-    accepted_at: Option<DateTime<Utc>>,
     cache_ready_at: Option<DateTime<Utc>>,
 }
 
@@ -303,7 +302,6 @@ pub struct AdminShiftParticipantRow {
     role: String,
     status: String,
     invited_at: DateTime<Utc>,
-    accepted_at: Option<DateTime<Utc>>,
     cache_ready_at: Option<DateTime<Utc>>,
     close_confirmed_at: Option<DateTime<Utc>>,
 }
@@ -1294,7 +1292,6 @@ pub async fn get_admin_shift_detail(
             u.role::text AS role,
             sp.status::text AS status,
             sp.invited_at,
-            sp.accepted_at,
             sp.cache_ready_at,
             sp.close_confirmed_at
         FROM shift_participants sp
@@ -1733,7 +1730,7 @@ pub async fn get_current_shift_state(
         WHERE sp.tenant_id = $1
           AND sp.user_id = $2
           AND s.status IN ('INVITING', 'READY_TO_START', 'IN_PROGRESS', 'CLOSE_REQUESTED')
-          AND sp.status IN ('INVITED', 'ACCEPTED', 'CACHE_READY', 'CLOSE_CONFIRMED')
+          AND sp.status IN ('INVITED', 'CACHE_READY', 'CLOSE_CONFIRMED')
           AND (
             s.status <> 'CLOSE_REQUESTED'
             OR sp.status <> 'CLOSE_CONFIRMED'
@@ -1914,10 +1911,9 @@ pub async fn create_shift(
             shift_id,
             user_id,
             status,
-            accepted_at,
             cache_ready_at
         )
-        VALUES ($1, $2, $3, 'ACCEPTED', NOW(), NULL)
+        VALUES ($1, $2, $3, 'CACHE_READY', NOW())
         "#,
     )
     .bind(user.tenant_id)
@@ -2146,21 +2142,17 @@ pub async fn mark_shift_join_ready(
         UPDATE shift_participants
         SET
             status = CASE
-                WHEN status IN ('INVITED', 'ACCEPTED') THEN 'CACHE_READY'::shift_participant_status
+                WHEN status = 'INVITED' THEN 'CACHE_READY'::shift_participant_status
                 ELSE status
             END,
-            accepted_at = CASE
-                WHEN accepted_at IS NULL AND status IN ('INVITED', 'ACCEPTED') THEN NOW()
-                ELSE accepted_at
-            END,
             cache_ready_at = CASE
-                WHEN cache_ready_at IS NULL AND status IN ('INVITED', 'ACCEPTED') THEN NOW()
+                WHEN cache_ready_at IS NULL AND status = 'INVITED' THEN NOW()
                 ELSE cache_ready_at
             END
         WHERE tenant_id = $1
           AND shift_id = $2
           AND user_id = $3
-          AND status IN ('INVITED', 'ACCEPTED', 'CACHE_READY')
+          AND status IN ('INVITED', 'CACHE_READY')
         "#,
     )
     .bind(user.tenant_id)
@@ -2202,7 +2194,7 @@ pub async fn decline_shift_invitation(
         WHERE tenant_id = $1
           AND shift_id = $2
           AND user_id = $3
-          AND status IN ('INVITED', 'ACCEPTED')
+          AND status = 'INVITED'
         "#,
     )
     .bind(user.tenant_id)
@@ -2302,10 +2294,6 @@ pub async fn add_shift_participant(
             invited_at = CASE
                 WHEN shift_participants.status = 'DECLINED' THEN NOW()
                 ELSE shift_participants.invited_at
-            END,
-            accepted_at = CASE
-                WHEN shift_participants.status = 'DECLINED' THEN NULL
-                ELSE shift_participants.accepted_at
             END,
             cache_ready_at = CASE
                 WHEN shift_participants.status = 'DECLINED' THEN NULL
@@ -2462,7 +2450,6 @@ pub async fn get_shift_waiting_room(
             u.phone_number,
             sp.status::text AS status,
             sp.invited_at,
-            sp.accepted_at,
             sp.cache_ready_at
         FROM shift_participants sp
         JOIN users u
@@ -2795,7 +2782,7 @@ async fn refresh_shift_ready_state_tx(
         FROM shift_participants
         WHERE tenant_id = $1
           AND shift_id = $2
-          AND status IN ('INVITED', 'ACCEPTED')
+          AND status = 'INVITED'
         "#,
     )
     .bind(tenant_id)

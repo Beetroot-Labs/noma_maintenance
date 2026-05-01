@@ -14,7 +14,6 @@ export type CurrentShiftSummary = {
   lead_user_phone: string | null;
   my_participant_status:
     | "INVITED"
-    | "ACCEPTED"
     | "CACHE_READY"
     | "DECLINED"
     | "CLOSE_CONFIRMED";

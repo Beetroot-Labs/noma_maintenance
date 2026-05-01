@@ -43,7 +43,6 @@ type ShiftParticipantRow = {
   role: string;
   status: string;
   invited_at: string;
-  accepted_at: string | null;
   cache_ready_at: string | null;
   close_confirmed_at: string | null;
 };
@@ -107,7 +106,6 @@ const roleLabel: Record<string, string> = {
 
 const statusLabel: Record<string, string> = {
   INVITED: "Meghívva",
-  ACCEPTED: "Elfogadva",
   CACHE_READY: "Cache kész",
   CLOSE_CONFIRMED: "Lezárás megerősítve",
   DECLINED: "Elutasítva",
@@ -368,7 +366,6 @@ export default function ShiftDetailsPage() {
                         <TableCell>Szerepkör</TableCell>
                         <TableCell>Státusz</TableCell>
                         <TableCell>Meghívva</TableCell>
-                        <TableCell>Elfogadva</TableCell>
                         <TableCell>Cache kész</TableCell>
                         <TableCell>Lezárás megerősítve</TableCell>
                       </TableRow>
@@ -387,7 +384,6 @@ export default function ShiftDetailsPage() {
                             <TableCell>{roleLabel[participant.role] ?? participant.role}</TableCell>
                             <TableCell>{statusLabel[participant.status] ?? participant.status}</TableCell>
                             <TableCell>{formatDateTime(participant.invited_at)}</TableCell>
-                            <TableCell>{formatDateTime(participant.accepted_at)}</TableCell>
                             <TableCell>{formatDateTime(participant.cache_ready_at)}</TableCell>
                             <TableCell>{formatDateTime(participant.close_confirmed_at)}</TableCell>
                           </TableRow>

@@ -27,7 +27,6 @@ import {
   ArrowLeft,
   Building2,
   Check,
-  CloudDownload,
   CloudUpload,
   EllipsisVertical,
   HardHat,
@@ -119,7 +118,6 @@ const readApiErrorMessage = async (response: Response, fallback: string) => {
 
 const statusLabel: Record<string, string> = {
   INVITED: "Meghívva",
-  ACCEPTED: "Elfogadva",
   DECLINED: "Elutasítva",
 };
 
@@ -140,12 +138,6 @@ const participantStatusIcon = (status: string) => {
           }}
         >
           <LoaderCircle size={18} />
-        </Box>
-      );
-    case "ACCEPTED":
-      return (
-        <Box aria-label={statusLabel.ACCEPTED} sx={{ display: "inline-flex", color: "text.secondary" }}>
-          <CloudDownload size={18} />
         </Box>
       );
     case "DECLINED":
