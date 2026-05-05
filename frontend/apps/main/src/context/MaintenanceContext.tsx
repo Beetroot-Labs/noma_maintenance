@@ -157,18 +157,6 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     new Map(),
   );
   const activeShiftId = currentShift?.id ?? null;
-  const photoPersistenceSignature = JSON.stringify(
-    [currentWork, ...todaysWorks, ...pastWorks]
-      .filter((work): work is MaintenanceWork => Boolean(work))
-      .flatMap((work) =>
-        work.photos.map((photo) => ({
-          id: photo.id,
-          url: photo.url,
-          description: photo.description,
-          timestamp: photo.timestamp.toISOString(),
-        })),
-      ),
-  );
 
   const shiftManager: ShiftManager = {
     name: "Ivanics Károly",
@@ -487,20 +475,6 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
       isActive = false;
     };
   }, [currentWork, pastWorks, todaysWorks]);
-
-  useEffect(() => {
-    const works = [currentWork, ...todaysWorks, ...pastWorks].filter(
-      (work): work is MaintenanceWork => Boolean(work),
-    );
-    for (const work of works) {
-      for (const photo of work.photos) {
-        if (!photo.url) continue;
-        savePhoto(photo).catch((error) => {
-          console.warn("Nem sikerült a fotót tárolni.", error);
-        });
-      }
-    }
-  }, [photoPersistenceSignature]);
 
   useEffect(() => {
     if (!user?.tenantId || !user.id || !isMaintenanceStateLoaded) {
