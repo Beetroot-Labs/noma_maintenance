@@ -36,7 +36,7 @@ interface MaintenanceContextType {
   setMaintenanceKind: (workId: string, kind: MaintenanceKind) => void;
   updateIssueNumber: (workId: string, issueNumber: string) => void;
   updateNotes: (workId: string, notes: string) => void;
-  addPhoto: (workId: string, photo: MaintenancePhoto) => void;
+  addPhoto: (workId: string, photo: MaintenancePhoto, blob: Blob, thumbnailBlob: Blob) => void;
   setFollowupServiceRequired: (workId: string, required: boolean) => void;
   toggleFollowupServiceReason: (workId: string, reason: FollowupServiceReason) => void;
   updateFollowupServiceReasonOther: (workId: string, value: string) => void;
@@ -124,7 +124,7 @@ const deserializeWork = (work: StoredMaintenanceWork): MaintenanceWork | null =>
         }
         return {
           id: legacy.id,
-          url: legacy.url ?? "",
+          url: legacy.url?.startsWith("data:") ? "" : legacy.url ?? "",
           description: legacy.description ?? "",
           timestamp: new Date(legacy.timestamp),
         };
@@ -143,6 +143,31 @@ const filterWorksForShift = (
   return works.filter((work) => work.shiftId === shiftId);
 };
 
+const collectBlobPhotoUrls = (works: MaintenanceWork[]) => {
+  const urls = new Set<string>();
+  for (const work of works) {
+    for (const photo of work.photos) {
+      if (photo.url.startsWith("blob:")) {
+        urls.add(photo.url);
+      }
+    }
+  }
+  return urls;
+};
+
+const revokePhotoUrls = (urls: Iterable<string>) => {
+  for (const url of urls) {
+    if (!url.startsWith("blob:")) {
+      continue;
+    }
+    try {
+      URL.revokeObjectURL(url);
+    } catch {
+      // Ignore already-revoked URLs.
+    }
+  }
+};
+
 export function MaintenanceProvider({ children }: { children: ReactNode }) {
   const { user } = useDemoUser();
   const { currentShift, isLoading: isShiftLoading, refreshCurrentShift } = useShift();
@@ -157,6 +182,22 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     new Map(),
   );
   const activeShiftId = currentShift?.id ?? null;
+  const activePhotoUrlsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const works = [currentWork, ...todaysWorks, ...pastWorks].filter(
+      (work): work is MaintenanceWork => Boolean(work),
+    );
+    activePhotoUrlsRef.current = collectBlobPhotoUrls(works);
+  }, [currentWork, pastWorks, todaysWorks]);
+
+  useEffect(
+    () => () => {
+      revokePhotoUrls(activePhotoUrlsRef.current);
+      activePhotoUrlsRef.current.clear();
+    },
+    [],
+  );
 
   const shiftManager: ShiftManager = {
     name: "Ivanics Károly",
@@ -442,7 +483,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
       );
       for (const work of works) {
         for (const photo of work.photos) {
-          if (!photo.url) {
+          if (!photo.url || photo.url.startsWith("data:")) {
             ids.add(photo.id);
           }
         }
@@ -646,8 +687,8 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     );
   };
 
-  const addPhoto = (workId: string, photo: MaintenancePhoto) => {
-    savePhoto(photo).catch((error) => {
+  const addPhoto = (workId: string, photo: MaintenancePhoto, blob: Blob, thumbnailBlob: Blob) => {
+    savePhoto(photo, blob, thumbnailBlob).catch((error) => {
       console.warn("Nem sikerült a fotót tárolni.", error);
     });
     let updatedWork: MaintenanceWork | null = null;
@@ -793,6 +834,11 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
   };
 
   const abortMaintenance = (workId: string) => {
+    const discardedWorks = [
+      currentWork?.id === workId ? currentWork : null,
+      ...todaysWorks.filter((work) => work.id === workId),
+    ].filter((work): work is MaintenanceWork => Boolean(work));
+    revokePhotoUrls(collectBlobPhotoUrls(discardedWorks));
     setTodaysWorks((prev) => prev.filter((work) => work.id !== workId));
     if (currentWork?.id === workId) {
       setCurrentWork(null);
@@ -813,6 +859,9 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
   };
 
   const closeWorkday = () => {
+    revokePhotoUrls(
+      collectBlobPhotoUrls([...(currentWork ? [currentWork] : []), ...todaysWorks]),
+    );
     setTodaysWorks([]);
     setCurrentWork(null);
     setWorkdayClosed(true);
@@ -820,6 +869,13 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
 
   const resetMaintenance = async () => {
     let didClearPhotos = true;
+    revokePhotoUrls(
+      collectBlobPhotoUrls([
+        ...(currentWork ? [currentWork] : []),
+        ...todaysWorks,
+        ...pastWorks,
+      ]),
+    );
     if (user?.tenantId && user.id) {
       await clearMaintenanceState(user.tenantId, user.id).catch((error) => {
         console.warn("Nem sikerült törölni a karbantartási állapotot.", error);

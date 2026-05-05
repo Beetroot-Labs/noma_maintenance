@@ -27,6 +27,100 @@
         }
       })();
     </script>
+    <script>
+      (function () {
+        var retryKey = "noma:boot-retry-count";
+        var maxRetries = 3;
+        var overlay = null;
+
+        function ensureOverlay() {
+          if (overlay) return overlay;
+          overlay = document.createElement("div");
+          overlay.style.position = "fixed";
+          overlay.style.inset = "0";
+          overlay.style.zIndex = "2147483647";
+          overlay.style.display = "grid";
+          overlay.style.placeItems = "center";
+          overlay.style.background = "#ffffff";
+          overlay.style.color = "#02322d";
+          overlay.style.padding = "24px";
+          overlay.style.textAlign = "center";
+          overlay.style.fontFamily = "system-ui, sans-serif";
+          overlay.style.lineHeight = "1.5";
+          overlay.innerHTML =
+            '<div><div id="noma-boot-title" style="font-size:20px;font-weight:700;margin-bottom:8px">Az alkalmazás betöltése folyamatban...</div><div id="noma-boot-detail" style="font-size:14px;opacity:.78"></div></div>';
+          document.body.appendChild(overlay);
+          return overlay;
+        }
+
+        function setOverlay(title, detail) {
+          var node = ensureOverlay();
+          var titleNode = node.querySelector("#noma-boot-title");
+          var detailNode = node.querySelector("#noma-boot-detail");
+          if (titleNode) titleNode.textContent = title;
+          if (detailNode) detailNode.textContent = detail;
+        }
+
+        function matchesRecoveryError(message) {
+          return /Failed to fetch dynamically imported module|Importing a module script failed|Loading chunk|ChunkLoadError/i.test(
+            String(message || ""),
+          );
+        }
+
+        function scheduleRetry(detail) {
+          var attempt = Number(sessionStorage.getItem(retryKey) || "0");
+          if (attempt >= maxRetries) {
+            sessionStorage.removeItem(retryKey);
+            setOverlay(
+              "Nem sikerült betölteni az alkalmazást.",
+              "Frissítse újra az oldalt, miután a deployment befejeződött.",
+            );
+            return;
+          }
+
+          sessionStorage.setItem(retryKey, String(attempt + 1));
+          setOverlay("Az új verzió betöltése folyamatban...", detail);
+          window.setTimeout(function () {
+            window.location.reload();
+          }, 1000 + attempt * 1500);
+        }
+
+        window.addEventListener(
+          "vite:preloadError",
+          function (event) {
+            event.preventDefault();
+            scheduleRetry("Újrapróbálkozás közben frissítjük a betöltést.");
+          },
+          true,
+        );
+
+        window.addEventListener(
+          "error",
+          function (event) {
+            var target = event.target;
+            var isResourceError =
+              target && (target.tagName === "SCRIPT" || target.tagName === "LINK");
+            if (isResourceError || matchesRecoveryError(event.message)) {
+              scheduleRetry("A legutóbbi deploy közben a szükséges fájlok még nem voltak elérhetők.");
+            }
+          },
+          true,
+        );
+
+        window.addEventListener("unhandledrejection", function (event) {
+          var reason = event.reason;
+          var message =
+            typeof reason === "string"
+              ? reason
+              : reason && typeof reason === "object" && "message" in reason
+                ? reason.message
+                : "";
+          if (matchesRecoveryError(message)) {
+            scheduleRetry("A legutóbbi deploy még nem volt teljesen kész.");
+          }
+        });
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

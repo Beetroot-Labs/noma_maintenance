@@ -1,7 +1,9 @@
-import { useState } from "react";
-import { Box, Dialog, DialogContent, Typography } from "@mui/material";
+import { useEffect, useRef, useState } from "react";
+import { Box, Typography } from "@mui/material";
 import type { MaintenancePhoto } from "@/types/maintenance";
 import { formatTime } from "@/lib/date";
+import { getPhotoById } from "@/lib/photoStore";
+import { FullscreenPhotoViewer } from "@/components/FullscreenPhotoViewer";
 
 interface PhotoGalleryProps {
   photos: MaintenancePhoto[];
@@ -9,6 +11,64 @@ interface PhotoGalleryProps {
 
 export function PhotoGallery({ photos }: PhotoGalleryProps) {
   const [selectedPhoto, setSelectedPhoto] = useState<MaintenancePhoto | null>(null);
+  const [selectedFullPhoto, setSelectedFullPhoto] = useState<MaintenancePhoto | null>(null);
+  const [isLoadingFullPhoto, setIsLoadingFullPhoto] = useState(false);
+  const selectedLoadIdRef = useRef(0);
+  const activeFullPhotoUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    selectedLoadIdRef.current += 1;
+    const loadId = selectedLoadIdRef.current;
+
+    if (!selectedPhoto) {
+      if (activeFullPhotoUrlRef.current) {
+        URL.revokeObjectURL(activeFullPhotoUrlRef.current);
+        activeFullPhotoUrlRef.current = null;
+      }
+      setSelectedFullPhoto(null);
+      setIsLoadingFullPhoto(false);
+      return;
+    }
+
+    if (activeFullPhotoUrlRef.current) {
+      URL.revokeObjectURL(activeFullPhotoUrlRef.current);
+      activeFullPhotoUrlRef.current = null;
+    }
+
+    setSelectedFullPhoto(null);
+    setIsLoadingFullPhoto(true);
+
+    void (async () => {
+      try {
+        const fullPhoto = await getPhotoById(selectedPhoto.id);
+        if (loadId !== selectedLoadIdRef.current) {
+          if (fullPhoto?.url.startsWith("blob:")) {
+            URL.revokeObjectURL(fullPhoto.url);
+          }
+          return;
+        }
+
+        if (fullPhoto?.url.startsWith("blob:")) {
+          activeFullPhotoUrlRef.current = fullPhoto.url;
+        }
+        setSelectedFullPhoto(fullPhoto);
+      } finally {
+        if (loadId === selectedLoadIdRef.current) {
+          setIsLoadingFullPhoto(false);
+        }
+      }
+    })();
+  }, [selectedPhoto]);
+
+  useEffect(
+    () => () => {
+      if (activeFullPhotoUrlRef.current) {
+        URL.revokeObjectURL(activeFullPhotoUrlRef.current);
+        activeFullPhotoUrlRef.current = null;
+      }
+    },
+    [],
+  );
 
   if (photos.length === 0) {
     return (
@@ -86,34 +146,13 @@ export function PhotoGallery({ photos }: PhotoGalleryProps) {
           </Box>
         ))}
       </Box>
-      <Dialog open={Boolean(selectedPhoto)} onClose={() => setSelectedPhoto(null)} maxWidth="md" fullWidth>
-        <DialogContent sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          {selectedPhoto && (
-            <>
-              <Box
-                component="img"
-                src={selectedPhoto.url}
-                alt={selectedPhoto.description || "Karbantartási fotó"}
-                sx={{
-                  width: "100%",
-                  maxHeight: { xs: 360, md: 520 },
-                  objectFit: "contain",
-                  borderRadius: 2,
-                  bgcolor: "rgba(0, 0, 0, 0.04)",
-                }}
-              />
-              <Box>
-                <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                  {selectedPhoto.description || "Nincs leírás"}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {formatTime(selectedPhoto.timestamp)}
-                </Typography>
-              </Box>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
+      <FullscreenPhotoViewer
+        open={Boolean(selectedPhoto)}
+        photo={selectedFullPhoto}
+        fallbackPhoto={selectedPhoto}
+        loading={isLoadingFullPhoto}
+        onClose={() => setSelectedPhoto(null)}
+      />
     </>
   );
 }

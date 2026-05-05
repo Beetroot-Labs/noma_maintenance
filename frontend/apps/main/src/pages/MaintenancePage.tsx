@@ -616,7 +616,15 @@ export default function MaintenancePage() {
               />
               <CardContent sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
                 <PhotoGallery photos={work.photos} />
-                {canEdit && <PhotoUpload onPhotoAdd={(photo) => addPhoto(work.id, photo)} />}
+                {
+                  canEdit && (
+                    <PhotoUpload
+                      onPhotoAdd={(photo, blob, thumbnailBlob) =>
+                        addPhoto(work.id, photo, blob, thumbnailBlob)
+                      }
+                    />
+                  )
+                }
               </CardContent>
             </Card>
 

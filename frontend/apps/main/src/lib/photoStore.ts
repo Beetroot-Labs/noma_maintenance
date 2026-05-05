@@ -4,7 +4,22 @@ const DB_NAME = "noma-maintenance";
 const DB_VERSION = 1;
 const STORE_NAME = "photos";
 
-type StoredPhoto = MaintenancePhoto;
+type BlobStoredPhoto = {
+  id: string;
+  blob: Blob;
+  thumbnailBlob?: Blob;
+  description: string;
+  timestamp: string;
+};
+
+type LegacyStoredPhoto = {
+  id: string;
+  url: string;
+  description: string;
+  timestamp: string;
+};
+
+type StoredPhoto = BlobStoredPhoto | LegacyStoredPhoto;
 
 const openDb = (): Promise<IDBDatabase> =>
   new Promise((resolve, reject) => {
@@ -44,22 +59,200 @@ const getRecord = async (id: string): Promise<StoredPhoto | null> => {
   });
 };
 
-export const getPhotoById = async (id: string): Promise<MaintenancePhoto | null> => {
-  return getRecord(id);
+const dataUrlToBlob = (dataUrl: string): Blob | null => {
+  const commaIndex = dataUrl.indexOf(",");
+  if (!dataUrl.startsWith("data:") || commaIndex === -1) {
+    return null;
+  }
+
+  const header = dataUrl.slice(5, commaIndex);
+  const payload = dataUrl.slice(commaIndex + 1);
+  const parts = header.split(";").filter(Boolean);
+  const mimeType = parts[0] || "application/octet-stream";
+  const isBase64 = parts.includes("base64");
+
+  try {
+    if (isBase64) {
+      const binary = atob(payload);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return new Blob([bytes], { type: mimeType });
+    }
+
+    return new Blob([decodeURIComponent(payload)], { type: mimeType });
+  } catch {
+    return null;
+  }
 };
 
-const putRecord = async (photo: StoredPhoto) =>
+const loadImage = (objectUrl: string): Promise<HTMLImageElement> =>
+  new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Nem sikerült betölteni a képet."));
+    image.src = objectUrl;
+  });
+
+export const createMaintenancePhotoThumbnail = async (
+  blob: Blob,
+  maxSize = 320,
+): Promise<Blob> => {
+  if (typeof document === "undefined") {
+    return blob;
+  }
+
+  const sourceUrl = URL.createObjectURL(blob);
+  try {
+    const image = await loadImage(sourceUrl);
+    const scale = Math.min(maxSize / image.width, maxSize / image.height, 1);
+    if (!Number.isFinite(scale) || scale >= 1) {
+      return blob;
+    }
+
+    const width = Math.max(1, Math.round(image.width * scale));
+    const height = Math.max(1, Math.round(image.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+      return blob;
+    }
+
+    context.drawImage(image, 0, 0, width, height);
+
+    return await new Promise<Blob>((resolve) => {
+      canvas.toBlob((thumbnailBlob) => resolve(thumbnailBlob ?? blob), "image/jpeg", 0.82);
+    });
+  } catch {
+    return blob;
+  } finally {
+    URL.revokeObjectURL(sourceUrl);
+  }
+};
+
+const putRecord = async (photo: BlobStoredPhoto) =>
   withStore<void>("readwrite", (store) => {
     store.put(photo);
   });
 
+const hydrateLegacyPhoto = async (
+  record: LegacyStoredPhoto,
+  variant: "full" | "thumbnail",
+): Promise<MaintenancePhoto | null> => {
+  const blob = dataUrlToBlob(record.url);
+  if (!blob) {
+    return {
+      id: record.id,
+      url: record.url,
+      description: record.description,
+      timestamp: new Date(record.timestamp),
+    };
+  }
+
+  const timestamp = new Date(record.timestamp);
+  if (variant === "full") {
+    await putRecord({
+      id: record.id,
+      blob,
+      description: record.description,
+      timestamp: record.timestamp,
+    });
+    return {
+      id: record.id,
+      url: URL.createObjectURL(blob),
+      description: record.description,
+      timestamp,
+    };
+  }
+
+  const thumbnailBlob = await createMaintenancePhotoThumbnail(blob);
+  await putRecord({
+    id: record.id,
+    blob,
+    thumbnailBlob,
+    description: record.description,
+    timestamp: record.timestamp,
+  });
+  return {
+    id: record.id,
+    url: URL.createObjectURL(thumbnailBlob),
+    description: record.description,
+    timestamp,
+  };
+};
+
+const hydrateBlobPhoto = async (
+  record: BlobStoredPhoto,
+  variant: "full" | "thumbnail",
+): Promise<MaintenancePhoto> => {
+  if (variant === "full") {
+    return {
+      id: record.id,
+      url: URL.createObjectURL(record.blob),
+      description: record.description,
+      timestamp: new Date(record.timestamp),
+    };
+  }
+
+  const thumbnailBlob = record.thumbnailBlob ?? (await createMaintenancePhotoThumbnail(record.blob));
+  if (!record.thumbnailBlob) {
+    void putRecord({
+      id: record.id,
+      blob: record.blob,
+      thumbnailBlob,
+      description: record.description,
+      timestamp: record.timestamp,
+    }).catch(() => {
+      // Ignore cache refresh failures.
+    });
+  }
+
+  return {
+    id: record.id,
+    url: URL.createObjectURL(thumbnailBlob),
+    description: record.description,
+    timestamp: new Date(record.timestamp),
+  };
+};
+
+const hydratePhoto = async (
+  record: StoredPhoto,
+  variant: "full" | "thumbnail",
+): Promise<MaintenancePhoto | null> => {
+  if ("blob" in record) {
+    return hydrateBlobPhoto(record, variant);
+  }
+
+  return hydrateLegacyPhoto(record, variant);
+};
+
+export const getPhotoById = async (id: string): Promise<MaintenancePhoto | null> => {
+  const record = await getRecord(id);
+  return record ? hydratePhoto(record, "full") : null;
+};
+
 export const getPhotosByIds = async (ids: string[]) => {
-  const results = await Promise.all(ids.map((id) => getRecord(id)));
+  const results = await Promise.all(
+    ids.map(async (id) => {
+      const record = await getRecord(id);
+      return record ? hydratePhoto(record, "thumbnail") : null;
+    }),
+  );
   return results.filter((photo): photo is MaintenancePhoto => Boolean(photo));
 };
 
-export const savePhoto = async (photo: MaintenancePhoto) => {
-  await putRecord(photo);
+export const savePhoto = async (photo: MaintenancePhoto, blob: Blob, thumbnailBlob?: Blob) => {
+  await putRecord({
+    id: photo.id,
+    blob,
+    thumbnailBlob: thumbnailBlob ?? blob,
+    description: photo.description,
+    timestamp: photo.timestamp.toISOString(),
+  });
 };
 
 export const clearPhotos = async () =>
