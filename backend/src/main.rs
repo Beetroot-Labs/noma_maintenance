@@ -45,6 +45,75 @@ use crate::state::{
     AppState, AuthConfig, ShiftEventHub, load_google_client_ids, load_storage_config,
 };
 
+pub(crate) fn build_api_router(state: AppState) -> Router {
+    Router::new()
+        .route("/health-check", get(|| async { "OK" }))
+        .route("/auth/google", post(google_login))
+        .route("/auth/me", get(get_current_user))
+        .route("/auth/logout", post(logout))
+        .route("/admin/shifts", get(list_admin_shifts))
+        .route("/admin/buildings", get(list_admin_buildings))
+        .route("/admin/users", get(list_admin_users).post(create_admin_user))
+        .route("/admin/devices", get(list_admin_devices))
+        .route("/admin/devices/{device_id}", get(get_admin_device_detail))
+        .route("/admin/users/{user_id}", get(get_admin_user_detail).patch(update_admin_user))
+        .route("/admin/shifts/{shift_id}", get(get_admin_shift_detail))
+        .route(
+            "/admin/maintenances/{maintenance_id}",
+            get(get_admin_maintenance_detail_by_id),
+        )
+        .route(
+            "/admin/shifts/{shift_id}/maintenances/{maintenance_id}",
+            get(get_admin_maintenance_detail),
+        )
+        .route(
+            "/admin/shifts/{shift_id}/maintenances/{maintenance_id}/photos/{photo_id}",
+            get(get_admin_maintenance_photo),
+        )
+        .route("/users/invite-candidates", get(list_shift_invite_candidates))
+        .route("/shifts", post(create_shift))
+        .route("/shifts/current", get(get_current_shift_state))
+        .route("/shifts/pending", get(get_pending_worksheets))
+        .route("/shifts/{shift_id}/participants", post(add_shift_participant))
+        .route(
+            "/shifts/{shift_id}/participants/{participant_user_id}",
+            axum::routing::delete(remove_shift_participant),
+        )
+        .route("/shifts/{shift_id}/join-ready", post(mark_shift_join_ready))
+        .route("/shifts/{shift_id}/decline", post(decline_shift_invitation))
+        .route("/shifts/{shift_id}/close-request", post(request_shift_close))
+        .route("/shifts/{shift_id}/close-confirm", post(confirm_shift_close))
+        .route("/shifts/{shift_id}/commit", post(commit_shift))
+        .route("/shifts/{shift_id}/signature-image", put(upload_shift_signature))
+        .route("/shifts/{shift_id}/cancel", post(cancel_shift))
+        .route("/shifts/{shift_id}/waiting-room", get(get_shift_waiting_room))
+        .route("/shifts/{shift_id}/events", get(subscribe_shift_events))
+        .route("/shifts/{shift_id}/maintenance-summary", get(get_shift_maintenance_summary))
+        .route("/labeling/buildings", get(list_labeling_buildings))
+        .route("/labeling/devices", post(create_device))
+        .route("/labeling/devices/{device_id}/barcode", post(assign_labeling_device_barcode))
+        .route(
+            "/labeling/devices/{device_id}/barcode-correction",
+            post(correct_labeling_device_barcode),
+        )
+        .route("/labeling/buildings/{building_id}/locations", post(create_labeling_location))
+        .route(
+            "/labeling/devices/{device_id}/photo",
+            put(upload_labeling_device_photo)
+                .get(get_labeling_device_photo)
+                .delete(delete_labeling_device_photo),
+        )
+        .route("/labeling/devices/{device_id}/details", patch(update_labeling_device_details))
+        .route("/labeling/buildings/{building_id}/cache", get(get_labeling_building_cache))
+        .route("/maintenance/works/{work_id}/sync", post(sync_maintenance_work))
+        .route(
+            "/maintenance/works/{work_id}/photos/{photo_id}",
+            put(upload_maintenance_photo),
+        )
+        .layer(DefaultBodyLimit::max(20 * 1024 * 1024))
+        .with_state(state)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let log_level = std::env::var("RUST_LOG").unwrap_or_else(|_| "debug".to_string());
@@ -128,108 +197,7 @@ async fn main() -> anyhow::Result<()> {
         shift_events: ShiftEventHub::default(),
     };
 
-    let api = Router::new()
-        .route("/health-check", get(|| async { "OK" }))
-        .route("/auth/google", post(google_login))
-        .route("/auth/me", get(get_current_user))
-        .route("/auth/logout", post(logout))
-        .route("/admin/shifts", get(list_admin_shifts))
-        .route("/admin/buildings", get(list_admin_buildings))
-        .route("/admin/users", get(list_admin_users).post(create_admin_user))
-        .route("/admin/devices", get(list_admin_devices))
-        .route("/admin/devices/{device_id}", get(get_admin_device_detail))
-        .route("/admin/users/{user_id}", get(get_admin_user_detail).patch(update_admin_user))
-        .route("/admin/shifts/{shift_id}", get(get_admin_shift_detail))
-        .route(
-            "/admin/maintenances/{maintenance_id}",
-            get(get_admin_maintenance_detail_by_id),
-        )
-        .route(
-            "/admin/shifts/{shift_id}/maintenances/{maintenance_id}",
-            get(get_admin_maintenance_detail),
-        )
-        .route(
-            "/admin/shifts/{shift_id}/maintenances/{maintenance_id}/photos/{photo_id}",
-            get(get_admin_maintenance_photo),
-        )
-        .route(
-            "/users/invite-candidates",
-            get(list_shift_invite_candidates),
-        )
-        .route("/shifts", post(create_shift))
-        .route("/shifts/current", get(get_current_shift_state))
-        .route("/shifts/pending", get(get_pending_worksheets))
-        .route(
-            "/shifts/{shift_id}/participants",
-            post(add_shift_participant),
-        )
-        .route(
-            "/shifts/{shift_id}/participants/{participant_user_id}",
-            axum::routing::delete(remove_shift_participant),
-        )
-        .route("/shifts/{shift_id}/join-ready", post(mark_shift_join_ready))
-        .route("/shifts/{shift_id}/decline", post(decline_shift_invitation))
-        .route(
-            "/shifts/{shift_id}/close-request",
-            post(request_shift_close),
-        )
-        .route(
-            "/shifts/{shift_id}/close-confirm",
-            post(confirm_shift_close),
-        )
-        .route("/shifts/{shift_id}/commit", post(commit_shift))
-        .route(
-            "/shifts/{shift_id}/signature-image",
-            put(upload_shift_signature),
-        )
-        .route("/shifts/{shift_id}/cancel", post(cancel_shift))
-        .route(
-            "/shifts/{shift_id}/waiting-room",
-            get(get_shift_waiting_room),
-        )
-        .route("/shifts/{shift_id}/events", get(subscribe_shift_events))
-        .route(
-            "/shifts/{shift_id}/maintenance-summary",
-            get(get_shift_maintenance_summary),
-        )
-        .route("/labeling/buildings", get(list_labeling_buildings))
-        .route("/labeling/devices", post(create_device))
-        .route(
-            "/labeling/devices/{device_id}/barcode",
-            post(assign_labeling_device_barcode),
-        )
-        .route(
-            "/labeling/devices/{device_id}/barcode-correction",
-            post(correct_labeling_device_barcode),
-        )
-        .route(
-            "/labeling/buildings/{building_id}/locations",
-            post(create_labeling_location),
-        )
-        .route(
-            "/labeling/devices/{device_id}/photo",
-            put(upload_labeling_device_photo)
-                .get(get_labeling_device_photo)
-                .delete(delete_labeling_device_photo),
-        )
-        .route(
-            "/labeling/devices/{device_id}/details",
-            patch(update_labeling_device_details),
-        )
-        .route(
-            "/labeling/buildings/{building_id}/cache",
-            get(get_labeling_building_cache),
-        )
-        .route(
-            "/maintenance/works/{work_id}/sync",
-            post(sync_maintenance_work),
-        )
-        .route(
-            "/maintenance/works/{work_id}/photos/{photo_id}",
-            put(upload_maintenance_photo),
-        )
-        .layer(DefaultBodyLimit::max(20 * 1024 * 1024))
-        .with_state(app_state);
+    let api = build_api_router(app_state);
 
     let assets_service = ServiceBuilder::new()
         .layer(SetResponseHeaderLayer::if_not_present(
@@ -327,3 +295,6 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
