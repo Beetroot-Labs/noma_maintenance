@@ -52,6 +52,7 @@ type ShiftMaintenanceRow = {
   maintenance_id: string;
   barcode: string | null;
   kind: string;
+  maintenance_kind: string;
   brand: string | null;
   model: string | null;
   floor: string | null;
@@ -142,6 +143,8 @@ const formatAverageMinutes = (value: number | null) => {
   }
   return `${Math.round(value)} perc`;
 };
+
+const SERVICE_MAINTENANCE_KIND = "SERVICE";
 
 const formatBrandType = (row: ShiftMaintenanceRow) => {
   const parts = [row.brand?.trim(), row.model?.trim()].filter(Boolean);
@@ -415,9 +418,10 @@ export default function ShiftDetailsPage() {
                   overflowY: "hidden",
                 }}
               >
-                <Table sx={{ minWidth: 960 }}>
+                <Table sx={{ minWidth: 1016 }}>
                   <TableHead>
                     <TableRow sx={{ bgcolor: "rgba(15, 23, 42, 0.04)" }}>
+                      <TableCell align="center" sx={{ width: 56 }} />
                       <TableCell>Vonalkód</TableCell>
                       <TableCell>Típus</TableCell>
                       <TableCell>Márka + típus</TableCell>
@@ -430,7 +434,7 @@ export default function ShiftDetailsPage() {
                   <TableBody>
                     {payload.maintenances.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={7} sx={{ py: 4, textAlign: "center", color: "text.secondary" }}>
+                        <TableCell colSpan={8} sx={{ py: 4, textAlign: "center", color: "text.secondary" }}>
                           Nincs karbantartási adat.
                         </TableCell>
                       </TableRow>
@@ -446,6 +450,22 @@ export default function ShiftDetailsPage() {
                           }
                           sx={{ cursor: "pointer" }}
                         >
+                          <TableCell align="center">
+                            {maintenance.maintenance_kind === SERVICE_MAINTENANCE_KIND ? (
+                              <Tooltip title="Szervíz">
+                                <Box
+                                  component="span"
+                                  sx={{
+                                    display: "inline-flex",
+                                    color: "warning.main",
+                                    verticalAlign: "middle",
+                                  }}
+                                >
+                                  <Wrench size={18} />
+                                </Box>
+                              </Tooltip>
+                            ) : null}
+                          </TableCell>
                           <TableCell>{maintenance.barcode ?? "-"}</TableCell>
                           <TableCell>{getDeviceKindLabel(maintenance.kind) ?? maintenance.kind}</TableCell>
                           <TableCell>{formatBrandType(maintenance)}</TableCell>

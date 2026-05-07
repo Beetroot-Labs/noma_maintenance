@@ -18,6 +18,7 @@ import {
   ArrowRightToLine,
   Blocks,
   Cpu,
+  Info,
   HardHat,
   MapPin,
   ScanBarcode,
@@ -31,6 +32,7 @@ import { formatDateTime } from "@/lib/date";
 import { appColors } from "@/theme";
 import {
   followupServiceReasonLabels,
+  type MaintenanceKind,
   type MaintenancePhoto,
 } from "@/types/maintenance";
 
@@ -48,6 +50,8 @@ type MaintenanceDetailsPayload = {
   maintenance_status: string;
   barcode: string | null;
   kind: string;
+  maintenance_kind: string;
+  issue_number: string | null;
   brand: string | null;
   model: string | null;
   serial_number: string | null;
@@ -104,6 +108,11 @@ const maintenanceStatusLabel: Record<string, string> = {
   IN_PROGRESS: "Folyamatban",
   FINISHED: "Befejezve",
   ABORTED: "Megszakítva",
+};
+
+const maintenanceKindLabels: Record<MaintenanceKind, string> = {
+  ROUTINE: "Rutin karbantartás",
+  SERVICE: "Szervíz",
 };
 
 const formatFollowupReasons = (payload: MaintenanceDetailsPayload) =>
@@ -209,6 +218,8 @@ export default function MaintenanceDetailsPage() {
   }
 
   const KindIcon = getDeviceKindIcon(payload.kind);
+  const maintenanceKind = maintenanceKindLabels[payload.maintenance_kind as MaintenanceKind] ?? payload.maintenance_kind;
+  const issueNumber = payload.issue_number?.trim() || null;
   const startedAt = asDate(payload.started_at);
   const finishedAt = asDate(payload.finished_at);
   const abortedAt = asDate(payload.aborted_at);
@@ -282,6 +293,58 @@ export default function MaintenanceDetailsPage() {
                     gap: 0,
                   }}
                 >
+                  <Box sx={{ p: 1.5, borderRadius: 2 }}>
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+                      <Box
+                        sx={{
+                          width: 32,
+                          height: 32,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          bgcolor: "rgba(0, 0, 0, 0.08)",
+                          borderRadius: 2,
+                        }}
+                      >
+                        <Info size={18} color={appColors.primary} />
+                      </Box>
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">
+                          Munka jellege
+                        </Typography>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                          {maintenanceKind}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  </Box>
+                  {issueNumber ? (
+                    <Box sx={{ p: 1.5, borderRadius: 2 }}>
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+                        <Box
+                          sx={{
+                            width: 32,
+                            height: 32,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            bgcolor: "rgba(0, 0, 0, 0.08)",
+                            borderRadius: 2,
+                          }}
+                        >
+                          <ScanBarcode size={18} color={appColors.primary} />
+                        </Box>
+                        <Box>
+                          <Typography variant="caption" color="text.secondary">
+                            Igénylési szám
+                          </Typography>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                            {issueNumber}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    </Box>
+                  ) : null}
                   <Box sx={{ p: 1.5, borderRadius: 2 }}>
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
                       <Box
