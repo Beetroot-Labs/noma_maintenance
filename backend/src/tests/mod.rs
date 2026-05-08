@@ -25,6 +25,7 @@ mod shift_creation;
 mod shift_participants;
 mod shift_queries;
 mod shift_readiness;
+mod shift_signature;
 mod sse_hub;
 mod tenancy;
 mod triggers;

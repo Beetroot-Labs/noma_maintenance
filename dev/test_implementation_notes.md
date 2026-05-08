@@ -8,13 +8,13 @@ A reference for the `backend/src/tests/` suite. Reading order: top sections answ
 
 | | |
 |---|---|
-| **Status** | 173 tests passing, 0 failing, ~42 s wall clock |
+| **Status** | 180 tests passing, 0 failing, ~42 s wall clock |
 | **Coverage** | All sections of `dev/backend_test_plan.md` except those needing GCS or JWKS fixtures |
 | **Run** | `DATABASE_URL=postgres://test:test@localhost:5544/test cargo test --tests` |
 | **DB** | `noma_test_pg` Docker container — Postgres 17 on port 5544, user/pass/db `test` |
 
 ```
-test result: ok. 173 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 41.52s
+test result: ok. 180 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 42.38s
 ```
 
 ---
@@ -34,17 +34,18 @@ Plan sections map 1:1 to `backend/src/tests/<file>.rs` modules.
 | E4–E5 — Join/decline | `shift_readiness.rs` | 8 | |
 | E6–E8 — Close/commit | `shift_closing.rs` | 10 | |
 | E9 — Cancel | `shift_cancellation.rs` | 5 | |
+| E10 — Signature upload | `shift_signature.rs` | 2 | E10.1, E10.4. **E10.2/E10.3 deferred** (commit_shift coverage). |
 | E11–E12 — Queries | `shift_queries.rs` | 9 | |
-| **E10, E13 — Signature, SSE-HTTP** | — | — | **Deferred** (Storage seam, streaming client) |
+| **E13 — SSE-HTTP** | — | — | **Deferred** (streaming client) |
 | F1 — Maintenance validation | `maintenance_validation.rs` | 9 | |
 | F2 — Maintenance auth/state | `maintenance_authorization.rs` | 8 | |
 | F3 — Maintenance persistence | `maintenance_persistence.rs` | 7 | |
-| F4 — Maintenance photos | `maintenance_photos.rs` | 6 | **F4.1/F4.7/F4.8 deferred** (Storage seam) |
+| F4 — Maintenance photos | `maintenance_photos.rs` | 9 | F4.1/F4.7/F4.8 added via Storage seam. |
 | G1 — Building cache | `labeling_building_cache.rs` | 4 | |
 | G2 — Create device | `labeling_create_device.rs` | 12 | G2.12 reframed (see *Divergences*) |
 | G3 — Assign barcode | `labeling_assign_barcode.rs` | 5 | |
 | G4 — Barcode correction | `labeling_correct_barcode.rs` | 10 | **G4.10 skipped** (unreachable via API) |
-| G5 — Photo lifecycle | `labeling_device_photo.rs` | 5 | **G5.1/G5.2 deferred** (Storage seam) |
+| G5 — Photo lifecycle | `labeling_device_photo.rs` | 7 | G5.1/G5.2 added via Storage seam. |
 | G6 — Create location | `labeling_create_location.rs` | 3 | |
 | G7 — Device details | `labeling_update_device_details.rs` | 4 | |
 | H — Admin smoke | `admin_smoke.rs` | 7 | H3 split into role-gate + duplicate-email |
@@ -72,19 +73,15 @@ Tests below assert what the **code actually does**, not what the plan says. When
 
 Each item lists the unlock cost and what becomes testable.
 
-### 1. Storage trait seam
-**Cost:** small refactor. Introduce a `Storage` trait that handlers call instead of `cloud_storage::Object::create/download/delete` directly.
-**Unlocks:** F4.1, F4.7, F4.8, G5.1, G5.2, E10.1–E10.4.
-
-### 2. JWKS fake server
+### 1. JWKS fake server
 **Cost:** ~half a day. Stand up an `httptest`-style server, sign tokens with a known RSA key, point `state.client` at it.
 **Unlocks:** A1.1–A1.10 (~10 tests).
 
-### 3. SSE streaming client helper
+### 2. SSE streaming client helper
 **Cost:** small. Need a helper that drives an SSE response and reads events chunk-by-chunk.
 **Unlocks:** K5 at the HTTP layer (today K5 only asserts the underlying `broadcast::Receiver`'s lag behavior); E13.1–E13.4.
 
-### 4. Pagination tests (L)
+### 3. Pagination tests (L)
 **Cost:** out of scope until pagination ships. Admin list endpoints currently return everything.
 
 ### Tests skipped on principle (not blocked by infra)
@@ -99,7 +96,8 @@ Each item lists the unlock cost and what becomes testable.
 
 ### Router builders
 - `build_router(pool)` — `state.storage = None`. Use this when testing a 503 storage path or any non-storage endpoint.
-- `build_router_with_fake_storage(pool)` — `state.storage = Some(...)` with bogus bucket/prefix strings. Only the *pre*-GCS-call branches reach valid execution; reaching `Object::create` would mean the test is wrong.
+- `build_router_with_fake_storage(pool)` — `state.storage = Some(...)` backed by an in-memory `MemStorage`. Use when the test doesn't need to inspect what was stored.
+- `build_router_with_mem_storage(pool) -> (Router, Arc<MemStorage>)` — same, but returns the `MemStorage` handle so tests can assert on `put_count()`, `delete_count()`, `contains(name)`, `get(name)`, or `seed(name, bytes, ct)`.
 
 ### HTTP helpers
 - `call(router, req) -> (StatusCode, Bytes)` — drives a `oneshot` and reads the body.
@@ -172,6 +170,7 @@ backend/src/tests/
 ├── shift_participants.rs                   E2–E3
 ├── shift_queries.rs                        E11–E12
 ├── shift_readiness.rs                      E4–E5
+├── shift_signature.rs                      E10.1, E10.4 (E10.2/E10.3 deferred)
 ├── sse_hub.rs                              K1–K5
 ├── tenancy.rs                              B1–B4
 └── triggers.rs                             I1–I11

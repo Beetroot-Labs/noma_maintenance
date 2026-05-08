@@ -1,13 +1,9 @@
 // F4 — PUT /maintenance/works/{work_id}/photos/{photo_id}
 //
-// Coverage here is intentionally partial. The success path (F4.1, F4.7, F4.8) calls
-// `cloud_storage::Object::create` directly against GCS, so it would either fail in CI or hit
-// real network. A proper Storage trait abstraction is the right fix; until that lands we
-// cover only the branches that return *before* the GCS call:
-//   * 503 when state.storage is None
-//   * 400s for body / content-type validation
-//   * 403 when the work doesn't belong to the caller
-//   * 403 when the parent shift is frozen (handler check; the trigger never gets to fire)
+// Success-path tests (F4.1, F4.7, F4.8) drive the storage seam via MemStorage so we can
+// assert what was stored without hitting GCS. Pre-storage branches still covered: 503 when
+// state.storage is None, 400 for body/content-type validation, 403 when the work isn't
+// owned by the caller, 403 when the parent shift is frozen.
 
 use axum::body::{Body, Bytes};
 use axum::http::{Request, StatusCode};
@@ -180,6 +176,137 @@ async fn f4_5_work_not_owned_by_caller_returns_403(pool: PgPool) {
     assert_eq!(status, StatusCode::FORBIDDEN);
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["error"], "maintenance work not found for current user");
+}
+
+// F4.1 — Happy path: bytes upload, row inserted with the canonical GCS object name as
+// photo_url, default photo_type=MAINTENANCE, MemStorage records exactly one put.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn f4_1_happy_path_uploads_and_persists(pool: PgPool) {
+    let tenant = seed_tenant(&pool).await;
+    let lead = seed_user(&pool, tenant.id, "LEAD_TECHNICIAN").await;
+    let building = seed_building(&pool, tenant.id).await;
+    let device = seed_device(&pool, tenant.id, building.id).await;
+    let shift = seed_shift(&pool, tenant.id, building.id, lead.id).await;
+    let work_id = seed_maintenance_work(&pool, tenant.id, shift.id, device.id, lead.id).await;
+
+    let (router, mem) = build_router_with_mem_storage(pool.clone());
+    let photo_id = Uuid::new_v4();
+    let bytes = Bytes::from_static(b"\xFF\xD8\xFFphoto-bytes");
+
+    let (status, body) = call(
+        &router,
+        put_photo_req(
+            work_id,
+            photo_id,
+            &lead.session_token,
+            &Uuid::new_v4().to_string(),
+            "image/jpeg",
+            bytes.clone(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let resp: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(resp["id"], photo_id.to_string());
+
+    let expected_object_name = format!(
+        "device-photos/tenants/{}/maintenance-works/{work_id}/photos/{photo_id}",
+        tenant.id
+    );
+    let row: (String, String) = sqlx::query_as(
+        "SELECT photo_url, photo_type::text FROM maintenance_photos WHERE id = $1",
+    )
+    .bind(photo_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row.0, expected_object_name);
+    assert_eq!(row.1, "MAINTENANCE");
+
+    assert_eq!(mem.put_count(), 1);
+    let stored = mem.get(&expected_object_name).expect("object stored");
+    assert_eq!(stored.0, bytes.to_vec());
+    assert_eq!(stored.1, "image/jpeg");
+}
+
+// F4.7 — `photo_type=MALFUNCTION` query param is normalized and stored as MALFUNCTION.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn f4_7_photo_type_malfunction_via_query(pool: PgPool) {
+    let tenant = seed_tenant(&pool).await;
+    let lead = seed_user(&pool, tenant.id, "LEAD_TECHNICIAN").await;
+    let building = seed_building(&pool, tenant.id).await;
+    let device = seed_device(&pool, tenant.id, building.id).await;
+    let shift = seed_shift(&pool, tenant.id, building.id, lead.id).await;
+    let work_id = seed_maintenance_work(&pool, tenant.id, shift.id, device.id, lead.id).await;
+
+    let router = build_router_with_fake_storage(pool.clone());
+    let photo_id = Uuid::new_v4();
+    let req = Request::builder()
+        .method("PUT")
+        .uri(format!(
+            "/api/maintenance/works/{work_id}/photos/{photo_id}?photo_type=MALFUNCTION"
+        ))
+        .header("Cookie", format!("noma_session={}", lead.session_token))
+        .header("X-Mutation-Id", Uuid::new_v4().to_string())
+        .header("Content-Type", "image/jpeg")
+        .body(Body::from(Bytes::from_static(b"\xFF\xD8\xFFx")))
+        .unwrap();
+    let (status, _) = call(&router, req).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let photo_type: String =
+        sqlx::query_scalar("SELECT photo_type::text FROM maintenance_photos WHERE id = $1")
+            .bind(photo_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(photo_type, "MALFUNCTION");
+}
+
+// F4.8 — Replay with the same mutation_id returns the cached response without re-uploading.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn f4_8_replay_returns_cached_response_without_second_upload(pool: PgPool) {
+    let tenant = seed_tenant(&pool).await;
+    let lead = seed_user(&pool, tenant.id, "LEAD_TECHNICIAN").await;
+    let building = seed_building(&pool, tenant.id).await;
+    let device = seed_device(&pool, tenant.id, building.id).await;
+    let shift = seed_shift(&pool, tenant.id, building.id, lead.id).await;
+    let work_id = seed_maintenance_work(&pool, tenant.id, shift.id, device.id, lead.id).await;
+
+    let (router, mem) = build_router_with_mem_storage(pool.clone());
+    let photo_id = Uuid::new_v4();
+    let mid = Uuid::new_v4().to_string();
+    let bytes = Bytes::from_static(b"\xFF\xD8\xFFphoto");
+
+    let (s1, b1) = call(
+        &router,
+        put_photo_req(
+            work_id,
+            photo_id,
+            &lead.session_token,
+            &mid,
+            "image/jpeg",
+            bytes.clone(),
+        ),
+    )
+    .await;
+    assert_eq!(s1, StatusCode::OK);
+
+    let (s2, b2) = call(
+        &router,
+        put_photo_req(
+            work_id,
+            photo_id,
+            &lead.session_token,
+            &mid,
+            "image/jpeg",
+            bytes,
+        ),
+    )
+    .await;
+    assert_eq!(s2, StatusCode::OK);
+    assert_eq!(b1, b2, "replay must return identical body");
+    assert_eq!(mem.put_count(), 1, "replay must not re-upload");
 }
 
 // F4.6 — parent shift is frozen (here: COMMITTED) → 403 from the handler's
