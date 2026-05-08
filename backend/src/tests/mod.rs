@@ -1,6 +1,30 @@
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
 
+mod setup;
+
+mod admin_smoke;
+mod auth_session;
 mod helpers;
 mod idempotency;
+mod idempotency_replay;
+mod labeling_assign_barcode;
+mod labeling_building_cache;
+mod labeling_correct_barcode;
+mod labeling_create_device;
+mod labeling_create_location;
+mod labeling_device_photo;
+mod labeling_update_device_details;
+mod maintenance_authorization;
+mod maintenance_persistence;
+mod maintenance_photos;
+mod maintenance_validation;
 mod roles;
+mod shift_cancellation;
+mod shift_closing;
+mod shift_creation;
+mod shift_participants;
+mod shift_queries;
+mod shift_readiness;
+mod sse_hub;
 mod tenancy;
+mod triggers;
