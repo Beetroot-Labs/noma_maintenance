@@ -26,3 +26,4 @@ CLAUDE.md
 **/.omc/
 
 *.dump
+*.out
