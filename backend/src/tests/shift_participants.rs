@@ -183,6 +183,61 @@ async fn e2_5_inactive_user_returns_400_not_eligible(pool: PgPool) {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
+// E2.6 — Re-inviting an already CACHE_READY user is a no-op: status, invited_at, and
+// cache_ready_at are preserved. The handler's ON CONFLICT clause only resets DECLINED rows;
+// every other status flows through the ELSE branch and keeps existing values.
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn e2_6_reinvite_cache_ready_user_is_noop(pool: PgPool) {
+    let tenant = seed_tenant(&pool).await;
+    let lead = seed_user(&pool, tenant.id, "LEAD_TECHNICIAN").await;
+    let invitee = seed_user(&pool, tenant.id, "TECHNICIAN").await;
+    let building = seed_building(&pool, tenant.id).await;
+    let shift = seed_shift(&pool, tenant.id, building.id, lead.id).await;
+
+    add_participant(&pool, tenant.id, shift.id, invitee.id, "CACHE_READY").await;
+    let original: (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) =
+        sqlx::query_as(
+            "SELECT invited_at, cache_ready_at FROM shift_participants \
+             WHERE shift_id = $1 AND user_id = $2",
+        )
+        .bind(shift.id)
+        .bind(invitee.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // Step the clock so any unintended NOW() update would be observably greater.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let router = build_router(pool.clone());
+    let (status, _) = call(
+        &router,
+        make_req(
+            "POST",
+            &format!("/shifts/{}/participants", shift.id),
+            &lead.session_token,
+            None,
+            Some(json!({ "user_id": invitee.id })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let row: (String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) =
+        sqlx::query_as(
+            "SELECT status::text, invited_at, cache_ready_at \
+             FROM shift_participants WHERE shift_id = $1 AND user_id = $2",
+        )
+        .bind(shift.id)
+        .bind(invitee.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(row.0, "CACHE_READY", "status should stay CACHE_READY");
+    assert_eq!(row.1, original.0, "invited_at should be preserved");
+    assert_eq!(row.2, original.1, "cache_ready_at should be preserved");
+}
+
 // E3.1 — Lead removes a participant from an INVITING shift → 204; the row is gone.
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn e3_1_lead_removes_participant_happy_path(pool: PgPool) {

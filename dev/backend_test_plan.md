@@ -118,7 +118,7 @@ Roll these into a single test module that loops a small inventory of endpoints r
 | E2.2 | Non-lead participant tries to invite → 403 |
 | E2.3 | User from another tenant invited → 400 ("not eligible") |
 | E2.4 | Re-invite a previously-`DECLINED` user → row returns to `INVITED`, `invited_at` is bumped, all later timestamps cleared |
-| E2.5 | Invite an already-`INVITED` user → no-op (existing row preserved); call still succeeds |
+| E2.5 | Re-invite an already-`INVITED` or `CACHE_READY` user → no-op (existing row + timestamps preserved); call still succeeds. ON CONFLICT clause only resets DECLINED rows; every other status flows through the ELSE branch unchanged. |
 | E2.6 | Invite into a frozen shift (e.g., `READY_TO_COMMIT`) → fails (currently surfaces as 500; document the contract) |
 | E2.7 | After invite, `refresh_shift_ready_state_tx` puts shift back to `INVITING` if it had moved to `READY_TO_START` |
 
@@ -292,7 +292,7 @@ One test per validation rule (each is a 400):
 | G2.9 | Duplicate `sourceDeviceCode` for the tenant → 409 |
 | G2.10 | Optional `barcode` already used by another device → 409 |
 | G2.11 | Optional `barcode` not previously used → barcode row created |
-| G2.12 | Optional `barcode` previously deactivated for *this* device → reactivated |
+| G2.12 | Optional `barcode` previously deactivated for a *different* device → 409 (same conflict as an active code; at create-device time the new device is brand new so reactivation is unreachable) |
 
 #### G3. `POST /labeling/devices/{id}/barcode`
 | Test | Description |
@@ -350,7 +350,7 @@ These are largely read-only; cover them with smoke tests rather than exhaustive 
 |---|---|
 | H1 | `GET /admin/shifts` returns shifts for tenant only; counts exclude `DECLINED` participants |
 | H2 | `GET /admin/shifts/{id}` payload does **not** include `accepted_at` (post-migration) |
-| H3 | `POST /admin/users` requires `require_lead_or_admin`; duplicate email within tenant → 409/400 (DB unique constraint) |
+| H3 | `POST /admin/users` requires `require_admin`; duplicate email within tenant → 409/400 (DB unique constraint) |
 | H4 | `PATCH /admin/users/{id}` flipping `is_active=false` invalidates that user's existing sessions (via `/auth/me` returning 401 on the next call) |
 | H5 | `GET /admin/maintenances/{id}` returns 403 for cross-tenant id |
 | H6 | `GET /users/invite-candidates` excludes the caller, excludes inactive users |
@@ -380,7 +380,7 @@ A small focused module to keep these in one place rather than re-asserting acros
 | Test | Description |
 |---|---|
 | J1 | First call returns 200 with body B. Second call (same key) returns identical body B even after the underlying entity has been modified by another call |
-| J2 | First call returns a 4xx error. Second call (same key) returns the cached error response (idempotency caches errors too) — assert this matches the DB row written by the handler |
+| J2 | First call returns a 4xx error. Replay does NOT return a cached response — only successful calls write to `processed_mutations`. Replaying with the original (still-bad) body returns the same 400; replaying the same key with corrected body succeeds. (Caching only successes avoids retry-lockout on transient 5xxs.) |
 | J3 | Concurrent calls with the same `X-Mutation-Id`: only one wins; the other gets either the cached response or a serializable conflict mapped to 5xx (document the chosen behavior; today the unique constraint on `processed_mutations` is what enforces this) |
 | J4 | A call that returns a non-JSON body (e.g., 204 NO_CONTENT from logout/decline) — replay still returns 204 (asserts the body=None branch of `replay_processed_mutation_response`) |
 

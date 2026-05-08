@@ -8,13 +8,13 @@ A reference for the `backend/src/tests/` suite. Reading order: top sections answ
 
 | | |
 |---|---|
-| **Status** | 172 tests passing, 0 failing, ~42 s wall clock |
+| **Status** | 173 tests passing, 0 failing, ~42 s wall clock |
 | **Coverage** | All sections of `dev/backend_test_plan.md` except those needing GCS or JWKS fixtures |
 | **Run** | `DATABASE_URL=postgres://test:test@localhost:5544/test cargo test --tests` |
 | **DB** | `noma_test_pg` Docker container — Postgres 17 on port 5544, user/pass/db `test` |
 
 ```
-test result: ok. 172 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 41.52s
+test result: ok. 173 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 41.52s
 ```
 
 ---
@@ -30,7 +30,7 @@ Plan sections map 1:1 to `backend/src/tests/<file>.rs` modules.
 | C — Role gates | `roles.rs` | (prior) | C1.* |
 | D — Idempotency | `idempotency.rs` | 7 | D1–D7 |
 | E1 — Create shift | `shift_creation.rs` | 5 | |
-| E2–E3 — Participants | `shift_participants.rs` | 9 | |
+| E2–E3 — Participants | `shift_participants.rs` | 10 | |
 | E4–E5 — Join/decline | `shift_readiness.rs` | 8 | |
 | E6–E8 — Close/commit | `shift_closing.rs` | 10 | |
 | E9 — Cancel | `shift_cancellation.rs` | 5 | |
@@ -63,11 +63,8 @@ Tests below assert what the **code actually does**, not what the plan says. When
 
 | Plan said | Code does | Test resolution |
 |---|---|---|
-| H3 needs `require_lead_or_admin` | Source uses `require_admin` | H3a (LEAD_TECHNICIAN → 403) + H3b (ADMIN + duplicate email → 409). LEAD as the rejected role is more discriminating than TECHNICIAN. |
 | H4: `PATCH /admin/users/{id}` flips `is_active` | Endpoint has no `is_active` field | Flip via SQL; assert next `/auth/me` returns 401. The contract under test is the `is_active = TRUE` clause in `require_session_user`. |
-| H6: `/users/invite-candidates` excludes the caller | Source filters only `is_active=FALSE` and `role=VIEWER` | Test asserts the caller IS in the list. |
-| J2: 4xx responses are cached | Handlers only save to `processed_mutations` on success paths | Assert `processed_mutations` count stays 0 after 400; same-mid replay with valid body returns 200. |
-| G2.12: deactivated barcode "for *this* device" → reactivated | At create-device time the device row is brand new — no prior barcode can point at it | Reframed: deactivated barcode on a *different* device → 409, same as active. |
+| H6: `/users/invite-candidates` excludes the caller | Source filters only `is_active=FALSE` and `role=VIEWER` | Test asserts the caller IS in the list. (Frontend handles caller-exclusion.) |
 
 ---
 
