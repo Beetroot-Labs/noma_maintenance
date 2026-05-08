@@ -5,7 +5,6 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
-use cloud_storage::Object;
 use serde::{Deserialize, Serialize};
 use sqlx::{Postgres, QueryBuilder};
 use std::convert::Infallible;
@@ -1634,17 +1633,13 @@ pub async fn get_admin_maintenance_photo(
     .flatten()
     .ok_or_else(|| ApiError::forbidden("maintenance photo not found for current tenant"))?;
 
-    let metadata = Object::read(&storage.bucket, &object_name)
+    let object = storage
+        .client
+        .fetch(&object_name)
         .await
         .map_err(ApiError::internal)?;
-    let bytes = Object::download(&storage.bucket, &object_name)
-        .await
-        .map_err(ApiError::internal)?;
-    let content_type = metadata
-        .content_type
-        .unwrap_or_else(|| "application/octet-stream".to_string());
 
-    Ok(([(header::CONTENT_TYPE, content_type)], bytes))
+    Ok(([(header::CONTENT_TYPE, object.content_type)], object.bytes))
 }
 
 #[derive(Serialize, sqlx::FromRow)]
@@ -1987,14 +1982,11 @@ pub async fn upload_shift_signature(
     }
 
     let object_name = shift_signature_object_name(storage, user.tenant_id, shift_id);
-    Object::create(
-        &storage.bucket,
-        body.to_vec(),
-        &object_name,
-        content_type.as_ref(),
-    )
-    .await
-    .map_err(ApiError::internal)?;
+    storage
+        .client
+        .put(&object_name, body.to_vec(), content_type.as_ref())
+        .await
+        .map_err(ApiError::internal)?;
 
     Ok((
         StatusCode::OK,

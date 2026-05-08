@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
+use crate::storage::{GcsStorage, Storage};
+
 #[derive(Clone)]
 pub struct AppState {
     pub client: reqwest::Client,
@@ -26,9 +28,9 @@ pub struct AuthConfig {
 
 #[derive(Clone)]
 pub struct StorageConfig {
-    pub bucket: String,
     pub device_photo_prefix: String,
     pub shift_signature_prefix: String,
+    pub client: Arc<dyn Storage>,
 }
 
 #[derive(Clone, Serialize)]
@@ -127,9 +129,9 @@ pub fn load_storage_config() -> anyhow::Result<Option<StorageConfig>> {
         .to_string();
 
     Ok(Some(StorageConfig {
-        bucket,
         device_photo_prefix,
         shift_signature_prefix,
+        client: Arc::new(GcsStorage::new(bucket)),
     }))
 }
 

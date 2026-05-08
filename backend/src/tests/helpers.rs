@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use async_trait::async_trait;
 use axum::Router;
 use axum::body::{Body, Bytes};
 use axum::http::{Request, StatusCode};
@@ -8,6 +12,79 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use crate::state::{AppState, AuthConfig, ShiftEventHub, StorageConfig};
+use crate::storage::{FetchedObject, Storage};
+
+#[derive(Default)]
+struct MemStorageInner {
+    objects: HashMap<String, (Vec<u8>, String)>,
+    put_count: usize,
+    delete_count: usize,
+}
+
+pub struct MemStorage {
+    inner: Mutex<MemStorageInner>,
+}
+
+impl MemStorage {
+    pub fn new() -> Self {
+        Self {
+            inner: Mutex::new(MemStorageInner::default()),
+        }
+    }
+
+    pub fn put_count(&self) -> usize {
+        self.inner.lock().unwrap().put_count
+    }
+
+    pub fn delete_count(&self) -> usize {
+        self.inner.lock().unwrap().delete_count
+    }
+
+    pub fn contains(&self, name: &str) -> bool {
+        self.inner.lock().unwrap().objects.contains_key(name)
+    }
+
+    pub fn get(&self, name: &str) -> Option<(Vec<u8>, String)> {
+        self.inner.lock().unwrap().objects.get(name).cloned()
+    }
+
+    pub fn seed(&self, name: &str, bytes: Vec<u8>, content_type: &str) {
+        self.inner
+            .lock()
+            .unwrap()
+            .objects
+            .insert(name.to_string(), (bytes, content_type.to_string()));
+    }
+}
+
+#[async_trait]
+impl Storage for MemStorage {
+    async fn put(&self, name: &str, bytes: Vec<u8>, content_type: &str) -> anyhow::Result<()> {
+        let mut guard = self.inner.lock().unwrap();
+        guard
+            .objects
+            .insert(name.to_string(), (bytes, content_type.to_string()));
+        guard.put_count += 1;
+        Ok(())
+    }
+
+    async fn fetch(&self, name: &str) -> anyhow::Result<FetchedObject> {
+        let guard = self.inner.lock().unwrap();
+        let (bytes, content_type) = guard
+            .objects
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("object not found: {name}"))?
+            .clone();
+        Ok(FetchedObject { bytes, content_type })
+    }
+
+    async fn delete(&self, name: &str) -> anyhow::Result<()> {
+        let mut guard = self.inner.lock().unwrap();
+        guard.objects.remove(name);
+        guard.delete_count += 1;
+        Ok(())
+    }
+}
 
 pub fn test_state(pool: PgPool) -> AppState {
     AppState {
@@ -29,19 +106,25 @@ pub fn build_router(pool: PgPool) -> Router {
     Router::new().nest("/api", crate::build_api_router(test_state(pool)))
 }
 
-// A router with `state.storage = Some(...)` so handlers don't short-circuit to 503. The
-// fake bucket name is intentional — these tests exercise paths that return BEFORE the
-// `cloud_storage::Object::create` call (validation errors, 403s from auth/state checks),
-// so no GCS request is ever issued. Reaching the upload would be a test bug, not a network
-// call.
+// Router with `state.storage = Some(...)` and a MemStorage client. Use when the test
+// doesn't need to inspect what was stored (validation errors, auth/state 403s, etc.).
 pub fn build_router_with_fake_storage(pool: PgPool) -> Router {
+    let (router, _) = build_router_with_mem_storage(pool);
+    router
+}
+
+// Same as `build_router_with_fake_storage` but returns the MemStorage handle so the
+// test can assert on put/fetch/delete (e.g., F4.1, G5.1, F4.8 replay-no-double-upload).
+pub fn build_router_with_mem_storage(pool: PgPool) -> (Router, Arc<MemStorage>) {
+    let mem = Arc::new(MemStorage::new());
+    let client: Arc<dyn Storage> = mem.clone();
     let mut state = test_state(pool);
     state.storage = Some(StorageConfig {
-        bucket: "fake-test-bucket".to_string(),
         device_photo_prefix: "device-photos".to_string(),
         shift_signature_prefix: "shift-signatures".to_string(),
+        client,
     });
-    Router::new().nest("/api", crate::build_api_router(state))
+    (Router::new().nest("/api", crate::build_api_router(state)), mem)
 }
 
 pub async fn call(router: &Router, req: Request<Body>) -> (StatusCode, Bytes) {

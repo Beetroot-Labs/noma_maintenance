@@ -1,7 +1,55 @@
 use std::borrow::Cow;
 
+use async_trait::async_trait;
+
 use crate::error::ApiError;
 use crate::state::StorageConfig;
+
+pub struct FetchedObject {
+    pub bytes: Vec<u8>,
+    pub content_type: String,
+}
+
+#[async_trait]
+pub trait Storage: Send + Sync {
+    async fn put(&self, name: &str, bytes: Vec<u8>, content_type: &str) -> anyhow::Result<()>;
+    async fn fetch(&self, name: &str) -> anyhow::Result<FetchedObject>;
+    async fn delete(&self, name: &str) -> anyhow::Result<()>;
+}
+
+pub struct GcsStorage {
+    bucket: String,
+}
+
+impl GcsStorage {
+    pub fn new(bucket: String) -> Self {
+        Self { bucket }
+    }
+}
+
+#[async_trait]
+impl Storage for GcsStorage {
+    async fn put(&self, name: &str, bytes: Vec<u8>, content_type: &str) -> anyhow::Result<()> {
+        cloud_storage::Object::create(&self.bucket, bytes, name, content_type).await?;
+        Ok(())
+    }
+
+    async fn fetch(&self, name: &str) -> anyhow::Result<FetchedObject> {
+        let metadata = cloud_storage::Object::read(&self.bucket, name).await?;
+        let bytes = cloud_storage::Object::download(&self.bucket, name).await?;
+        Ok(FetchedObject {
+            bytes,
+            content_type: metadata
+                .content_type
+                .unwrap_or_else(|| "application/octet-stream".to_string()),
+        })
+    }
+
+    async fn delete(&self, name: &str) -> anyhow::Result<()> {
+        cloud_storage::Object::delete(&self.bucket, name).await?;
+        Ok(())
+    }
+}
 
 pub fn image_content_type(header_value: Option<&str>) -> Result<Cow<'static, str>, ApiError> {
     match header_value.map(str::trim) {
