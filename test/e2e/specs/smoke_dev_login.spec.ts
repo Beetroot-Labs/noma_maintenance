@@ -7,6 +7,7 @@ import { expect, test } from "@playwright/test";
 import { dbQuery } from "../helpers/db";
 import { applyPreset, seedTenant } from "../helpers/tenant";
 import { loginAs } from "../helpers/auth";
+import { userEmail } from "../helpers/users";
 
 test.describe("smoke / dev-login bypass", () => {
   test("logged-in user surfaces in /api/auth/me", async ({ page }) => {
@@ -20,11 +21,7 @@ test.describe("smoke / dev-login bypass", () => {
     );
     expect(Number(count)).toBe(4);
 
-    // Emails in the preset are globally unique because they include the tenant_id slug
-    // via the preset's literal — but in this seed we used static emails. The preset is
-    // safe to apply to exactly one tenant per test run. For multi-tenant scenarios,
-    // future presets should incorporate the tenant id into the email local-part.
-    const email = "lead@e2e.local";
+    const email = userEmail(tenant.id, "lead");
 
     await loginAs(page, email);
 

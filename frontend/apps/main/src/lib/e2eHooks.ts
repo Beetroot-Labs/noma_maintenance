@@ -5,6 +5,12 @@
 // internal store names confined to this single file means tests never need to know which
 // database / store holds what — if those names change, only this file updates.
 
+import {
+  getCachedBuildingSnapshot as sharedGetCachedBuildingSnapshot,
+  type SharedBuildingCachePayload,
+} from "@noma/shared";
+import { loadMaintenanceState } from "./maintenanceStore";
+
 const MAINTENANCE_STATE_DB = "noma-maintenance-state";
 const MAINTENANCE_STATE_DB_VERSION = 2;
 const SYNC_OUTBOX_STORE = "sync_outbox";
@@ -65,10 +71,23 @@ const clearAllStorage = async (): Promise<void> => {
   }
 };
 
+const getCachedBuildingSnapshot = (
+  tenantId: string,
+  buildingId: string,
+): Promise<SharedBuildingCachePayload | null> =>
+  sharedGetCachedBuildingSnapshot(tenantId, buildingId);
+
+const getMaintenanceState = (
+  tenantId: string,
+  userId: string,
+): Promise<unknown | null> => loadMaintenanceState(tenantId, userId);
+
 export const installE2EHooks = () => {
   window.__noma_e2e = {
     getOutboxItems,
     hasPendingOutboxItems,
     clearAllStorage,
+    getCachedBuildingSnapshot,
+    getMaintenanceState,
   };
 };

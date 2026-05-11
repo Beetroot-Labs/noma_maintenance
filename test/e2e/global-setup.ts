@@ -63,6 +63,25 @@ const waitForHealth = async (url: string, timeoutMs = 30_000) => {
   throw new Error(`backend at ${url} did not become healthy within ${timeoutMs}ms`);
 };
 
+const assertPortFree = async (port: number) => {
+  // If a previous run left a backend bound to this port, spawning ours fails silently
+  // and the suite runs against the stale backend (different DB → cryptic 404s in
+  // dev-login). Probe once up front and fail loudly with the offending PID.
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/health-check`);
+    if (response.ok) {
+      throw new Error(
+        `port ${port} already has a healthy responder — a previous e2e backend is likely still running. Find its PID with 'ss -tlnp | grep ${port}' and kill it.`,
+      );
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("port ")) {
+      throw err;
+    }
+    // Connection refused → port is free, expected path.
+  }
+};
+
 const spawnBackend = (databaseUrl: string): ChildProcess => {
   if (!existsSync(BACKEND_BIN)) {
     throw new Error(
@@ -107,6 +126,8 @@ export default async () => {
 
   console.log("[e2e] building backend (incremental)");
   runBlocking("cargo", ["build", "--bin", "noma_maintenance"], { cwd: BACKEND_DIR });
+
+  await assertPortFree(BACKEND_PORT);
 
   console.log(`[e2e] spawning backend on ${BACKEND_URL}`);
   const backend = spawnBackend(databaseUrl);

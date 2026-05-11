@@ -7,7 +7,7 @@ Decisions and conventions for the end-to-end test suite. Companion to `dev/featu
 - **Test runner:** Playwright (TypeScript). Multi-context support is required for invitation / SSE / multi-user flows.
 - **DB assertions:** `pg` (node-postgres) from inside the test process. Same connection URL as the backend uses.
 - **Test location:** `test/e2e/` at the repo root (sibling to `backend/`, `frontend/`).
-- **Naming:** `c5_accept_invitation.spec.ts` — files prefixed with the catalog ID (e.g. `c5`, `g13`) so a failing test maps directly to a `feature_catalog.md` section.
+- **Naming:** journey-based, e.g. `auth_session_lifecycle.spec.ts`, `lead_creates_shift.spec.ts`. See §18 for the full roster. Each spec lists the catalog row IDs it covers in a header comment so failures still map back to `feature_catalog.md`.
 
 ## 2. Auth bypass
 
@@ -165,3 +165,102 @@ These were ambiguous in `feature_catalog.md`; resolved during planning so test c
 - `dev/feature_catalog.md` — what to test (BDD-style feature list)
 - `dev/test_implementation_notes.md` — backend integration test coverage map
 - `dev/security_audit.md` — H1, H2 findings that interact with role tests
+
+## 18. Spec sizing & journey roster
+
+### 18.1 Sizing rule
+
+One spec = **one user journey**. A journey is a coherent intent that shares: one preset, one (or few coordinated) login(s), one starting page, a sequence of interactions a real user would do back-to-back. Inside that journey, multiple catalog rows are covered as steps and assertions — they are *not* split into separate specs.
+
+Cost model: per-test marginal cost is dominated by login + preset + navigation (~1-3s each). Once on the page, asserting ten things is roughly as cheap as asserting one. So the expensive boundary is "new login / new preset / new starting URL," not "new assertion."
+
+**Heuristic — naming as a splitting signal:**
+- If you can't give the spec a single coherent name without an "and" connecting unrelated concepts, the journey is too big. Split it.
+- A name like `lead_creates_shift_and_invites_technicians_and_starts_maintenance` is three journeys. Three specs.
+- A name like `commit_failure_handling` is fine: one intent, even though several sub-assertions live inside.
+
+**Rules of thumb:**
+- 5-15 catalog rows per spec is healthy. < 3 → paying setup for too little. > 20 → failure messages stop being useful.
+- Split when *setup* diverges (different role, different preset, different network state, different page state), not when *assertion* diverges.
+- Pure visual/CSS rows (B2, B11) belong in unit/visual-regression tests, not e2e. Drop them from the e2e suite.
+
+### 18.2 Journey roster — spine first (D / E / G / J), then auth
+
+For each journey: spec name → catalog rows → preset → role(s) → notes.
+
+#### Phase 1 — Auth scaffolding
+
+| Spec | Catalog rows | Preset | Role(s) | Notes |
+|---|---|---|---|---|
+| `auth_session_lifecycle` | A1, A2, A6, A7 | users_basic | technician | Unauth `/home` → redirect → login → restore intended path → logout → back to `/login`. |
+
+A3-A5 (Google sign-in failure modes) are skipped — `/auth/google` requires real Google credentials and is bypassed in test by `/auth/dev-login`. Cover them at unit level if at all.
+
+#### Phase 2 — Shift creation (D)
+
+| Spec | Catalog rows | Preset | Role(s) | Notes |
+|---|---|---|---|---|
+| `lead_creates_shift` | D1, D2, D3, D4, D5, D8 | users_basic + building_with_10_devices | lead | Happy path: login → `/shifts/start` → autoload buildings → create → land on `/shifts/current` with self as sole participant. Asserts on DB row + IndexedDB snapshot. |
+| `shift_creation_backend_error` | D7 | users_basic + building_with_10_devices | lead | `page.route` aborts `POST /api/shifts`; assert error alert. |
+
+D6 (missing tenant id) skipped — anomalous client state not reachable from a normal session.
+
+#### Phase 3 — Shift detail & participants (E + C invite half)
+
+| Spec | Catalog rows | Preset | Role(s) | Notes |
+|---|---|---|---|---|
+| `shift_invite_accept_flow` | C3, C4 (INVITED), C5, C7, E2-E6, E20 | users_basic + shift_invited (lead + 1 technician INVITED) | technician (primary) + lead (second context) | Technician sees invite on `/home`, accepts, IndexedDB cache builds, lands on `/shifts/current`. Lead's context sees SSE `participants-updated`. |
+| `shift_invite_decline_flow` | C4 (DECLINED), C6, C7 | users_basic + shift_invited | technician | Decline path; verify status flips in DB. |
+| `lead_manages_participants` | E8, E9, E10, E11, E12, E13 | users_basic + shift_with_declined_and_active | lead | Add via dialog, remove a non-lead participant (READY_TO_START), reinvite a DECLINED one. |
+| `add_participant_offline_blocked` | E14 | users_basic + shift_ready_to_start | lead | `context.setOffline(true)` before opening dialog; assert toast. |
+| `lead_cancels_shift` | E15 | users_basic + shift_ready_to_start | lead | Cancel → DB row reflects deletion (per §15 cancelled = "as if never existed"). |
+| `reload_building_cache` | E16 | users_basic + active_shift_in_progress | technician | Menu action; assert IndexedDB snapshot rebuilt via `getCachedBuildingSnapshot` hook. |
+| `lead_requests_shift_close` | E17, E18 | users_basic + active_shift_in_progress (2 participants) | lead | Close-request → status flips, waiting banner appears while other participant hasn't confirmed. |
+| `lead_starts_shift_summary` | E19 | users_basic + shift_ready_to_commit (all CLOSE_CONFIRMED) | lead | Summary button visible; navigates to `/shift-summary`. |
+
+#### Phase 4 — Maintenance execution (G)
+
+| Spec | Catalog rows | Preset | Role(s) | Notes |
+|---|---|---|---|---|
+| `complete_routine_maintenance` | F11, G4 (ROUTINE), G8, G9, G10, G12 | users_basic + active_shift_in_progress | technician | Manual entry → maintenance detail → notes + photo → complete. DB: work row FINISHED. |
+| `complete_service_maintenance` | G4 (SERVICE), G5, G6, G7, G13 | users_basic + active_shift_in_progress | technician | Service branch with issue number, follow-up reasons (incl. OTHER → free text), validation messages. |
+| `abort_maintenance` | G14 | users_basic + active_shift_in_progress + in_progress_work | technician | DB: work row ABORTED. |
+| `maintenance_post_edit` | G15, G16 | users_basic + active_shift_in_progress + completed_work | technician (executor) | Edit after completion; "Legutóbb módosítva" tile appears. |
+| `maintenance_read_only_for_non_executor` | G2 | users_basic + active_shift_in_progress + in_progress_work_by_other | technician (non-executor) | All inputs disabled; no Complete/Abort. |
+| `maintenance_validation_blocks_complete` | G13 | users_basic + active_shift_in_progress | technician | Try to complete with missing photo / missing followup reason; assert helper text. Could fold into routine/service specs; standalone for clarity. |
+
+F2-F4 (camera open / error / flashlight) are deferred — covered by `--use-fake-device-for-media-stream` setup but secondary to spine. F6-F9 (real scan paths) need the same setup and slot in once a `camera_scan_happy_path` spec is added. Initial spine uses manual entry (F11) instead.
+
+#### Phase 5 — Commit (J)
+
+| Spec | Catalog rows | Preset | Role(s) | Notes |
+|---|---|---|---|---|
+| `lead_commits_shift` | J3, J6, J7, J8, J9 | users_basic + shift_ready_to_commit + maintenance rows | lead | Open `/shift-summary` → empty-submit blocked → fill referent + draw signature → commit → DB row COMMITTED + signature_image_url present + `currentShift` becomes null on `/home` (per §15 decision). |
+| `commit_upload_failure` | J10 | same as above | lead | `page.route` aborts `PUT /signature-image`; assert error toast + commit not attempted. |
+
+J11 (commit fails after upload succeeded) skipped per §15 — orphan signature is a known issue, planned fix folds upload into commit.
+
+#### Phase 6 — Offline & sync (deferred until prerequisites land)
+
+| Spec | Catalog rows | Prerequisite |
+|---|---|---|
+| `maintenance_offline_then_drain` | S1, S2, G12 offline variant | SW behavior verified under `setOffline(true)`; outbox retry policy audited; outbox-cleanup-on-cache-load implemented (§15). |
+| `commit_offline_then_drain` | S1, S2, J9 offline variant | same as above |
+| `sync_error_surface` | S3, H6, H7 | outbox retry policy audited (need to know when it gives up) |
+
+Do not write these until §16 caveats are resolved.
+
+### 18.3 Out-of-spine — to schedule after spine is green
+
+- **B / V — navigation & role gates** — drawer visibility, admin↔technician toggle, role-gated route redirects. One spec per role lens.
+- **C8, C9, K** — pending worksheets card + page. Tenant-scoped per §15.
+- **H** — maintenance dashboard tabs, sync indicators, Σ counter.
+- **F2-F10** — full scanner suite (needs fake video capture wired in).
+- **I** — device detail page (technician).
+- **L/M/N** — admin shifts/maintenance views.
+- **O/P** — admin user CRUD (admin role only for create/edit).
+- **Q/R** — admin device list + detail.
+
+### 18.4 Spine spec count
+
+~17 specs to cover the must-not-break tier (D + E + G + J + foundational auth). At roughly 1-3s per spec setup + assertions, full spine should run in well under 2 minutes once stable.

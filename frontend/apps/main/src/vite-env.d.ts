@@ -10,6 +10,14 @@ interface NomaE2EHooks {
   getOutboxItems: () => Promise<unknown[]>;
   hasPendingOutboxItems: () => Promise<boolean>;
   clearAllStorage: () => Promise<void>;
+  getCachedBuildingSnapshot: (
+    tenantId: string,
+    buildingId: string,
+  ) => Promise<unknown>;
+  getMaintenanceState: (
+    tenantId: string,
+    userId: string,
+  ) => Promise<unknown>;
 }
 
 interface ImportMeta {
