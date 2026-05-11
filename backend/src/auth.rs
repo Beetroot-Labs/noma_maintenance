@@ -1,6 +1,6 @@
 use axum::Json;
-use axum::extract::State;
-use axum::http::{HeaderMap, header};
+use axum::extract::{Query, State};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::IntoResponse;
 use chrono::{DateTime, Utc};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
@@ -225,6 +225,70 @@ pub async fn google_login(
     });
 
     Ok(([(header::SET_COOKIE, cookie)], response))
+}
+
+#[derive(Deserialize)]
+pub struct DevLoginParams {
+    pub email: String,
+}
+
+pub async fn dev_login(
+    State(state): State<AppState>,
+    Query(params): Query<DevLoginParams>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let auth = state
+        .auth
+        .as_ref()
+        .filter(|cfg| cfg.dev_login_enabled)
+        .ok_or_else(|| ApiError {
+            status: StatusCode::NOT_FOUND,
+            message: "not found".to_string(),
+            code: "NOT_FOUND",
+            retryable: false,
+        })?;
+
+    if params.email.trim().is_empty() {
+        return Err(ApiError::bad_request("email is required"));
+    }
+
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+
+    let user = sqlx::query_as::<_, DbUser>(
+        r#"
+        SELECT id, tenant_id, full_name, email::text AS email, role::text AS role, is_active
+        FROM users
+        WHERE email = $1
+        "#,
+    )
+    .bind(&params.email)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(|| ApiError {
+        status: StatusCode::NOT_FOUND,
+        message: "not found".to_string(),
+        code: "NOT_FOUND",
+        retryable: false,
+    })?;
+
+    if !user.is_active {
+        return Err(ApiError::forbidden("user account is inactive"));
+    }
+
+    let session = create_session(&mut tx, auth, user.id).await?;
+    tx.commit().await.map_err(ApiError::internal)?;
+
+    log::warn!("dev-login issued session for {} ({})", user.email, user.id);
+
+    let cookie = build_session_cookie(auth, &session.token, session.expires_at);
+    Ok((
+        StatusCode::NO_CONTENT,
+        [(header::SET_COOKIE, cookie)],
+    ))
 }
 
 pub async fn get_current_user(

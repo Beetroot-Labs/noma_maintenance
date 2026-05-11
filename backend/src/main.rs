@@ -23,7 +23,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeaderLayer;
 
-use crate::auth::{get_current_user, google_login, logout};
+use crate::auth::{dev_login, get_current_user, google_login, logout};
 use crate::labeling::{
     assign_labeling_device_barcode, correct_labeling_device_barcode, create_device,
     create_labeling_location, delete_labeling_device_photo, get_labeling_building_cache,
@@ -51,6 +51,7 @@ pub(crate) fn build_api_router(state: AppState) -> Router {
         .route("/auth/google", post(google_login))
         .route("/auth/me", get(get_current_user))
         .route("/auth/logout", post(logout))
+        .route("/auth/dev-login", get(dev_login))
         .route("/admin/shifts", get(list_admin_shifts))
         .route("/admin/buildings", get(list_admin_buildings))
         .route("/admin/users", get(list_admin_users).post(create_admin_user))
@@ -182,17 +183,27 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
+    let dev_login_enabled = std::env::var("ENABLE_DEV_LOGIN")
+        .ok()
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if dev_login_enabled {
+        log::warn!(
+            "ENABLE_DEV_LOGIN is set; /auth/dev-login is exposed. NEVER set this in production."
+        );
+    }
 
     let app_state = AppState {
         client: reqwest::Client::new(),
         db_pool,
         storage: load_storage_config()?,
-        auth: (!google_client_ids.is_empty()).then_some(AuthConfig {
+        auth: (!google_client_ids.is_empty() || dev_login_enabled).then_some(AuthConfig {
             google_client_ids,
             google_hosted_domain,
             session_cookie_name,
             session_duration: Duration::days(session_days),
             cookie_secure,
+            dev_login_enabled,
         }),
         shift_events: ShiftEventHub::default(),
     };

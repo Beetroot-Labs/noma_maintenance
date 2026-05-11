@@ -22,11 +22,11 @@ sqlx = { version = "0.8.6", default-features = false, features = ["postgres", "r
 tokio = { version = "1", features = ["full", "rt-multi-thread"] }
 tokio-stream = { version = "0.1.17", features = ["sync"] }
 tower = "0.5.3"
+tower-http = { version = "0.6.8", features = ["cors", "fs", "set-header"] }
+uuid = { version = "1.19.0", features = ["v4", "serde"] }
 
 [dev-dependencies]
 ctor = "1.0.3"
 testcontainers = "0.27.3"
 testcontainers-modules = { version = "0.15.0", features = ["postgres"] }
 tower = { version = "0.5.3", features = ["util"] }
-tower-http = { version = "0.6.8", features = ["cors", "fs", "set-header"] }
-uuid = { version = "1.19.0", features = ["v4", "serde"] }

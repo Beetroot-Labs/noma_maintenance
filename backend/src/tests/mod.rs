@@ -3,6 +3,7 @@ pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
 mod setup;
 
 mod admin_smoke;
+mod auth_dev_login;
 mod auth_session;
 mod helpers;
 mod idempotency;

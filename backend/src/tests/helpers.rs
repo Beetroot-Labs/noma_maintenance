@@ -1,7 +1,5 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use async_trait::async_trait;
 use axum::Router;
 use axum::body::{Body, Bytes};
 use axum::http::{Request, StatusCode};
@@ -12,79 +10,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use crate::state::{AppState, AuthConfig, ShiftEventHub, StorageConfig};
-use crate::storage::{FetchedObject, Storage};
-
-#[derive(Default)]
-struct MemStorageInner {
-    objects: HashMap<String, (Vec<u8>, String)>,
-    put_count: usize,
-    delete_count: usize,
-}
-
-pub struct MemStorage {
-    inner: Mutex<MemStorageInner>,
-}
-
-impl MemStorage {
-    pub fn new() -> Self {
-        Self {
-            inner: Mutex::new(MemStorageInner::default()),
-        }
-    }
-
-    pub fn put_count(&self) -> usize {
-        self.inner.lock().unwrap().put_count
-    }
-
-    pub fn delete_count(&self) -> usize {
-        self.inner.lock().unwrap().delete_count
-    }
-
-    pub fn contains(&self, name: &str) -> bool {
-        self.inner.lock().unwrap().objects.contains_key(name)
-    }
-
-    pub fn get(&self, name: &str) -> Option<(Vec<u8>, String)> {
-        self.inner.lock().unwrap().objects.get(name).cloned()
-    }
-
-    pub fn seed(&self, name: &str, bytes: Vec<u8>, content_type: &str) {
-        self.inner
-            .lock()
-            .unwrap()
-            .objects
-            .insert(name.to_string(), (bytes, content_type.to_string()));
-    }
-}
-
-#[async_trait]
-impl Storage for MemStorage {
-    async fn put(&self, name: &str, bytes: Vec<u8>, content_type: &str) -> anyhow::Result<()> {
-        let mut guard = self.inner.lock().unwrap();
-        guard
-            .objects
-            .insert(name.to_string(), (bytes, content_type.to_string()));
-        guard.put_count += 1;
-        Ok(())
-    }
-
-    async fn fetch(&self, name: &str) -> anyhow::Result<FetchedObject> {
-        let guard = self.inner.lock().unwrap();
-        let (bytes, content_type) = guard
-            .objects
-            .get(name)
-            .ok_or_else(|| anyhow::anyhow!("object not found: {name}"))?
-            .clone();
-        Ok(FetchedObject { bytes, content_type })
-    }
-
-    async fn delete(&self, name: &str) -> anyhow::Result<()> {
-        let mut guard = self.inner.lock().unwrap();
-        guard.objects.remove(name);
-        guard.delete_count += 1;
-        Ok(())
-    }
-}
+use crate::storage::{MemStorage, Storage};
 
 pub fn test_state(pool: PgPool) -> AppState {
     AppState {
@@ -97,6 +23,7 @@ pub fn test_state(pool: PgPool) -> AppState {
             session_cookie_name: "noma_session".to_string(),
             session_duration: Duration::days(30),
             cookie_secure: false,
+            dev_login_enabled: false,
         }),
         shift_events: ShiftEventHub::default(),
     }
@@ -104,6 +31,14 @@ pub fn test_state(pool: PgPool) -> AppState {
 
 pub fn build_router(pool: PgPool) -> Router {
     Router::new().nest("/api", crate::build_api_router(test_state(pool)))
+}
+
+pub fn build_router_with_dev_login(pool: PgPool) -> Router {
+    let mut state = test_state(pool);
+    if let Some(auth) = state.auth.as_mut() {
+        auth.dev_login_enabled = true;
+    }
+    Router::new().nest("/api", crate::build_api_router(state))
 }
 
 // Router with `state.storage = Some(...)` and a MemStorage client. Use when the test

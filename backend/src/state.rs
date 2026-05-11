@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::storage::{GcsStorage, Storage};
+use crate::storage::{GcsStorage, MemStorage, Storage};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -24,6 +24,7 @@ pub struct AuthConfig {
     pub session_cookie_name: String,
     pub session_duration: Duration,
     pub cookie_secure: bool,
+    pub dev_login_enabled: bool,
 }
 
 #[derive(Clone)]
@@ -74,6 +75,28 @@ impl ShiftEventHub {
 }
 
 pub fn load_storage_config() -> anyhow::Result<Option<StorageConfig>> {
+    let device_photo_prefix = std::env::var("GCS_DEVICE_PHOTO_PREFIX")
+        .unwrap_or_else(|_| "device-photos".to_string())
+        .trim_matches('/')
+        .to_string();
+
+    let shift_signature_prefix = std::env::var("GCS_SHIFT_SIGNATURE_PREFIX")
+        .unwrap_or_else(|_| "shift-signatures".to_string())
+        .trim_matches('/')
+        .to_string();
+
+    if matches!(
+        std::env::var("STORAGE_BACKEND").ok().as_deref(),
+        Some("mem")
+    ) {
+        log::warn!("STORAGE_BACKEND=mem — using in-memory storage. NEVER set this in production.");
+        return Ok(Some(StorageConfig {
+            device_photo_prefix,
+            shift_signature_prefix,
+            client: Arc::new(MemStorage::new()),
+        }));
+    }
+
     let Some(bucket) = std::env::var("GCS_BUCKET")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -117,16 +140,6 @@ pub fn load_storage_config() -> anyhow::Result<Option<StorageConfig>> {
             service_account_path
         );
     }
-
-    let device_photo_prefix = std::env::var("GCS_DEVICE_PHOTO_PREFIX")
-        .unwrap_or_else(|_| "device-photos".to_string())
-        .trim_matches('/')
-        .to_string();
-
-    let shift_signature_prefix = std::env::var("GCS_SHIFT_SIGNATURE_PREFIX")
-        .unwrap_or_else(|_| "shift-signatures".to_string())
-        .trim_matches('/')
-        .to_string();
 
     Ok(Some(StorageConfig {
         device_photo_prefix,

@@ -161,6 +161,7 @@ async fn e1_5_no_db_pool_returns_503() {
             session_cookie_name: "noma_session".to_string(),
             session_duration: Duration::days(30),
             cookie_secure: false,
+            dev_login_enabled: false,
         }),
         shift_events: ShiftEventHub::default(),
     };
