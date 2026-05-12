@@ -4,7 +4,6 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
-use cloud_storage::Object;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::require_session_user;
@@ -438,14 +437,11 @@ pub async fn upload_maintenance_photo(
     ensure_shift_sync_allowed_tx(&mut tx, user.tenant_id, shift_id, user.id).await?;
 
     let object_name = maintenance_photo_object_name(storage, user.tenant_id, work_id, photo_id);
-    Object::create(
-        &storage.bucket,
-        body.to_vec(),
-        &object_name,
-        content_type.as_ref(),
-    )
-    .await
-    .map_err(ApiError::internal)?;
+    storage
+        .client
+        .put(&object_name, body.to_vec(), content_type.as_ref())
+        .await
+        .map_err(ApiError::internal)?;
 
     sqlx::query(
         r#"

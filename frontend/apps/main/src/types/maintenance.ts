@@ -1,6 +1,6 @@
 export interface MaintenancePhoto {
   id: string;
-  url: string;
+  url?: string;
   description: string;
   timestamp: Date;
 }

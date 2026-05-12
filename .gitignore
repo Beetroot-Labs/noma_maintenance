@@ -21,5 +21,9 @@
 .codex/
 .omx/
 .agents/
+AGENTS.md
+CLAUDE.md
+**/.omc/
 
 *.dump
+*.out

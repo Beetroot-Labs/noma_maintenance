@@ -5,7 +5,6 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
-use cloud_storage::Object;
 use serde::{Deserialize, Serialize};
 use sqlx::{Postgres, QueryBuilder};
 use std::convert::Infallible;
@@ -220,7 +219,6 @@ struct ShiftParticipantView {
     phone_number: Option<String>,
     status: String,
     invited_at: DateTime<Utc>,
-    accepted_at: Option<DateTime<Utc>>,
     cache_ready_at: Option<DateTime<Utc>>,
 }
 
@@ -303,7 +301,6 @@ pub struct AdminShiftParticipantRow {
     role: String,
     status: String,
     invited_at: DateTime<Utc>,
-    accepted_at: Option<DateTime<Utc>>,
     cache_ready_at: Option<DateTime<Utc>>,
     close_confirmed_at: Option<DateTime<Utc>>,
 }
@@ -1299,7 +1296,6 @@ pub async fn get_admin_shift_detail(
             u.role::text AS role,
             sp.status::text AS status,
             sp.invited_at,
-            sp.accepted_at,
             sp.cache_ready_at,
             sp.close_confirmed_at
         FROM shift_participants sp
@@ -1649,17 +1645,13 @@ pub async fn get_admin_maintenance_photo(
     .flatten()
     .ok_or_else(|| ApiError::forbidden("maintenance photo not found for current tenant"))?;
 
-    let metadata = Object::read(&storage.bucket, &object_name)
+    let object = storage
+        .client
+        .fetch(&object_name)
         .await
         .map_err(ApiError::internal)?;
-    let bytes = Object::download(&storage.bucket, &object_name)
-        .await
-        .map_err(ApiError::internal)?;
-    let content_type = metadata
-        .content_type
-        .unwrap_or_else(|| "application/octet-stream".to_string());
 
-    Ok(([(header::CONTENT_TYPE, content_type)], bytes))
+    Ok(([(header::CONTENT_TYPE, object.content_type)], object.bytes))
 }
 
 #[derive(Serialize, sqlx::FromRow)]
@@ -1745,7 +1737,7 @@ pub async fn get_current_shift_state(
         WHERE sp.tenant_id = $1
           AND sp.user_id = $2
           AND s.status IN ('INVITING', 'READY_TO_START', 'IN_PROGRESS', 'CLOSE_REQUESTED')
-          AND sp.status IN ('INVITED', 'ACCEPTED', 'CACHE_READY', 'CLOSE_CONFIRMED')
+          AND sp.status IN ('INVITED', 'CACHE_READY', 'CLOSE_CONFIRMED')
           AND (
             s.status <> 'CLOSE_REQUESTED'
             OR sp.status <> 'CLOSE_CONFIRMED'
@@ -1926,10 +1918,9 @@ pub async fn create_shift(
             shift_id,
             user_id,
             status,
-            accepted_at,
             cache_ready_at
         )
-        VALUES ($1, $2, $3, 'ACCEPTED', NOW(), NULL)
+        VALUES ($1, $2, $3, 'CACHE_READY', NOW())
         "#,
     )
     .bind(user.tenant_id)
@@ -2003,14 +1994,11 @@ pub async fn upload_shift_signature(
     }
 
     let object_name = shift_signature_object_name(storage, user.tenant_id, shift_id);
-    Object::create(
-        &storage.bucket,
-        body.to_vec(),
-        &object_name,
-        content_type.as_ref(),
-    )
-    .await
-    .map_err(ApiError::internal)?;
+    storage
+        .client
+        .put(&object_name, body.to_vec(), content_type.as_ref())
+        .await
+        .map_err(ApiError::internal)?;
 
     Ok((
         StatusCode::OK,
@@ -2158,21 +2146,17 @@ pub async fn mark_shift_join_ready(
         UPDATE shift_participants
         SET
             status = CASE
-                WHEN status IN ('INVITED', 'ACCEPTED') THEN 'CACHE_READY'::shift_participant_status
+                WHEN status = 'INVITED' THEN 'CACHE_READY'::shift_participant_status
                 ELSE status
             END,
-            accepted_at = CASE
-                WHEN accepted_at IS NULL AND status IN ('INVITED', 'ACCEPTED') THEN NOW()
-                ELSE accepted_at
-            END,
             cache_ready_at = CASE
-                WHEN cache_ready_at IS NULL AND status IN ('INVITED', 'ACCEPTED') THEN NOW()
+                WHEN cache_ready_at IS NULL AND status = 'INVITED' THEN NOW()
                 ELSE cache_ready_at
             END
         WHERE tenant_id = $1
           AND shift_id = $2
           AND user_id = $3
-          AND status IN ('INVITED', 'ACCEPTED', 'CACHE_READY')
+          AND status IN ('INVITED', 'CACHE_READY')
         "#,
     )
     .bind(user.tenant_id)
@@ -2214,7 +2198,7 @@ pub async fn decline_shift_invitation(
         WHERE tenant_id = $1
           AND shift_id = $2
           AND user_id = $3
-          AND status IN ('INVITED', 'ACCEPTED')
+          AND status = 'INVITED'
         "#,
     )
     .bind(user.tenant_id)
@@ -2314,10 +2298,6 @@ pub async fn add_shift_participant(
             invited_at = CASE
                 WHEN shift_participants.status = 'DECLINED' THEN NOW()
                 ELSE shift_participants.invited_at
-            END,
-            accepted_at = CASE
-                WHEN shift_participants.status = 'DECLINED' THEN NULL
-                ELSE shift_participants.accepted_at
             END,
             cache_ready_at = CASE
                 WHEN shift_participants.status = 'DECLINED' THEN NULL
@@ -2474,7 +2454,6 @@ pub async fn get_shift_waiting_room(
             u.phone_number,
             sp.status::text AS status,
             sp.invited_at,
-            sp.accepted_at,
             sp.cache_ready_at
         FROM shift_participants sp
         JOIN users u
@@ -2807,7 +2786,7 @@ async fn refresh_shift_ready_state_tx(
         FROM shift_participants
         WHERE tenant_id = $1
           AND shift_id = $2
-          AND status IN ('INVITED', 'ACCEPTED')
+          AND status = 'INVITED'
         "#,
     )
     .bind(tenant_id)

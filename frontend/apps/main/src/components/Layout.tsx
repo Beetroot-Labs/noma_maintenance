@@ -165,6 +165,7 @@ export function Layout({ children }: LayoutProps) {
                 onKeyDown={handleMenuKeyDown}
                 role="button"
                 tabIndex={0}
+                aria-label="Felhasználói menü"
                 sx={{
                   display: "flex",
                   alignItems: "center",

@@ -159,6 +159,8 @@ CREATE TABLE devices (
     CONSTRAINT devices_tenant_id_id_unique UNIQUE (tenant_id, id)
 );
 
+ALTER TABLE devices ADD COLUMN original_kind TEXT;
+
 CREATE TABLE barcodes (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4() NOT NULL,
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,

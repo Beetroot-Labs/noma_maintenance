@@ -91,6 +91,9 @@ export default function StartShiftPage() {
         throw new Error("Hiányzik a tenant azonosító, ezért a műszak nem készíthető elő.");
       }
 
+      await pruneNonRetryableMaintenanceSyncItems();
+      await rebuildBuildingSnapshot(user.tenantId, selectedBuilding.id);
+
       const response = await fetch("/api/shifts", {
         method: "POST",
         credentials: "include",
@@ -109,20 +112,6 @@ export default function StartShiftPage() {
       }
 
       setPendingShiftId(payload.shift_id);
-
-      await pruneNonRetryableMaintenanceSyncItems();
-      await rebuildBuildingSnapshot(user.tenantId, selectedBuilding.id);
-
-      const joinReadyResponse = await fetch(`/api/shifts/${payload.shift_id}/join-ready`, {
-        method: "POST",
-        credentials: "include",
-      });
-      if (!joinReadyResponse.ok) {
-        throw new Error(
-          await readApiErrorMessage(joinReadyResponse, "Nem sikerült jelezni a csatlakozási kész állapotot."),
-        );
-      }
-
       storeAdminDevicesStateForBuilding(selectedBuilding.id, selectedBuilding.name);
       await refreshCurrentShift();
       navigate("/shifts/current");

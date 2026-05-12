@@ -3,6 +3,21 @@
 interface ImportMetaEnv {
   readonly VITE_GOOGLE_CLIENT_ID?: string;
   readonly VITE_REFRESH_CACHE_ON_SCAN?: string;
+  readonly VITE_E2E?: string;
+}
+
+interface NomaE2EHooks {
+  getOutboxItems: () => Promise<unknown[]>;
+  hasPendingOutboxItems: () => Promise<boolean>;
+  clearAllStorage: () => Promise<void>;
+  getCachedBuildingSnapshot: (
+    tenantId: string,
+    buildingId: string,
+  ) => Promise<unknown>;
+  getMaintenanceState: (
+    tenantId: string,
+    userId: string,
+  ) => Promise<unknown>;
 }
 
 interface ImportMeta {
@@ -31,6 +46,7 @@ interface GoogleAccountsButtonConfiguration {
 }
 
 interface Window {
+  __noma_e2e?: NomaE2EHooks;
   google?: {
     accounts: {
       id: {

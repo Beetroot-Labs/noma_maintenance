@@ -7,6 +7,10 @@ if (!import.meta.env.DEV) {
   LogRocket.init("xctxm9/noma-maintenance");
 }
 
+if (import.meta.env.VITE_E2E === "true") {
+  void import("./lib/e2eHooks").then(({ installE2EHooks }) => installE2EHooks());
+}
+
 createRoot(document.getElementById("root")!).render(<App />);
 
 if (import.meta.env.DEV && "serviceWorker" in navigator) {

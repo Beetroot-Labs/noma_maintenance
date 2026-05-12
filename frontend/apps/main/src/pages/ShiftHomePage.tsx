@@ -12,7 +12,6 @@ import { appColors } from "@/theme";
 
 const waitingStatusLabel: Record<string, string> = {
   INVITED: "Meghívást kapott egy műszakhoz.",
-  ACCEPTED: "A műszak előkészítése folyamatban.",
   CACHE_READY: "A műszak előkészítése kész.",
   DECLINED: "A műszak meghívása elutasítva.",
   CLOSE_CONFIRMED: "A műszak lezárása megerősítve.",
