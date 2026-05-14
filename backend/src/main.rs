@@ -2,9 +2,12 @@ mod auth;
 mod error;
 mod labeling;
 mod maintenance;
+mod shift_reports;
+mod service_worksheets;
 mod shifts;
 mod state;
 mod storage;
+mod typst_render;
 mod sync;
 
 use axum::Router;
@@ -31,6 +34,8 @@ use crate::labeling::{
     upload_labeling_device_photo,
 };
 use crate::maintenance::{sync_maintenance_work, upload_maintenance_photo};
+use crate::shift_reports::get_admin_shift_report;
+use crate::service_worksheets::get_admin_shift_service_worksheets;
 use crate::shifts::{
     add_shift_participant, cancel_shift, commit_shift, confirm_shift_close, create_shift,
     create_admin_user, decline_shift_invitation, get_admin_maintenance_detail,
@@ -44,6 +49,7 @@ use crate::shifts::{
 use crate::state::{
     AppState, AuthConfig, ShiftEventHub, load_google_client_ids, load_storage_config,
 };
+use crate::typst_render::TypstRenderClient;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -118,6 +124,7 @@ async fn main() -> anyhow::Result<()> {
         client: reqwest::Client::new(),
         db_pool,
         storage: load_storage_config()?,
+        typst_renderer: TypstRenderClient::from_env()?,
         auth: (!google_client_ids.is_empty()).then_some(AuthConfig {
             google_client_ids,
             google_hosted_domain,
@@ -140,6 +147,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/admin/devices/{device_id}", get(get_admin_device_detail))
         .route("/admin/users/{user_id}", get(get_admin_user_detail).patch(update_admin_user))
         .route("/admin/shifts/{shift_id}", get(get_admin_shift_detail))
+        .route("/admin/shifts/{shift_id}/report", get(get_admin_shift_report))
+        .route(
+            "/admin/shifts/{shift_id}/service-worksheets",
+            get(get_admin_shift_service_worksheets),
+        )
         .route(
             "/admin/maintenances/{maintenance_id}",
             get(get_admin_maintenance_detail_by_id),

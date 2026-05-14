@@ -34,7 +34,6 @@ import {
   Wrench,
 } from "lucide-react";
 import { Layout } from "@/components/Layout";
-import { toast } from "@/lib/toast";
 import { appColors } from "@/theme";
 
 type ShiftParticipantRow = {
@@ -213,19 +212,34 @@ export default function ShiftDetailsPage() {
   }, [shiftId]);
 
   const handleDownloadReport = () => {
-    if (!payload) {
+    if (!payload || !shiftId) {
       return;
     }
 
-    if (payload.report_url) {
-      window.open(payload.report_url, "_blank", "noopener,noreferrer");
-      return;
-    }
-
-    if (payload.status === "COMMITTED") {
-      toast.info("A munkalap letöltése még nincs implementálva.");
-    }
+    window.open(`/api/admin/shifts/${shiftId}/report`, "_blank", "noopener,noreferrer");
   };
+
+  const handleDownloadServiceWorksheets = () => {
+    if (!shiftId) {
+      return;
+    }
+
+    window.open(
+      `/api/admin/shifts/${shiftId}/service-worksheets`,
+      "_blank",
+      "noopener,noreferrer",
+    );
+  };
+
+  const hasRoutineMaintenances =
+    payload?.maintenances.some(
+      (maintenance) => maintenance.maintenance_kind !== SERVICE_MAINTENANCE_KIND,
+    ) ?? false;
+
+  const hasServiceMaintenances =
+    payload?.maintenances.some(
+      (maintenance) => maintenance.maintenance_kind === SERVICE_MAINTENANCE_KIND,
+    ) ?? false;
 
   return (
     <Layout>
@@ -273,15 +287,26 @@ export default function ShiftDetailsPage() {
                       <Typography variant="body2">{payload.shift_lead_name}</Typography>
                     </Box>
                   </Box>
-                  <Button
-                    variant="outlined"
-                    startIcon={<Download size={16} />}
-                    onClick={handleDownloadReport}
-                    disabled={payload.status !== "COMMITTED" && (!payload.report_ready || !payload.report_url)}
-                    sx={{ alignSelf: { xs: "stretch", md: "flex-start" } }}
+                  <Box
+                    sx={{
+                      display: "flex",
+                      flexDirection: { xs: "column", sm: "row" },
+                      gap: 1.5,
+                      alignSelf: { xs: "stretch", md: "flex-start" },
+                    }}
                   >
-                    Munkalap letöltése
-                  </Button>
+                    {hasRoutineMaintenances ? (
+                      <Button
+                        variant="outlined"
+                        startIcon={<Download size={16} />}
+                        onClick={handleDownloadReport}
+                        disabled={payload.status !== "COMMITTED" && !payload.report_ready}
+                        sx={{ alignSelf: { xs: "stretch", sm: "flex-start" } }}
+                      >
+                        Karbantartási munkalap letöltése
+                      </Button>
+                    ) : null}
+                  </Box>
                 </Box>
 
                 <Divider />

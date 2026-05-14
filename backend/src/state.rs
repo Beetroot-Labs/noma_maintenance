@@ -6,11 +6,14 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
+use crate::typst_render::TypstRenderClient;
+
 #[derive(Clone)]
 pub struct AppState {
     pub client: reqwest::Client,
     pub db_pool: Option<PgPool>,
     pub storage: Option<StorageConfig>,
+    pub typst_renderer: Option<TypstRenderClient>,
     pub auth: Option<AuthConfig>,
     pub shift_events: ShiftEventHub,
 }
@@ -29,6 +32,8 @@ pub struct StorageConfig {
     pub bucket: String,
     pub device_photo_prefix: String,
     pub shift_signature_prefix: String,
+    pub shift_report_prefix: String,
+    pub shift_service_worksheets_prefix: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -126,10 +131,22 @@ pub fn load_storage_config() -> anyhow::Result<Option<StorageConfig>> {
         .trim_matches('/')
         .to_string();
 
+    let shift_report_prefix = std::env::var("GCS_SHIFT_REPORT_PREFIX")
+        .unwrap_or_else(|_| "shift-reports".to_string())
+        .trim_matches('/')
+        .to_string();
+
+    let shift_service_worksheets_prefix = std::env::var("GCS_SHIFT_SERVICE_WORKSHEETS_PREFIX")
+        .unwrap_or_else(|_| "shift-service-worksheets".to_string())
+        .trim_matches('/')
+        .to_string();
+
     Ok(Some(StorageConfig {
         bucket,
         device_photo_prefix,
         shift_signature_prefix,
+        shift_report_prefix,
+        shift_service_worksheets_prefix,
     }))
 }
 

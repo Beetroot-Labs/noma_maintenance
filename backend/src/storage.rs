@@ -52,3 +52,26 @@ pub fn shift_signature_object_name(
         storage.shift_signature_prefix, tenant_id, shift_id
     )
 }
+
+pub fn shift_report_object_name(
+    storage: &StorageConfig,
+    tenant_id: uuid::Uuid,
+    shift_id: uuid::Uuid,
+    file_name: &str,
+) -> String {
+    format!(
+        "{}/tenants/{}/shifts/{}/{}",
+        storage.shift_report_prefix, tenant_id, shift_id, file_name
+    )
+}
+
+pub fn shift_service_worksheets_object_name(
+    storage: &StorageConfig,
+    tenant_id: uuid::Uuid,
+    shift_id: uuid::Uuid,
+) -> String {
+    format!(
+        "{}/tenants/{}/shifts/{}/szerviz_munkalapok.zip",
+        storage.shift_service_worksheets_prefix, tenant_id, shift_id
+    )
+}

@@ -215,6 +215,7 @@ CREATE TABLE shifts (
     summary_generated_at TIMESTAMPTZ,
     committed_at TIMESTAMPTZ,
     report_url TEXT,
+    service_worksheets_url TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
     CONSTRAINT shifts_tenant_building_fk
         FOREIGN KEY (tenant_id, building_id)
@@ -429,8 +430,7 @@ BEGIN
     END IF;
 
     IF OLD.status = 'COMMITTED' THEN
-        IF OLD.report_url IS NULL
-           AND NEW.status = OLD.status
+        IF NEW.status = OLD.status
            AND NEW.id IS NOT DISTINCT FROM OLD.id
            AND NEW.tenant_id IS NOT DISTINCT FROM OLD.tenant_id
            AND NEW.building_id IS NOT DISTINCT FROM OLD.building_id
@@ -440,7 +440,10 @@ BEGIN
            AND NEW.summary_generated_at IS NOT DISTINCT FROM OLD.summary_generated_at
            AND NEW.committed_at IS NOT DISTINCT FROM OLD.committed_at
            AND NEW.created_at IS NOT DISTINCT FROM OLD.created_at
-           AND NEW.report_url IS NOT NULL THEN
+           AND (
+                OLD.report_url IS NOT DISTINCT FROM NEW.report_url
+                OR (OLD.report_url IS NULL AND NEW.report_url IS NOT NULL)
+           ) THEN
             RETURN NEW;
         END IF;
 
@@ -448,7 +451,7 @@ BEGIN
             RAISE EXCEPTION 'Committed shift report_url cannot be modified once set.';
         END IF;
 
-        RAISE EXCEPTION 'Committed shifts cannot be modified except for setting report_url once.';
+        RAISE EXCEPTION 'Committed shifts cannot be modified except for setting report_url once or updating service_worksheets_url.';
     END IF;
 
     RETURN NEW;
