@@ -78,6 +78,7 @@ pub struct AdminDeviceRow {
     device_id: uuid::Uuid,
     barcode: Option<String>,
     building_name: String,
+    location_description: Option<String>,
     wing: Option<String>,
     floor: Option<String>,
     room: Option<String>,
@@ -730,7 +731,7 @@ pub async fn list_admin_devices(
         .map_err(ApiError::internal)?;
 
     let mut rows_query = QueryBuilder::new(
-        "SELECT d.id AS device_id, bc.code AS barcode, b.name AS building_name, sl.wing, sl.floor, sl.room, d.kind::text AS kind, d.original_kind, d.brand, d.model, d.source_device_code, lm.latest_maintenance_at FROM devices d JOIN site_locations sl ON sl.tenant_id = d.tenant_id AND sl.id = d.location_id JOIN buildings b ON b.tenant_id = sl.tenant_id AND b.id = sl.building_id LEFT JOIN barcodes bc ON bc.tenant_id = d.tenant_id AND bc.device_id = d.id AND bc.deactivated_at IS NULL LEFT JOIN LATERAL (SELECT MAX(mw.started_at) AS latest_maintenance_at FROM maintenance_works mw WHERE mw.tenant_id = d.tenant_id AND mw.device_id = d.id) lm ON TRUE WHERE d.tenant_id = ",
+        "SELECT d.id AS device_id, bc.code AS barcode, b.name AS building_name, sl.location_description, sl.wing, sl.floor, sl.room, d.kind::text AS kind, d.original_kind, d.brand, d.model, d.source_device_code, lm.latest_maintenance_at FROM devices d JOIN site_locations sl ON sl.tenant_id = d.tenant_id AND sl.id = d.location_id JOIN buildings b ON b.tenant_id = sl.tenant_id AND b.id = sl.building_id LEFT JOIN barcodes bc ON bc.tenant_id = d.tenant_id AND bc.device_id = d.id AND bc.deactivated_at IS NULL LEFT JOIN LATERAL (SELECT MAX(mw.started_at) AS latest_maintenance_at FROM maintenance_works mw WHERE mw.tenant_id = d.tenant_id AND mw.device_id = d.id) lm ON TRUE WHERE d.tenant_id = ",
     );
     rows_query.push_bind(user.tenant_id);
     rows_query.push(" AND sl.building_id = ");

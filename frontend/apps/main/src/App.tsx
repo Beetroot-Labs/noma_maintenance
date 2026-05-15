@@ -25,6 +25,9 @@ import DevicesPage from "./pages/admin/DevicesPage";
 import AdminDeviceDetailsPage from "./pages/admin/DeviceDetailsPage";
 import UsersPage from "./pages/admin/UsersPage";
 import UserDetailsPage from "./pages/admin/UserDetailsPage";
+import ProposalsPage from "./pages/admin/ProposalsPage";
+import ProposalDetailsPage from "./pages/admin/ProposalDetailsPage";
+import ProposalNewPage from "./pages/admin/ProposalNewPage";
 import ShiftDetailsPage from "./pages/ShiftDetailsPage";
 import MaintenanceDetailsPage from "./pages/MaintenanceDetailsPage";
 
@@ -183,10 +186,13 @@ const App = () => (
                   <Route path="/home" element={<ShiftHomePage />} />
                   <Route path="/dashboard" element={<Navigate to="/shifts/current/maintenances" replace />} />
                   <Route path="/shifts/:shiftId/waiting-room" element={<Navigate to="/shifts/current" replace />} />
-                  <Route element={<RequireRoles roles={["admin", "lead_technician"]} />}>
+                  <Route element={<RequireRoles roles={["admin", "lead_technician"]} />}> 
                     <Route path="/admin/shifts" element={<ShiftsPage />} />
                     <Route path="/admin/devices" element={<DevicesPage />} />
                     <Route path="/admin/devices/:deviceId" element={<AdminDeviceDetailsPage />} />
+                    <Route path="/admin/proposals" element={<ProposalsPage />} />
+                    <Route path="/admin/proposals/new" element={<ProposalNewPage />} />
+                    <Route path="/admin/proposals/:proposalId" element={<ProposalDetailsPage />} />
                     <Route path="/admin/users" element={<UsersPage />} />
                     <Route path="/admin/users/:userId" element={<UserDetailsPage />} />
                     <Route path="/admin/maintenances/:maintenanceId" element={<MaintenanceDetailsPage />} />

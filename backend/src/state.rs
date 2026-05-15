@@ -34,6 +34,7 @@ pub struct StorageConfig {
     pub shift_signature_prefix: String,
     pub shift_report_prefix: String,
     pub shift_service_worksheets_prefix: String,
+    pub proposal_prefix: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -141,12 +142,18 @@ pub fn load_storage_config() -> anyhow::Result<Option<StorageConfig>> {
         .trim_matches('/')
         .to_string();
 
+    let proposal_prefix = std::env::var("GCS_PROPOSAL_PREFIX")
+        .unwrap_or_else(|_| "proposals".to_string())
+        .trim_matches('/')
+        .to_string();
+
     Ok(Some(StorageConfig {
         bucket,
         device_photo_prefix,
         shift_signature_prefix,
         shift_report_prefix,
         shift_service_worksheets_prefix,
+        proposal_prefix,
     }))
 }
 

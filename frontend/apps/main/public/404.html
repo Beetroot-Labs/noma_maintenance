@@ -6,8 +6,8 @@
     <title>NoMa Karbantartás</title>
     <script>
       (function () {
-        var base = "/noma_maintenance/";
         var path = window.location.pathname;
+        var base = path.indexOf("/noma_maintenance/") === 0 ? "/noma_maintenance/" : "/";
         var search = window.location.search;
         var hash = window.location.hash;
         var target = base + "?p=" + encodeURIComponent(path + search + hash);

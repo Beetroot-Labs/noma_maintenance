@@ -23,6 +23,7 @@ import {
   Fan,
   CircleUser,
   ClipboardList,
+  FileText,
   HardHat,
   LogOut,
   Menu as MenuIcon,
@@ -49,6 +50,7 @@ const navItems = [
 const adminNavItems = [
   { path: "/admin/shifts", label: "Műszakok", icon: HardHat },
   { path: "/admin/devices", label: "Berendezések", icon: Fan },
+  { path: "/admin/proposals", label: "Ajánlatok", icon: FileText },
   { path: "/admin/users", label: "Felhasználók", icon: Users },
 ];
 

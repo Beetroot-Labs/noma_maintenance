@@ -12,7 +12,7 @@
 #let args = if sys.inputs.at("args", default: none) == none {
   (:)
 } else {
-  json(sys.inputs.at("args"))
+  json(bytes(sys.inputs.at("args")))
 }
 
 #let input-or-arg(name, default) = fallback(sys.inputs.at(name, default: none), args.at(name, default: default))

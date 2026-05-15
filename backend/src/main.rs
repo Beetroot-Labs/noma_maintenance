@@ -4,6 +4,7 @@ mod labeling;
 mod maintenance;
 mod shift_reports;
 mod service_worksheets;
+mod proposals;
 mod shifts;
 mod state;
 mod storage;
@@ -34,6 +35,7 @@ use crate::labeling::{
     upload_labeling_device_photo,
 };
 use crate::maintenance::{sync_maintenance_work, upload_maintenance_photo};
+use crate::proposals::{create_admin_proposal, get_admin_proposal_detail, get_admin_proposal_pdf, list_admin_proposals};
 use crate::shift_reports::get_admin_shift_report;
 use crate::service_worksheets::get_admin_shift_service_worksheets;
 use crate::shifts::{
@@ -141,6 +143,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/auth/me", get(get_current_user))
         .route("/auth/logout", post(logout))
         .route("/admin/shifts", get(list_admin_shifts))
+        .route("/admin/proposals", get(list_admin_proposals).post(create_admin_proposal))
+        .route("/admin/proposals/{proposal_id}", get(get_admin_proposal_detail))
+        .route("/admin/proposals/{proposal_id}/pdf", get(get_admin_proposal_pdf))
         .route("/admin/buildings", get(list_admin_buildings))
         .route("/admin/users", get(list_admin_users).post(create_admin_user))
         .route("/admin/devices", get(list_admin_devices))

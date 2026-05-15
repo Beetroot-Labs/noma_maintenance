@@ -75,3 +75,15 @@ pub fn shift_service_worksheets_object_name(
         storage.shift_service_worksheets_prefix, tenant_id, shift_id
     )
 }
+
+pub fn proposal_object_name(
+    storage: &StorageConfig,
+    tenant_id: uuid::Uuid,
+    proposal_id: uuid::Uuid,
+    file_name: &str,
+) -> String {
+    format!(
+        "{}/tenants/{}/proposals/{}/{}",
+        storage.proposal_prefix, tenant_id, proposal_id, file_name
+    )
+}

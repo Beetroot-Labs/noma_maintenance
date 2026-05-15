@@ -3,6 +3,14 @@ import LogRocket from "logrocket";
 import App from "./App.tsx";
 import "./index.css";
 
+const restoreDeepLink = () => {
+  const redirectedPath = new URLSearchParams(window.location.search).get("p");
+  if (!redirectedPath) return;
+  window.history.replaceState(null, "", redirectedPath);
+};
+
+restoreDeepLink();
+
 if (!import.meta.env.DEV) {
   LogRocket.init("xctxm9/noma-maintenance");
 }

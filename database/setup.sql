@@ -370,6 +370,47 @@ CREATE TABLE maintenance_photos (
         ON DELETE CASCADE
 );
 
+CREATE TABLE proposals (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4() NOT NULL,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    url TEXT,
+    device_id UUID NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    net_price NUMERIC NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'Ft',
+    note TEXT,
+    CONSTRAINT proposals_tenant_device_fk
+        FOREIGN KEY (tenant_id, device_id)
+        REFERENCES devices (tenant_id, id)
+        ON DELETE RESTRICT,
+    CONSTRAINT proposals_tenant_id_id_unique UNIQUE (tenant_id, id),
+    CONSTRAINT proposals_currency_not_empty CHECK (NULLIF(BTRIM(currency), '') IS NOT NULL),
+    CONSTRAINT proposals_net_price_non_negative CHECK (net_price >= 0)
+);
+
+CREATE TABLE proposal_lines (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4() NOT NULL,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    proposal_id UUID NOT NULL,
+    position INTEGER NOT NULL,
+    item TEXT NOT NULL,
+    quantity NUMERIC NOT NULL,
+    uom TEXT NOT NULL,
+    net_unit_price NUMERIC NOT NULL,
+    CONSTRAINT proposal_lines_tenant_proposal_fk
+        FOREIGN KEY (tenant_id, proposal_id)
+        REFERENCES proposals (tenant_id, id)
+        ON DELETE CASCADE,
+    CONSTRAINT proposal_lines_tenant_id_id_unique UNIQUE (tenant_id, id),
+    CONSTRAINT proposal_lines_tenant_proposal_position_unique UNIQUE (tenant_id, proposal_id, position),
+    CONSTRAINT proposal_lines_position_positive CHECK (position > 0),
+    CONSTRAINT proposal_lines_item_not_empty CHECK (NULLIF(BTRIM(item), '') IS NOT NULL),
+    CONSTRAINT proposal_lines_uom_not_empty CHECK (NULLIF(BTRIM(uom), '') IS NOT NULL),
+    CONSTRAINT proposal_lines_quantity_positive CHECK (quantity > 0),
+    CONSTRAINT proposal_lines_net_unit_price_non_negative CHECK (net_unit_price >= 0)
+);
+
 CREATE FUNCTION assert_shift_not_frozen(
     p_tenant_id UUID,
     p_shift_id UUID,
@@ -695,3 +736,12 @@ WHERE status = 'IN_PROGRESS';
 
 CREATE INDEX maintenance_photos_tenant_work_idx
 ON maintenance_photos (tenant_id, maintenance_work_id);
+
+CREATE INDEX proposals_tenant_created_idx
+ON proposals (tenant_id, created_at DESC);
+
+CREATE INDEX proposals_tenant_device_idx
+ON proposals (tenant_id, device_id);
+
+CREATE INDEX proposal_lines_tenant_proposal_idx
+ON proposal_lines (tenant_id, proposal_id, position);
