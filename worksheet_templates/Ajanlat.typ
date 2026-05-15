@@ -29,6 +29,7 @@
 #let proposal-device-location = input-or-arg("proposal_device_location", "-")
 #let proposal-net-price = input-or-arg("proposal_net_price", "0 Ft")
 #let proposal-note = input-or-arg("proposal_note", "")
+#let proposal-external-issue-number = input-or-arg("proposal_external_issue_number", "")
 #let logo-path = asset-or-arg("logo_path", "../frontend/apps/main/public/Noma_logo_color_text_vertical.png")
 
 #let lines = args.at("lines", default: ())
@@ -98,23 +99,34 @@
       ]
     ],
     [
-      #text(size: 8.5pt, fill: accent, weight: "bold")[NoMa Klíma- és Hűtéstechnikai Kft.]
-      #v(1.2mm)
-      #text(size: 22pt, fill: white, weight: "bold")[Ajánlat]
+      #grid(
+        columns: (1fr, auto),
+        gutter: 4mm,
+        [
+          #text(size: 8.5pt, fill: accent, weight: "bold")[NoMa Klíma- és Hűtéstechnikai Kft.]
+          #v(1.2mm)
+          #text(size: 22pt, fill: white, weight: "bold")[Ajánlat]
+        ],
+        [
+          #if proposal-external-issue-number != "" [
+            #box(
+              fill: white,
+              radius: 6pt,
+              inset: (x: 3mm, y: 2mm),
+            )[
+              #text(size: 7.2pt, weight: "semibold", fill: muted)[Igénylési szám]
+              #v(0.5mm)
+              #text(size: 9.8pt, weight: "bold", fill: ink)[#proposal-external-issue-number]
+            ]
+          ]
+        ],
+      )
     ],
   )
 ]
-
 #v(3mm)
 
-#grid(
-  columns: (1fr, 1fr),
-  gutter: 4mm,
-  [#meta([Kelt], proposal-created-at)],
-  [#meta([Készítette], proposal-created-by)],
-  [#meta([Épület címe], proposal-building-address)],
-  [#meta([Berendezés], proposal-device-name)],
-)
+#meta([Épület címe], proposal-building-address)
 
 #v(2.6mm)
 
@@ -125,6 +137,15 @@
   [#meta([Típus], proposal-device-type)],
   [#meta([Márka / modell], proposal-device-brand-model)],
   [#meta([Elhelyezkedés], proposal-device-location)],
+)
+
+#v(2.6mm)
+
+#grid(
+  columns: (1fr, 1fr),
+  gutter: 4mm,
+  [#meta([Kelt], proposal-created-at)],
+  [#meta([Készítette], proposal-created-by)],
 )
 
 #v(2.8mm)

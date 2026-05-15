@@ -23,6 +23,7 @@ const PROPOSAL_LOGO_FILENAME: &str = "Noma_logo_color_text_vertical.png";
 pub struct CreateAdminProposalRequest {
     device_id: uuid::Uuid,
     note: String,
+    external_issue_number: String,
     lines: Vec<CreateAdminProposalLineRequest>,
 }
 
@@ -174,6 +175,7 @@ struct ProposalPdfCoreRow {
     room: Option<String>,
     net_price: Decimal,
     proposal_note: String,
+    external_issue_number: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -202,6 +204,44 @@ struct ProposalRenderLine {
 
 fn decimal_to_string(value: Decimal) -> String {
     value.to_string()
+}
+
+fn format_decimal_with_grouping(value: Decimal) -> String {
+    let raw = value.to_string();
+    let (sign, digits) = if let Some(rest) = raw.strip_prefix('-') {
+        ("-", rest)
+    } else {
+        ("", raw.as_str())
+    };
+
+    let (integer_part, fractional_part) = digits
+        .split_once('.')
+        .map_or((digits, None), |(integer, fraction)| (integer, Some(fraction)));
+
+    let mut grouped_integer = String::with_capacity(integer_part.len() + integer_part.len() / 3);
+    for (index, ch) in integer_part.chars().rev().enumerate() {
+        if index > 0 && index % 3 == 0 {
+            grouped_integer.push(' ');
+        }
+        grouped_integer.push(ch);
+    }
+
+    let mut formatted = String::with_capacity(raw.len() + raw.len() / 3);
+    formatted.push_str(sign);
+    formatted.extend(grouped_integer.chars().rev());
+
+    if let Some(fractional_part) = fractional_part
+        .filter(|fraction| !fraction.is_empty())
+    {
+        formatted.push(',');
+        formatted.push_str(fractional_part);
+    }
+
+    formatted
+}
+
+fn format_currency_for_pdf(value: Decimal) -> String {
+    format!("{} Ft", format_decimal_with_grouping(value))
 }
 
 fn normalize_text(value: &str) -> String {
@@ -361,8 +401,8 @@ fn build_proposal_form(snapshot: &ProposalPdfSnapshot) -> Result<Form, ApiError>
                 item: line.item.clone(),
                 quantity: decimal_to_string(line.quantity),
                 uom: line.uom.clone(),
-                net_unit_price: decimal_to_string(line.net_unit_price),
-                line_total: decimal_to_string(line_total),
+                net_unit_price: format_currency_for_pdf(line.net_unit_price),
+                line_total: format_currency_for_pdf(line_total),
             }
         })
         .collect();
@@ -378,7 +418,7 @@ fn build_proposal_form(snapshot: &ProposalPdfSnapshot) -> Result<Form, ApiError>
         format!("{device_type} · {brand_model}")
     };
 
-    let total_display = format!("{} Ft", decimal_to_string(snapshot.core.net_price));
+    let total_display = format_currency_for_pdf(snapshot.core.net_price);
 
     let args = serde_json::json!({
         "lines": lines,
@@ -413,6 +453,10 @@ fn build_proposal_form(snapshot: &ProposalPdfSnapshot) -> Result<Form, ApiError>
         )
         .text("proposal_net_price", total_display)
         .text("proposal_note", snapshot.core.proposal_note.clone())
+        .text(
+            "proposal_external_issue_number",
+            snapshot.core.external_issue_number.clone().unwrap_or_default(),
+        )
         .text("args", args)
         .part(
             "logo_path",
@@ -675,7 +719,8 @@ async fn load_proposal_pdf_snapshot(
             sl.floor,
             sl.room,
             p.net_price,
-            COALESCE(NULLIF(BTRIM(p.note), ''), '') AS proposal_note
+            COALESCE(NULLIF(BTRIM(p.note), ''), '') AS proposal_note,
+            NULLIF(BTRIM(p.external_issue_number), '') AS external_issue_number
         FROM proposals p
         JOIN devices d
           ON d.tenant_id = p.tenant_id
@@ -952,9 +997,10 @@ pub async fn create_admin_proposal(
             device_id,
             created_by,
             net_price,
-            note
+            note,
+            external_issue_number
         )
-        VALUES ($1, $2, $3, $4, NULLIF(BTRIM($5), ''))
+        VALUES ($1, $2, $3, $4, NULLIF(BTRIM($5), ''), NULLIF(BTRIM($6), ''))
         RETURNING id
         "#,
     )
@@ -963,6 +1009,7 @@ pub async fn create_admin_proposal(
     .bind(user.id)
     .bind(net_price)
     .bind(&payload.note)
+    .bind(&payload.external_issue_number)
     .fetch_one(&mut *tx)
     .await
     .map_err(ApiError::internal)?;

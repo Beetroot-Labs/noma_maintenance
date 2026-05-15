@@ -380,6 +380,7 @@ CREATE TABLE proposals (
     net_price NUMERIC NOT NULL,
     currency TEXT NOT NULL DEFAULT 'Ft',
     note TEXT,
+    external_issue_number TEXT,
     CONSTRAINT proposals_tenant_device_fk
         FOREIGN KEY (tenant_id, device_id)
         REFERENCES devices (tenant_id, id)

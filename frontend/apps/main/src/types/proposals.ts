@@ -76,5 +76,6 @@ export type CreateAdminProposalLineInput = {
 export type CreateAdminProposalRequest = {
   device_id: string;
   note: string;
+  external_issue_number: string;
   lines: CreateAdminProposalLineInput[];
 };

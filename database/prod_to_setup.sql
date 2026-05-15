@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS proposals (
     net_price NUMERIC NOT NULL,
     currency TEXT NOT NULL DEFAULT 'Ft',
     note TEXT,
+    external_issue_number TEXT,
     CONSTRAINT proposals_tenant_device_fk
         FOREIGN KEY (tenant_id, device_id)
         REFERENCES devices (tenant_id, id)
@@ -24,6 +25,9 @@ CREATE TABLE IF NOT EXISTS proposals (
 
 ALTER TABLE proposals
 ADD COLUMN IF NOT EXISTS note TEXT;
+
+ALTER TABLE proposals
+ADD COLUMN IF NOT EXISTS external_issue_number TEXT;
 
 ALTER TABLE proposals
 ALTER COLUMN currency SET DEFAULT 'Ft';

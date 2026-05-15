@@ -135,6 +135,7 @@ export default function ProposalNewPage() {
   const [isLoadingBuildings, setIsLoadingBuildings] = useState(false);
   const [isLoadingDevices, setIsLoadingDevices] = useState(false);
   const [lines, setLines] = useState<ProposalLineDraft[]>([createLine()]);
+  const [externalIssueNumber, setExternalIssueNumber] = useState("");
   const [note, setNote] = useState(DEFAULT_PROPOSAL_NOTE);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -256,6 +257,7 @@ export default function ProposalNewPage() {
     const request: CreateAdminProposalRequest = {
       device_id: selectedDevice.device_id,
       note: note.trim(),
+      external_issue_number: externalIssueNumber.trim(),
       lines: lines.map((line) => ({
         item: line.item.trim(),
         quantity: parseDecimalInput(line.quantity),
@@ -434,7 +436,13 @@ export default function ProposalNewPage() {
               alignItems: "stretch",
             }}
           >
-            <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Box sx={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+              <TextField
+                label="Igénylési szám"
+                value={externalIssueNumber}
+                onChange={(event) => setExternalIssueNumber(event.target.value)}
+                fullWidth
+              />
               <TextField
                 label="Megjegyzés"
                 value={note}
