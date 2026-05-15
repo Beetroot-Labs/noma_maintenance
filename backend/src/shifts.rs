@@ -699,7 +699,7 @@ pub async fn list_admin_devices(
         .building_id
         .ok_or_else(|| ApiError::bad_request("building id is required"))?;
     let page = params.page.unwrap_or(1).max(1);
-    let page_size = 100_i64;
+    let page_size = params.page.map(|_| 100_i64).unwrap_or(100000_i64);
     let offset = (page - 1) * page_size;
 
     let selected_building_name: String = sqlx::query_scalar(

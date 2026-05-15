@@ -172,7 +172,7 @@ export default function ProposalNewPage() {
     setPickerError(null);
 
     try {
-      const params = new URLSearchParams({ buildingId, page: "1" });
+      const params = new URLSearchParams({ buildingId });
       const response = await fetch(`/api/admin/devices?${params.toString()}`, {
         credentials: "include",
         cache: "no-store",
@@ -390,6 +390,8 @@ export default function ProposalNewPage() {
                   label="Tétel"
                   value={line.item}
                   onChange={(event) => handleLineChange(line.id, "item", event.target.value)}
+                  multiline
+                  minRows={2}
                   fullWidth
                 />
                 <TextField

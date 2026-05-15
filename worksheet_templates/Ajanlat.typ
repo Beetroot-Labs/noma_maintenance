@@ -51,8 +51,8 @@
   [#line.at("item")],
   [#line.at("quantity")],
   [#line.at("uom")],
-  [#line.at("net_unit_price")~Ft],
-  [#line.at("line_total")~Ft],
+  [#line.at("net_unit_price")],
+  [#line.at("line_total")],
 )).flatten()
 
 #set page(
@@ -188,7 +188,6 @@
   [
     #box(
       width: 100%,
-      height: 28mm,
       fill: panel,
       stroke: (paint: border, thickness: 0.7pt),
       radius: 7pt,
