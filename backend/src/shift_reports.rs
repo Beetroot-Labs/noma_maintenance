@@ -12,7 +12,8 @@ use crate::storage::shift_report_object_name;
 use crate::typst_render::TypstRenderClient;
 
 const MUNKALAP_TEMPLATE: &str = include_str!("../../worksheet_templates/Munkalap.typ");
-const MUNKALAP_LOGO: &[u8] = include_bytes!("../../frontend/apps/main/public/Noma_logo_color_text_vertical.png");
+const MUNKALAP_LOGO: &[u8] =
+    include_bytes!("../../frontend/apps/main/public/Noma_logo_color_text_vertical.png");
 const MUNKALAP_TEMPLATE_FILENAME: &str = "Munkalap.typ";
 const MUNKALAP_ROWS_FILENAME: &str = "munkalap_rows.csv";
 const MUNKALAP_WORKERS_FILENAME: &str = "munkalap_workers.csv";
@@ -71,7 +72,13 @@ fn csv_escape(value: &str) -> String {
     escaped
 }
 
-fn csv_record(values: &[&str]) -> String { values.iter().map(|value| csv_escape(value)).collect::<Vec<_>>().join(",") }
+fn csv_record(values: &[&str]) -> String {
+    values
+        .iter()
+        .map(|value| csv_escape(value))
+        .collect::<Vec<_>>()
+        .join(",")
+}
 
 fn map_filename_char(ch: char) -> Option<char> {
     match ch {
@@ -138,9 +145,7 @@ fn shift_report_filename(
         .take(8)
         .collect::<String>();
 
-    format!(
-        "NoMa_karb_{building_address}_{shift_start_date}_{shift_id_short}.pdf"
-    )
+    format!("NoMa_karb_{building_address}_{shift_start_date}_{shift_id_short}.pdf")
 }
 
 fn shift_report_attachment_filename(snapshot: &ShiftReportSnapshot) -> String {
@@ -217,17 +222,26 @@ fn build_shift_report_form(
                 .map_err(ApiError::internal)?,
         )
         .text("report_id", snapshot.core.shift_id.to_string())
-        .text("report_generated_at", snapshot.core.report_generated_at.clone())
+        .text(
+            "report_generated_at",
+            snapshot.core.report_generated_at.clone(),
+        )
         .text("report_location", snapshot.core.report_location.clone())
         .text("report_period", snapshot.core.report_period.clone())
         .text("report_lead", snapshot.core.report_lead.clone())
-        .text("report_client", snapshot.core.report_client.clone().unwrap_or_default())
+        .text(
+            "report_client",
+            snapshot.core.report_client.clone().unwrap_or_default(),
+        )
         .text(
             "report_client_role",
             snapshot.core.report_client_role.clone().unwrap_or_default(),
         )
         .text("works_total", format!("{} db", snapshot.core.works_total))
-        .text("flagged_total", format!("{} db", snapshot.core.flagged_total))
+        .text(
+            "flagged_total",
+            format!("{} db", snapshot.core.flagged_total),
+        )
         .part(
             "rows_csv",
             Part::bytes(render_rows_csv(&snapshot.rows).into_bytes())
@@ -452,7 +466,11 @@ async fn load_shift_report_snapshot(
     .await
     .map_err(ApiError::internal)?;
 
-    Ok(ShiftReportSnapshot { core, rows, workers })
+    Ok(ShiftReportSnapshot {
+        core,
+        rows,
+        workers,
+    })
 }
 
 async fn generate_shift_report_pdf(
@@ -590,16 +608,13 @@ pub async fn get_admin_shift_report(
         ));
     }
 
-    let renderer = state
-        .typst_renderer
-        .as_ref()
-        .ok_or_else(|| {
-            log::error!(
-                "Worksheet render service is not configured; cannot generate shift report for shift {}",
-                shift_id
-            );
-            ApiError::service_unavailable("worksheet render service is not configured")
-        })?;
+    let renderer = state.typst_renderer.as_ref().ok_or_else(|| {
+        log::error!(
+            "Worksheet render service is not configured; cannot generate shift report for shift {}",
+            shift_id
+        );
+        ApiError::service_unavailable("worksheet render service is not configured")
+    })?;
 
     log::info!("Generating worksheet for shift {}", shift_id);
 
@@ -630,8 +645,7 @@ mod tests {
         let filename = shift_report_filename(
             "Budapest, Kossuth tér 2-4.",
             "20260412",
-            uuid::Uuid::parse_str("dfcc66ea-0000-0000-0000-000000000000")
-                .expect("valid uuid"),
+            uuid::Uuid::parse_str("dfcc66ea-0000-0000-0000-000000000000").expect("valid uuid"),
         );
 
         assert_eq!(

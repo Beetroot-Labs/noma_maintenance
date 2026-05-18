@@ -192,6 +192,7 @@ const App = () => (
                     <Route path="/admin/devices/:deviceId" element={<AdminDeviceDetailsPage />} />
                     <Route path="/admin/proposals" element={<ProposalsPage />} />
                     <Route path="/admin/proposals/new" element={<ProposalNewPage />} />
+                    <Route path="/admin/proposals/:proposalId/edit" element={<ProposalNewPage />} />
                     <Route path="/admin/proposals/:proposalId" element={<ProposalDetailsPage />} />
                     <Route path="/admin/users" element={<UsersPage />} />
                     <Route path="/admin/users/:userId" element={<UserDetailsPage />} />

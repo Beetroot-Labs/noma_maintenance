@@ -45,13 +45,17 @@ impl TypstRenderClient {
 
         log::info!("Typst render service configured at {}", base_url);
 
-        let token_audience = first_nonempty_env(SERVICE_AUDIENCE_ENV_CANDIDATES)
-            .unwrap_or_else(|| base_url.clone());
+        let token_audience =
+            first_nonempty_env(SERVICE_AUDIENCE_ENV_CANDIDATES).unwrap_or_else(|| base_url.clone());
         let raw_service_account = first_nonempty_env(SERVICE_ACCOUNT_ENV_CANDIDATES)
             .ok_or_else(|| anyhow!("typst render service account JSON is not configured"))?;
-        let (service_account_json, account_source) = load_service_account_json(&raw_service_account)
-            .context("failed to read typst render service account JSON")?;
-        log::info!("Loaded typst render service account from {}", account_source);
+        let (service_account_json, account_source) =
+            load_service_account_json(&raw_service_account)
+                .context("failed to read typst render service account JSON")?;
+        log::info!(
+            "Loaded typst render service account from {}",
+            account_source
+        );
 
         let service_account: ServiceAccountKey = serde_json::from_str(&service_account_json)
             .context("failed to parse typst render service account JSON")?;
@@ -200,7 +204,10 @@ fn load_service_account_json(raw_value: &str) -> anyhow::Result<(String, String)
     let path = std::path::Path::new(trimmed);
     if path.exists() {
         let contents = fs::read_to_string(path).with_context(|| {
-            format!("failed to read service account file from {}", path.display())
+            format!(
+                "failed to read service account file from {}",
+                path.display()
+            )
         })?;
         return Ok((contents, format!("file {}", path.display())));
     }

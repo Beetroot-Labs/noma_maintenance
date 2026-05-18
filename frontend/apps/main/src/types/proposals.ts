@@ -55,6 +55,9 @@ export type AdminProposalLineRow = {
 
 export type AdminProposalDetailPayload = AdminProposalListRow & {
   created_by_email: string | null;
+  building_id: string;
+  note: string;
+  external_issue_number: string | null;
   lines: AdminProposalLineRow[];
 };
 
@@ -79,3 +82,5 @@ export type CreateAdminProposalRequest = {
   external_issue_number: string;
   lines: CreateAdminProposalLineInput[];
 };
+
+export type UpdateAdminProposalRequest = CreateAdminProposalRequest;

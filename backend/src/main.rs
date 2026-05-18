@@ -2,14 +2,14 @@ mod auth;
 mod error;
 mod labeling;
 mod maintenance;
-mod shift_reports;
-mod service_worksheets;
 mod proposals;
+mod service_worksheets;
+mod shift_reports;
 mod shifts;
 mod state;
 mod storage;
-mod typst_render;
 mod sync;
+mod typst_render;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -35,17 +35,20 @@ use crate::labeling::{
     upload_labeling_device_photo,
 };
 use crate::maintenance::{sync_maintenance_work, upload_maintenance_photo};
-use crate::proposals::{create_admin_proposal, get_admin_proposal_detail, get_admin_proposal_pdf, list_admin_proposals};
-use crate::shift_reports::get_admin_shift_report;
+use crate::proposals::{
+    create_admin_proposal, get_admin_proposal_detail, get_admin_proposal_pdf, list_admin_proposals,
+    update_admin_proposal,
+};
 use crate::service_worksheets::get_admin_shift_service_worksheets;
+use crate::shift_reports::get_admin_shift_report;
 use crate::shifts::{
-    add_shift_participant, cancel_shift, commit_shift, confirm_shift_close, create_shift,
-    create_admin_user, decline_shift_invitation, get_admin_maintenance_detail,
+    add_shift_participant, cancel_shift, commit_shift, confirm_shift_close, create_admin_user,
+    create_shift, decline_shift_invitation, get_admin_device_detail, get_admin_maintenance_detail,
     get_admin_maintenance_detail_by_id, get_admin_maintenance_photo, get_admin_shift_detail,
-    get_admin_device_detail, get_admin_user_detail, get_current_shift_state, get_pending_worksheets,
+    get_admin_user_detail, get_current_shift_state, get_pending_worksheets,
     get_shift_maintenance_summary, get_shift_waiting_room, list_admin_buildings,
-    list_admin_devices, list_admin_shifts, list_admin_users, list_shift_invite_candidates, mark_shift_join_ready,
-    remove_shift_participant, request_shift_close, subscribe_shift_events,
+    list_admin_devices, list_admin_shifts, list_admin_users, list_shift_invite_candidates,
+    mark_shift_join_ready, remove_shift_participant, request_shift_close, subscribe_shift_events,
     update_admin_user, upload_shift_signature,
 };
 use crate::state::{
@@ -143,16 +146,34 @@ async fn main() -> anyhow::Result<()> {
         .route("/auth/me", get(get_current_user))
         .route("/auth/logout", post(logout))
         .route("/admin/shifts", get(list_admin_shifts))
-        .route("/admin/proposals", get(list_admin_proposals).post(create_admin_proposal))
-        .route("/admin/proposals/{proposal_id}", get(get_admin_proposal_detail))
-        .route("/admin/proposals/{proposal_id}/pdf", get(get_admin_proposal_pdf))
+        .route(
+            "/admin/proposals",
+            get(list_admin_proposals).post(create_admin_proposal),
+        )
+        .route(
+            "/admin/proposals/{proposal_id}",
+            get(get_admin_proposal_detail).patch(update_admin_proposal),
+        )
+        .route(
+            "/admin/proposals/{proposal_id}/pdf",
+            get(get_admin_proposal_pdf),
+        )
         .route("/admin/buildings", get(list_admin_buildings))
-        .route("/admin/users", get(list_admin_users).post(create_admin_user))
+        .route(
+            "/admin/users",
+            get(list_admin_users).post(create_admin_user),
+        )
         .route("/admin/devices", get(list_admin_devices))
         .route("/admin/devices/{device_id}", get(get_admin_device_detail))
-        .route("/admin/users/{user_id}", get(get_admin_user_detail).patch(update_admin_user))
+        .route(
+            "/admin/users/{user_id}",
+            get(get_admin_user_detail).patch(update_admin_user),
+        )
         .route("/admin/shifts/{shift_id}", get(get_admin_shift_detail))
-        .route("/admin/shifts/{shift_id}/report", get(get_admin_shift_report))
+        .route(
+            "/admin/shifts/{shift_id}/report",
+            get(get_admin_shift_report),
+        )
         .route(
             "/admin/shifts/{shift_id}/service-worksheets",
             get(get_admin_shift_service_worksheets),

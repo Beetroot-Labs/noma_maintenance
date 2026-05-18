@@ -18,7 +18,7 @@ import {
   TableRow,
   Typography,
 } from "@mui/material";
-import { ArrowLeft, Download } from "lucide-react";
+import { ArrowLeft, Download, Edit3 } from "lucide-react";
 import { getDeviceKindLabel } from "@noma/shared";
 import { Layout } from "@/components/Layout";
 import { formatDateTime } from "@/lib/date";
@@ -155,13 +155,22 @@ export default function ProposalDetailsPage() {
             </Box>
           </Box>
 
-          <Button
-            variant="contained"
-            startIcon={<Download size={16} />}
-            onClick={() => window.open(`/api/admin/proposals/${payload.proposal_id}/pdf`, "_blank", "noopener,noreferrer")}
-          >
-            PDF letöltése
-          </Button>
+          <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+            <Button
+              variant="outlined"
+              startIcon={<Edit3 size={16} />}
+              onClick={() => navigate(`/admin/proposals/${payload.proposal_id}/edit`)}
+            >
+              Szerkesztés
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<Download size={16} />}
+              onClick={() => window.open(`/api/admin/proposals/${payload.proposal_id}/pdf`, "_blank", "noopener,noreferrer")}
+            >
+              PDF letöltése
+            </Button>
+          </Box>
         </Box>
 
         <Card sx={{ border: `1px solid ${appColors.border}`, boxShadow: "0 10px 24px rgba(31, 50, 58, 0.08)" }}>

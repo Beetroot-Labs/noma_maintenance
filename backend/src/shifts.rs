@@ -551,7 +551,8 @@ END)";
 const ADMIN_DEVICE_WING_OR_BUILDING_SQL: &str = "COALESCE(NULLIF(BTRIM(sl.wing), ''), b.name)";
 const ADMIN_DEVICE_WING_SQL: &str = "NULLIF(BTRIM(sl.wing), '')";
 const ADMIN_DEVICE_BRAND_MODEL_SQL: &str = "NULLIF(BTRIM(CONCAT_WS(' ', d.brand, d.model)), '')";
-const ADMIN_DEVICE_MAINTAINED_AT_FILTER_SQL: &str = "TO_CHAR(lm.latest_maintenance_at, 'YYYY.MM.DD')";
+const ADMIN_DEVICE_MAINTAINED_AT_FILTER_SQL: &str =
+    "TO_CHAR(lm.latest_maintenance_at, 'YYYY.MM.DD')";
 
 fn push_admin_device_presence_filter(
     query: &mut QueryBuilder<'_, Postgres>,
@@ -590,14 +591,46 @@ fn append_admin_device_filters(
     query: &mut QueryBuilder<'_, Postgres>,
     filters: &ListAdminDevicesQuery,
 ) {
-    push_admin_device_presence_filter(query, "NULLIF(BTRIM(bc.code), '')", filters.barcode_presence.as_deref());
-    push_admin_device_presence_filter(query, ADMIN_DEVICE_WING_SQL, filters.wing_or_building_presence.as_deref());
-    push_admin_device_presence_filter(query, "NULLIF(BTRIM(sl.floor), '')", filters.floor_presence.as_deref());
-    push_admin_device_presence_filter(query, "NULLIF(BTRIM(sl.room), '')", filters.room_presence.as_deref());
-    push_admin_device_presence_filter(query, "NULLIF(BTRIM(d.original_kind), '')", filters.device_type_presence.as_deref());
-    push_admin_device_presence_filter(query, ADMIN_DEVICE_BRAND_MODEL_SQL, filters.brand_model_presence.as_deref());
-    push_admin_device_presence_filter(query, "NULLIF(BTRIM(d.source_device_code), '')", filters.identifier_presence.as_deref());
-    push_admin_device_presence_filter(query, "lm.latest_maintenance_at", filters.maintained_at_presence.as_deref());
+    push_admin_device_presence_filter(
+        query,
+        "NULLIF(BTRIM(bc.code), '')",
+        filters.barcode_presence.as_deref(),
+    );
+    push_admin_device_presence_filter(
+        query,
+        ADMIN_DEVICE_WING_SQL,
+        filters.wing_or_building_presence.as_deref(),
+    );
+    push_admin_device_presence_filter(
+        query,
+        "NULLIF(BTRIM(sl.floor), '')",
+        filters.floor_presence.as_deref(),
+    );
+    push_admin_device_presence_filter(
+        query,
+        "NULLIF(BTRIM(sl.room), '')",
+        filters.room_presence.as_deref(),
+    );
+    push_admin_device_presence_filter(
+        query,
+        "NULLIF(BTRIM(d.original_kind), '')",
+        filters.device_type_presence.as_deref(),
+    );
+    push_admin_device_presence_filter(
+        query,
+        ADMIN_DEVICE_BRAND_MODEL_SQL,
+        filters.brand_model_presence.as_deref(),
+    );
+    push_admin_device_presence_filter(
+        query,
+        "NULLIF(BTRIM(d.source_device_code), '')",
+        filters.identifier_presence.as_deref(),
+    );
+    push_admin_device_presence_filter(
+        query,
+        "lm.latest_maintenance_at",
+        filters.maintained_at_presence.as_deref(),
+    );
     push_admin_device_text_filter(query, "bc.code", filters.barcode.as_deref());
     push_admin_device_text_filter(
         query,
@@ -612,11 +645,7 @@ fn append_admin_device_filters(
         ADMIN_DEVICE_BRAND_MODEL_SQL,
         filters.brand_model.as_deref(),
     );
-    push_admin_device_text_filter(
-        query,
-        "d.source_device_code",
-        filters.identifier.as_deref(),
-    );
+    push_admin_device_text_filter(query, "d.source_device_code", filters.identifier.as_deref());
     push_admin_device_text_filter(
         query,
         ADMIN_DEVICE_MAINTAINED_AT_FILTER_SQL,
@@ -737,7 +766,11 @@ pub async fn list_admin_devices(
     rows_query.push(" AND sl.building_id = ");
     rows_query.push_bind(building_id);
     append_admin_device_filters(&mut rows_query, &params);
-    append_admin_device_order_by(&mut rows_query, params.sort_by.as_deref(), params.sort_dir.as_deref());
+    append_admin_device_order_by(
+        &mut rows_query,
+        params.sort_by.as_deref(),
+        params.sort_dir.as_deref(),
+    );
     rows_query.push(" LIMIT ");
     rows_query.push_bind(page_size);
     rows_query.push(" OFFSET ");
@@ -1586,9 +1619,13 @@ pub async fn get_admin_maintenance_detail(
     let user = require_session_user(&state, &headers).await?;
     require_lead_or_admin(&user)?;
 
-    let payload =
-        fetch_admin_maintenance_detail_response(pool, user.tenant_id, maintenance_id, Some(shift_id))
-            .await?;
+    let payload = fetch_admin_maintenance_detail_response(
+        pool,
+        user.tenant_id,
+        maintenance_id,
+        Some(shift_id),
+    )
+    .await?;
 
     Ok(Json(payload))
 }
@@ -1605,8 +1642,8 @@ pub async fn get_admin_maintenance_detail_by_id(
     let user = require_session_user(&state, &headers).await?;
     require_lead_or_admin(&user)?;
 
-    let payload = fetch_admin_maintenance_detail_response(pool, user.tenant_id, maintenance_id, None)
-        .await?;
+    let payload =
+        fetch_admin_maintenance_detail_response(pool, user.tenant_id, maintenance_id, None).await?;
 
     Ok(Json(payload))
 }

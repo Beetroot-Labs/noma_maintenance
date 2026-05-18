@@ -15,7 +15,8 @@ use crate::typst_render::TypstRenderClient;
 
 const SERVICE_TEMPLATE: &str = include_str!("../../worksheet_templates/SzervizMunkalap.typ");
 const SERVICE_TEMPLATE_FILENAME: &str = "SzervizMunkalap.typ";
-const SERVICE_LOGO: &[u8] = include_bytes!("../../frontend/apps/main/public/Noma_logo_color_text_vertical.png");
+const SERVICE_LOGO: &[u8] =
+    include_bytes!("../../frontend/apps/main/public/Noma_logo_color_text_vertical.png");
 const SERVICE_LOGO_FILENAME: &str = "Noma_logo_color_text_vertical.png";
 
 #[derive(sqlx::FromRow)]
@@ -76,7 +77,10 @@ fn zip_filename_for_work(work: &ServiceWorksheetWorkRow) -> String {
     format!("szerviz_munkalap_{}.pdf", work.maintenance_id)
 }
 
-fn service_photo_caption(work: &ServiceWorksheetWorkRow, capture_note: Option<&str>) -> Option<String> {
+fn service_photo_caption(
+    work: &ServiceWorksheetWorkRow,
+    capture_note: Option<&str>,
+) -> Option<String> {
     let note = capture_note
         .map(str::trim)
         .filter(|value| !value.is_empty());
@@ -133,8 +137,14 @@ fn render_service_form(
     referent_signature_bytes: Option<&[u8]>,
 ) -> Result<Form, ApiError> {
     let brand_model = match (
-        work.device_brand.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()),
-        work.device_model.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()),
+        work.device_brand
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty()),
+        work.device_model
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty()),
     ) {
         (Some(brand), Some(model)) => format!("{brand} / {model}"),
         (Some(brand), None) => brand.to_string(),
@@ -159,12 +169,21 @@ fn render_service_form(
         .text("building_code", "-")
         .text("room", work.room.clone())
         .text("device_type", work.device_type.clone())
-        .text("device_brand", work.device_brand.clone().unwrap_or_default())
-        .text("device_model", work.device_model.clone().unwrap_or_default())
+        .text(
+            "device_brand",
+            work.device_brand.clone().unwrap_or_default(),
+        )
+        .text(
+            "device_model",
+            work.device_model.clone().unwrap_or_default(),
+        )
         .text("brand_model", brand_model)
         .text("maintainer", work.maintainer.clone())
         .text("note", work.note.clone().unwrap_or_else(|| "-".to_string()))
-        .text("referent_name", core.report_client.clone().unwrap_or_default())
+        .text(
+            "referent_name",
+            core.report_client.clone().unwrap_or_default(),
+        )
         .text(
             "referent_role",
             core.report_client_role.clone().unwrap_or_default(),
@@ -228,13 +247,17 @@ async fn render_service_pdf(
     referent_signature_bytes: Option<&[u8]>,
 ) -> Result<Vec<u8>, ApiError> {
     let form = render_service_form(core, work, photos, referent_signature_bytes)?;
-    renderer.render_typst(form).await.map_err(ApiError::internal)
+    renderer
+        .render_typst(form)
+        .await
+        .map_err(ApiError::internal)
 }
 
 fn build_zip(entries: &[(String, Vec<u8>)]) -> Result<Vec<u8>, ApiError> {
     let cursor = Cursor::new(Vec::<u8>::new());
     let mut zip = zip::ZipWriter::new(cursor);
-    let options = zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let options =
+        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     for (filename, bytes) in entries {
         zip.start_file(filename, options)
@@ -566,12 +589,14 @@ pub async fn get_admin_shift_service_worksheets(
         ));
     }
 
-    let renderer = state
-        .typst_renderer
-        .as_ref()
-        .ok_or_else(|| ApiError::service_unavailable("worksheet render service is not configured"))?;
+    let renderer = state.typst_renderer.as_ref().ok_or_else(|| {
+        ApiError::service_unavailable("worksheet render service is not configured")
+    })?;
 
-    log::info!("Generating service worksheet archive for shift {}", shift_id);
+    log::info!(
+        "Generating service worksheet archive for shift {}",
+        shift_id
+    );
     let zip_bytes = match generate_service_archive(renderer, storage, &mut tx, &snapshot).await {
         Ok(bytes) => bytes,
         Err(err) => {
@@ -580,7 +605,10 @@ pub async fn get_admin_shift_service_worksheets(
         }
     };
 
-    log::info!("Uploading service worksheet archive for shift {} to GCS", shift_id);
+    log::info!(
+        "Uploading service worksheet archive for shift {} to GCS",
+        shift_id
+    );
     let _ = store_service_archive(&mut tx, storage, &snapshot, &zip_bytes).await?;
     log::info!("Service worksheet archive stored for shift {}", shift_id);
 

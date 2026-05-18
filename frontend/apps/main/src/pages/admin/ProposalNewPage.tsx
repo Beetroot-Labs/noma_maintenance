@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import {
   Alert,
   Box,
@@ -36,6 +36,7 @@ import { toast } from "@/lib/toast";
 import { appColors } from "@/theme";
 import type {
   AdminBuilding,
+  AdminProposalDetailPayload,
   AdminProposalDeviceRow,
   CreateAdminProposalRequest,
   ProposalLineDraft,
@@ -72,6 +73,38 @@ const createLine = (): ProposalLineDraft => ({
 
 const DEFAULT_PROPOSAL_NOTE =
   "Az ajánlat tartalmazza a szükséges anyagok beszerzését, helyszínre szállítását illetve a bontást.";
+
+const lineDraftFromProposal = (
+  line: AdminProposalDetailPayload["lines"][number],
+): ProposalLineDraft => ({
+  id: line.proposal_line_id,
+  item: line.item,
+  quantity: line.quantity,
+  uom: line.uom,
+  net_unit_price: line.net_unit_price,
+});
+
+const deviceFromProposal = (proposal: AdminProposalDetailPayload): AdminProposalDeviceRow => ({
+  device_id: proposal.device_id,
+  barcode: proposal.device_barcode,
+  building_name: proposal.building_name,
+  location_description: proposal.location_description,
+  wing: proposal.wing,
+  floor: proposal.floor,
+  room: proposal.room,
+  kind: proposal.device_kind,
+  original_kind: proposal.device_original_kind,
+  brand: proposal.device_brand,
+  model: proposal.device_model,
+  source_device_code: proposal.device_source_device_code,
+  latest_maintenance_at: null,
+});
+
+const buildingFromProposal = (proposal: AdminProposalDetailPayload): AdminBuilding => ({
+  id: proposal.building_id,
+  name: proposal.building_name,
+  address: proposal.building_address,
+});
 
 const lineIsComplete = (line: ProposalLineDraft) =>
   Boolean(line.item.trim()) && Boolean(line.quantity.trim()) && Boolean(line.uom.trim()) && Boolean(line.net_unit_price.trim());
@@ -124,6 +157,8 @@ const matchesDeviceQuery = (device: AdminProposalDeviceRow, query: string) => {
 
 export default function ProposalNewPage() {
   const navigate = useNavigate();
+  const { proposalId } = useParams<{ proposalId: string }>();
+  const isEditing = Boolean(proposalId);
   const [buildings, setBuildings] = useState<AdminBuilding[]>([]);
   const [selectedBuilding, setSelectedBuilding] = useState<AdminBuilding | null>(null);
   const [devices, setDevices] = useState<AdminProposalDeviceRow[]>([]);
@@ -134,15 +169,82 @@ export default function ProposalNewPage() {
   const [pickerError, setPickerError] = useState<string | null>(null);
   const [isLoadingBuildings, setIsLoadingBuildings] = useState(false);
   const [isLoadingDevices, setIsLoadingDevices] = useState(false);
+  const [proposal, setProposal] = useState<AdminProposalDetailPayload | null>(null);
+  const [isLoadingProposal, setIsLoadingProposal] = useState(isEditing);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [lines, setLines] = useState<ProposalLineDraft[]>([createLine()]);
   const [externalIssueNumber, setExternalIssueNumber] = useState("");
   const [note, setNote] = useState(DEFAULT_PROPOSAL_NOTE);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!isEditing || !proposalId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadProposal = async () => {
+      setIsLoadingProposal(true);
+      setLoadError(null);
+
+      try {
+        const response = await fetch(`/api/admin/proposals/${proposalId}`, {
+          credentials: "include",
+          cache: "no-store",
+        });
+
+        if (!response.ok) {
+          throw new Error(await readApiErrorMessage(response, "Nem sikerült betölteni az ajánlat adatait."));
+        }
+
+        const nextProposal = (await response.json()) as AdminProposalDetailPayload;
+        if (!cancelled) {
+          setProposal(nextProposal);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setLoadError(err instanceof Error ? err.message : "Nem sikerült betölteni az ajánlat adatait.");
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingProposal(false);
+        }
+      }
+    };
+
+    void loadProposal();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isEditing, proposalId]);
+
+  useEffect(() => {
+    if (!proposal) {
+      return;
+    }
+
+    setSelectedBuilding(buildingFromProposal(proposal));
+    setSelectedDevice(deviceFromProposal(proposal));
+    setLines(proposal.lines.length > 0 ? proposal.lines.map(lineDraftFromProposal) : [createLine()]);
+    setExternalIssueNumber(proposal.external_issue_number ?? "");
+    setNote(proposal.note);
+  }, [proposal]);
+
   const total = useMemo(() => calculateTotal(lines), [lines]);
   const totalDisplay = useMemo(() => formatMoney(total.toString(), "Ft"), [total]);
   const canSubmit = selectedDevice !== null && lines.length > 0 && lines.every(lineIsValid);
+
+  const handleBack = () => {
+    if (isEditing && proposalId) {
+      navigate(`/admin/proposals/${proposalId}`);
+      return;
+    }
+
+    navigate("/admin/proposals");
+  };
 
   const loadBuildings = async () => {
     setIsLoadingBuildings(true);
@@ -267,8 +369,8 @@ export default function ProposalNewPage() {
     };
 
     try {
-      const response = await fetch("/api/admin/proposals", {
-        method: "POST",
+      const response = await fetch(isEditing && proposalId ? `/api/admin/proposals/${proposalId}` : "/api/admin/proposals", {
+        method: isEditing && proposalId ? "PATCH" : "POST",
         credentials: "include",
         headers: {
           "Content-Type": "application/json",
@@ -277,18 +379,24 @@ export default function ProposalNewPage() {
       });
 
       if (!response.ok) {
-        throw new Error(await readApiErrorMessage(response, "Nem sikerült létrehozni az ajánlatot."));
+        throw new Error(
+          await readApiErrorMessage(
+            response,
+            isEditing ? "Nem sikerült menteni az ajánlatot." : "Nem sikerült létrehozni az ajánlatot.",
+          ),
+        );
       }
 
       const created = (await response.json()) as { proposal_id?: string };
-      if (!created.proposal_id) {
-        throw new Error("Nem sikerült létrehozni az ajánlatot.");
+      const nextProposalId = created.proposal_id ?? proposalId;
+      if (!nextProposalId) {
+        throw new Error(isEditing ? "Nem sikerült menteni az ajánlatot." : "Nem sikerült létrehozni az ajánlatot.");
       }
 
-      toast.success("Az ajánlat sikeresen létrejött.");
-      navigate(`/admin/proposals/${created.proposal_id}`);
+      toast.success(isEditing ? "Az ajánlat sikeresen mentve." : "Az ajánlat sikeresen létrejött.");
+      navigate(`/admin/proposals/${nextProposalId}`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Nem sikerült létrehozni az ajánlatot.";
+      const message = err instanceof Error ? err.message : isEditing ? "Nem sikerült menteni az ajánlatot." : "Nem sikerült létrehozni az ajánlatot.";
       setSubmitError(message);
       toast.error(message);
     } finally {
@@ -301,15 +409,43 @@ export default function ProposalNewPage() {
     [deviceFilter, devices],
   );
 
+  if (isEditing && isLoadingProposal) {
+    return (
+      <Layout>
+        <Box sx={{ py: 8, display: "grid", placeItems: "center" }}>
+          <CircularProgress color="secondary" />
+        </Box>
+      </Layout>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <Layout>
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <IconButton onClick={() => navigate("/admin/proposals")} aria-label="Vissza">
+              <ChevronLeft size={18} />
+            </IconButton>
+            <Typography variant="h5" sx={{ fontWeight: 800 }}>
+              {isEditing ? "Ajánlat szerkesztése" : "Új ajánlat"}
+            </Typography>
+          </Box>
+          <Alert severity="error">{loadError}</Alert>
+        </Box>
+      </Layout>
+    );
+  }
+
   return (
     <Layout>
       <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          <IconButton onClick={() => navigate("/admin/proposals")} aria-label="Vissza">
+          <IconButton onClick={handleBack} aria-label="Vissza">
             <ChevronLeft size={18} />
           </IconButton>
           <Typography variant="h5" sx={{ fontWeight: 800 }}>
-            Új ajánlat
+            {isEditing ? "Ajánlat szerkesztése" : "Új ajánlat"}
           </Typography>
         </Box>
 
@@ -478,7 +614,7 @@ export default function ProposalNewPage() {
                 disabled={!canSubmit || isSubmitting}
                 sx={{ alignSelf: { xs: "stretch", md: "flex-start" } }}
               >
-                {isSubmitting ? "Mentés..." : "Ajánlat létrehozása"}
+                {isSubmitting ? "Mentés..." : isEditing ? "Ajánlat mentése" : "Ajánlat létrehozása"}
               </Button>
             </Box>
           </CardContent>

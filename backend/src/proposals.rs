@@ -1,5 +1,5 @@
 use axum::extract::{Path, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use cloud_storage::Object;
 use reqwest::multipart::{Form, Part};
@@ -15,7 +15,8 @@ use crate::storage::proposal_object_name;
 use crate::typst_render::TypstRenderClient;
 
 const PROPOSAL_TEMPLATE: &str = include_str!("../../worksheet_templates/Ajanlat.typ");
-const PROPOSAL_LOGO: &[u8] = include_bytes!("../../frontend/apps/main/public/Noma_logo_color_text_vertical.png");
+const PROPOSAL_LOGO: &[u8] =
+    include_bytes!("../../frontend/apps/main/public/Noma_logo_color_text_vertical.png");
 const PROPOSAL_TEMPLATE_FILENAME: &str = "Ajanlat.typ";
 const PROPOSAL_LOGO_FILENAME: &str = "Noma_logo_color_text_vertical.png";
 
@@ -72,6 +73,7 @@ struct AdminProposalDetailRow {
     device_original_kind: Option<String>,
     device_brand: Option<String>,
     device_model: Option<String>,
+    building_id: uuid::Uuid,
     building_name: String,
     building_address: String,
     location_description: Option<String>,
@@ -80,6 +82,8 @@ struct AdminProposalDetailRow {
     room: Option<String>,
     net_price: Decimal,
     currency: String,
+    note: String,
+    external_issue_number: Option<String>,
     url: Option<String>,
     line_count: i64,
 }
@@ -142,6 +146,7 @@ pub struct AdminProposalDetailResponse {
     device_original_kind: Option<String>,
     device_brand: Option<String>,
     device_model: Option<String>,
+    building_id: uuid::Uuid,
     building_name: String,
     building_address: String,
     location_description: Option<String>,
@@ -150,6 +155,8 @@ pub struct AdminProposalDetailResponse {
     room: Option<String>,
     net_price: String,
     currency: String,
+    note: String,
+    external_issue_number: Option<String>,
     url: Option<String>,
     line_count: i64,
     lines: Vec<AdminProposalLineRow>,
@@ -216,7 +223,9 @@ fn format_decimal_with_grouping(value: Decimal) -> String {
 
     let (integer_part, fractional_part) = digits
         .split_once('.')
-        .map_or((digits, None), |(integer, fraction)| (integer, Some(fraction)));
+        .map_or((digits, None), |(integer, fraction)| {
+            (integer, Some(fraction))
+        });
 
     let mut grouped_integer = String::with_capacity(integer_part.len() + integer_part.len() / 3);
     for (index, ch) in integer_part.chars().rev().enumerate() {
@@ -230,9 +239,7 @@ fn format_decimal_with_grouping(value: Decimal) -> String {
     formatted.push_str(sign);
     formatted.extend(grouped_integer.chars().rev());
 
-    if let Some(fractional_part) = fractional_part
-        .filter(|fraction| !fraction.is_empty())
-    {
+    if let Some(fractional_part) = fractional_part.filter(|fraction| !fraction.is_empty()) {
         formatted.push(',');
         formatted.push_str(fractional_part);
     }
@@ -288,7 +295,11 @@ fn sanitize_filename_component(value: &str) -> String {
     output.trim_matches('-').to_string()
 }
 
-fn proposal_filename(building_address: &str, proposal_created_date: &str, proposal_id: uuid::Uuid) -> String {
+fn proposal_filename(
+    building_address: &str,
+    proposal_created_date: &str,
+    proposal_id: uuid::Uuid,
+) -> String {
     let building_address = sanitize_filename_component(building_address);
     let building_address = if building_address.is_empty() {
         "ismeretlen-helyszin".to_string()
@@ -383,10 +394,13 @@ fn proposal_attachment_response(snapshot: &ProposalPdfSnapshot, pdf_bytes: Vec<u
     let filename = proposal_pdf_attachment_filename(snapshot);
     let content_disposition = format!("attachment; filename=\"{filename}\"");
 
-    ([
-        (header::CONTENT_TYPE, "application/pdf"),
-        (header::CONTENT_DISPOSITION, content_disposition.as_str()),
-    ], pdf_bytes)
+    (
+        [
+            (header::CONTENT_TYPE, "application/pdf"),
+            (header::CONTENT_DISPOSITION, content_disposition.as_str()),
+        ],
+        pdf_bytes,
+    )
         .into_response()
 }
 
@@ -434,14 +448,33 @@ fn build_proposal_form(snapshot: &ProposalPdfSnapshot) -> Result<Form, ApiError>
                 .map_err(ApiError::internal)?,
         )
         .text("proposal_id", snapshot.core.proposal_id.to_string())
-        .text("proposal_generated_at", snapshot.core.proposal_generated_at.clone())
-        .text("proposal_created_at", snapshot.core.proposal_created_date_display.clone())
-        .text("proposal_created_by", snapshot.core.created_by_name.clone().unwrap_or_else(|| "-".to_string()))
-        .text("proposal_building_address", snapshot.core.building_address.clone())
+        .text(
+            "proposal_generated_at",
+            snapshot.core.proposal_generated_at.clone(),
+        )
+        .text(
+            "proposal_created_at",
+            snapshot.core.proposal_created_date_display.clone(),
+        )
+        .text(
+            "proposal_created_by",
+            snapshot
+                .core
+                .created_by_name
+                .clone()
+                .unwrap_or_else(|| "-".to_string()),
+        )
+        .text(
+            "proposal_building_address",
+            snapshot.core.building_address.clone(),
+        )
         .text("proposal_device_name", device_name)
         .text("proposal_device_type", device_type)
         .text("proposal_device_brand_model", brand_model)
-        .text("proposal_device_identifier", proposal_identifier(snapshot.core.device_source_device_code.as_deref()))
+        .text(
+            "proposal_device_identifier",
+            proposal_identifier(snapshot.core.device_source_device_code.as_deref()),
+        )
         .text(
             "proposal_device_location",
             proposal_location(
@@ -455,7 +488,11 @@ fn build_proposal_form(snapshot: &ProposalPdfSnapshot) -> Result<Form, ApiError>
         .text("proposal_note", snapshot.core.proposal_note.clone())
         .text(
             "proposal_external_issue_number",
-            snapshot.core.external_issue_number.clone().unwrap_or_default(),
+            snapshot
+                .core
+                .external_issue_number
+                .clone()
+                .unwrap_or_default(),
         )
         .text("args", args)
         .part(
@@ -472,7 +509,10 @@ async fn generate_proposal_pdf(
     snapshot: &ProposalPdfSnapshot,
 ) -> Result<Vec<u8>, ApiError> {
     let form = build_proposal_form(snapshot)?;
-    renderer.render_typst(form).await.map_err(ApiError::internal)
+    renderer
+        .render_typst(form)
+        .await
+        .map_err(ApiError::internal)
 }
 
 async fn store_proposal_pdf(
@@ -620,6 +660,7 @@ async fn load_admin_proposal_detail_row(
             d.original_kind AS device_original_kind,
             d.brand AS device_brand,
             d.model AS device_model,
+            b.id AS building_id,
             b.name AS building_name,
             b.address AS building_address,
             sl.location_description,
@@ -628,6 +669,8 @@ async fn load_admin_proposal_detail_row(
             sl.room,
             p.net_price,
             p.currency,
+            COALESCE(NULLIF(BTRIM(p.note), ''), '') AS note,
+            NULLIF(BTRIM(p.external_issue_number), '') AS external_issue_number,
             p.url,
             COALESCE(
                 (
@@ -692,6 +735,21 @@ async fn load_admin_proposal_lines(
     .fetch_all(pool)
     .await
     .map_err(ApiError::internal)
+}
+
+async fn load_admin_proposal_detail_response(
+    pool: &sqlx::PgPool,
+    tenant_id: uuid::Uuid,
+    proposal_id: uuid::Uuid,
+) -> Result<AdminProposalDetailResponse, ApiError> {
+    let row = load_admin_proposal_detail_row(pool, tenant_id, proposal_id).await?;
+    let lines = load_admin_proposal_lines(pool, tenant_id, proposal_id)
+        .await?
+        .into_iter()
+        .map(response_line_from_db)
+        .collect::<Vec<_>>();
+
+    Ok(response_detail_row(row, lines))
 }
 
 async fn load_proposal_pdf_snapshot(
@@ -816,7 +874,10 @@ fn response_list_row(row: AdminProposalListRow) -> AdminProposalListResponseRow 
     }
 }
 
-fn response_detail_row(row: AdminProposalDetailRow, lines: Vec<AdminProposalLineRow>) -> AdminProposalDetailResponse {
+fn response_detail_row(
+    row: AdminProposalDetailRow,
+    lines: Vec<AdminProposalLineRow>,
+) -> AdminProposalDetailResponse {
     AdminProposalDetailResponse {
         proposal_id: row.proposal_id,
         created_at: row.created_at,
@@ -829,6 +890,7 @@ fn response_detail_row(row: AdminProposalDetailRow, lines: Vec<AdminProposalLine
         device_original_kind: row.device_original_kind,
         device_brand: row.device_brand,
         device_model: row.device_model,
+        building_id: row.building_id,
         building_name: row.building_name,
         building_address: row.building_address,
         location_description: row.location_description,
@@ -837,13 +899,19 @@ fn response_detail_row(row: AdminProposalDetailRow, lines: Vec<AdminProposalLine
         room: row.room,
         net_price: decimal_to_string(row.net_price),
         currency: row.currency,
+        note: row.note,
+        external_issue_number: row.external_issue_number,
         url: row.url,
         line_count: row.line_count,
         lines,
     }
 }
 
-fn validate_decimal_field(label: &str, raw_value: &str, allow_zero: bool) -> Result<Decimal, ApiError> {
+fn validate_decimal_field(
+    label: &str,
+    raw_value: &str,
+    allow_zero: bool,
+) -> Result<Decimal, ApiError> {
     let normalized = normalize_text(raw_value);
     if normalized.is_empty() {
         return Err(ApiError::bad_request(match label {
@@ -853,12 +921,13 @@ fn validate_decimal_field(label: &str, raw_value: &str, allow_zero: bool) -> Res
         }));
     }
 
-    let value = Decimal::from_str(&normalized)
-        .map_err(|_| ApiError::bad_request(match label {
+    let value = Decimal::from_str(&normalized).map_err(|_| {
+        ApiError::bad_request(match label {
             "quantity" => "Érvénytelen mennyiség.",
             "net unit price" => "Érvénytelen nettó egységár.",
             _ => "Érvénytelen érték.",
-        }))?;
+        })
+    })?;
 
     if allow_zero {
         if value < Decimal::ZERO {
@@ -877,7 +946,9 @@ fn validate_decimal_field(label: &str, raw_value: &str, allow_zero: bool) -> Res
     Ok(value)
 }
 
-fn validate_line_request(line: &CreateAdminProposalLineRequest) -> Result<(String, Decimal, String, Decimal), ApiError> {
+fn validate_line_request(
+    line: &CreateAdminProposalLineRequest,
+) -> Result<(String, Decimal, String, Decimal), ApiError> {
     let item = line.item.trim();
     if item.is_empty() {
         return Err(ApiError::bad_request("A tétel megadása kötelező."));
@@ -892,6 +963,147 @@ fn validate_line_request(line: &CreateAdminProposalLineRequest) -> Result<(Strin
     let net_unit_price = validate_decimal_field("net unit price", &line.net_unit_price, true)?;
 
     Ok((item.to_string(), quantity, uom.to_string(), net_unit_price))
+}
+
+async fn insert_admin_proposal_lines(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: uuid::Uuid,
+    proposal_id: uuid::Uuid,
+    validated_lines: &[(String, Decimal, String, Decimal)],
+) -> Result<(), ApiError> {
+    for (index, (item, quantity, uom, net_unit_price)) in validated_lines.iter().enumerate() {
+        sqlx::query(
+            r#"
+            INSERT INTO proposal_lines (
+                tenant_id,
+                proposal_id,
+                position,
+                item,
+                quantity,
+                uom,
+                net_unit_price
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(proposal_id)
+        .bind((index + 1) as i32)
+        .bind(item)
+        .bind(quantity)
+        .bind(uom)
+        .bind(net_unit_price)
+        .execute(&mut **tx)
+        .await
+        .map_err(ApiError::internal)?;
+    }
+
+    Ok(())
+}
+
+async fn save_admin_proposal(
+    pool: &sqlx::PgPool,
+    tenant_id: uuid::Uuid,
+    user_id: uuid::Uuid,
+    proposal_id: Option<uuid::Uuid>,
+    payload: &CreateAdminProposalRequest,
+) -> Result<uuid::Uuid, ApiError> {
+    if payload.lines.is_empty() {
+        return Err(ApiError::bad_request(
+            "Legalább egy tétel megadása kötelező.",
+        ));
+    }
+
+    ensure_proposal_device_exists(pool, tenant_id, payload.device_id).await?;
+
+    let mut validated_lines = Vec::with_capacity(payload.lines.len());
+    let mut net_price = Decimal::ZERO;
+
+    for line in &payload.lines {
+        let (item, quantity, uom, net_unit_price) = validate_line_request(line)?;
+        let line_total = quantity * net_unit_price;
+        net_price += line_total;
+        validated_lines.push((item, quantity, uom, net_unit_price));
+    }
+
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+
+    let saved_proposal_id = if let Some(proposal_id) = proposal_id {
+        let updated_id = sqlx::query_scalar::<_, uuid::Uuid>(
+            r#"
+            UPDATE proposals
+            SET device_id = $3,
+                net_price = $4,
+                note = NULLIF(BTRIM($5), ''),
+                external_issue_number = NULLIF(BTRIM($6), ''),
+                url = NULL
+            WHERE tenant_id = $1
+              AND id = $2
+            RETURNING id
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(proposal_id)
+        .bind(payload.device_id)
+        .bind(net_price)
+        .bind(&payload.note)
+        .bind(&payload.external_issue_number)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+
+        let Some(updated_id) = updated_id else {
+            return Err(ApiError::forbidden(
+                "Az ajánlat nem található a jelenlegi tenanthez.",
+            ));
+        };
+
+        sqlx::query(
+            r#"
+            DELETE FROM proposal_lines
+            WHERE tenant_id = $1
+              AND proposal_id = $2
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(updated_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+
+        insert_admin_proposal_lines(&mut tx, tenant_id, updated_id, &validated_lines).await?;
+        updated_id
+    } else {
+        let created_id = sqlx::query_scalar::<_, uuid::Uuid>(
+            r#"
+            INSERT INTO proposals (
+                tenant_id,
+                device_id,
+                created_by,
+                net_price,
+                note,
+                external_issue_number
+            )
+            VALUES ($1, $2, $3, $4, NULLIF(BTRIM($5), ''), NULLIF(BTRIM($6), ''))
+            RETURNING id
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(payload.device_id)
+        .bind(user_id)
+        .bind(net_price)
+        .bind(&payload.note)
+        .bind(&payload.external_issue_number)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+
+        insert_admin_proposal_lines(&mut tx, tenant_id, created_id, &validated_lines).await?;
+        created_id
+    };
+
+    tx.commit().await.map_err(ApiError::internal)?;
+    Ok(saved_proposal_id)
 }
 
 async fn ensure_proposal_device_exists(
@@ -914,7 +1126,9 @@ async fn ensure_proposal_device_exists(
     .map_err(ApiError::internal)?;
 
     if device_exists.is_none() {
-        return Err(ApiError::forbidden("A berendezés nem található a jelenlegi tenanthez."));
+        return Err(ApiError::forbidden(
+            "A berendezés nem található a jelenlegi tenanthez.",
+        ));
     }
 
     Ok(())
@@ -952,14 +1166,9 @@ pub async fn get_admin_proposal_detail(
     let user = require_session_user(&state, &headers).await?;
     require_lead_or_admin(&user)?;
 
-    let row = load_admin_proposal_detail_row(pool, user.tenant_id, proposal_id).await?;
-    let lines = load_admin_proposal_lines(pool, user.tenant_id, proposal_id)
-        .await?
-        .into_iter()
-        .map(response_line_from_db)
-        .collect::<Vec<_>>();
-
-    Ok(axum::Json(response_detail_row(row, lines)))
+    Ok(axum::Json(
+        load_admin_proposal_detail_response(pool, user.tenant_id, proposal_id).await?,
+    ))
 }
 
 pub async fn create_admin_proposal(
@@ -974,83 +1183,34 @@ pub async fn create_admin_proposal(
     let user = require_session_user(&state, &headers).await?;
     require_lead_or_admin(&user)?;
 
-    if payload.lines.is_empty() {
-        return Err(ApiError::bad_request("Legalább egy tétel megadása kötelező."));
-    }
+    let proposal_id = save_admin_proposal(pool, user.tenant_id, user.id, None, &payload).await?;
+    Ok((
+        StatusCode::CREATED,
+        axum::Json(load_admin_proposal_detail_response(pool, user.tenant_id, proposal_id).await?),
+    ))
+}
 
-    ensure_proposal_device_exists(pool, user.tenant_id, payload.device_id).await?;
-    let mut validated_lines = Vec::with_capacity(payload.lines.len());
-    let mut net_price = Decimal::ZERO;
+pub async fn update_admin_proposal(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(proposal_id): Path<uuid::Uuid>,
+    axum::Json(payload): axum::Json<CreateAdminProposalRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    require_lead_or_admin(&user)?;
 
-    for line in &payload.lines {
-        let (item, quantity, uom, net_unit_price) = validate_line_request(line)?;
-        let line_total = quantity * net_unit_price;
-        net_price += line_total;
-        validated_lines.push((item, quantity, uom, net_unit_price));
-    }
-
-    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
-    let proposal_id = sqlx::query_scalar::<_, uuid::Uuid>(
-        r#"
-        INSERT INTO proposals (
-            tenant_id,
-            device_id,
-            created_by,
-            net_price,
-            note,
-            external_issue_number
-        )
-        VALUES ($1, $2, $3, $4, NULLIF(BTRIM($5), ''), NULLIF(BTRIM($6), ''))
-        RETURNING id
-        "#,
-    )
-    .bind(user.tenant_id)
-    .bind(payload.device_id)
-    .bind(user.id)
-    .bind(net_price)
-    .bind(&payload.note)
-    .bind(&payload.external_issue_number)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(ApiError::internal)?;
-
-    for (index, (item, quantity, uom, net_unit_price)) in validated_lines.into_iter().enumerate() {
-        sqlx::query(
-            r#"
-            INSERT INTO proposal_lines (
-                tenant_id,
-                proposal_id,
-                position,
-                item,
-                quantity,
-                uom,
-                net_unit_price
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            "#,
-        )
-        .bind(user.tenant_id)
-        .bind(proposal_id)
-        .bind((index + 1) as i32)
-        .bind(item)
-        .bind(quantity)
-        .bind(uom)
-        .bind(net_unit_price)
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::internal)?;
-    }
-
-    tx.commit().await.map_err(ApiError::internal)?;
-
-    let detail_row = load_admin_proposal_detail_row(pool, user.tenant_id, proposal_id).await?;
-    let detail_lines = load_admin_proposal_lines(pool, user.tenant_id, proposal_id)
-        .await?
-        .into_iter()
-        .map(response_line_from_db)
-        .collect::<Vec<_>>();
-
-    Ok((StatusCode::CREATED, axum::Json(response_detail_row(detail_row, detail_lines))))
+    let saved_proposal_id =
+        save_admin_proposal(pool, user.tenant_id, user.id, Some(proposal_id), &payload).await?;
+    Ok((
+        StatusCode::OK,
+        axum::Json(
+            load_admin_proposal_detail_response(pool, user.tenant_id, saved_proposal_id).await?,
+        ),
+    ))
 }
 
 pub async fn get_admin_proposal_pdf(
@@ -1077,10 +1237,9 @@ pub async fn get_admin_proposal_pdf(
         return download_existing_pdf(storage, &snapshot, url).await;
     }
 
-    let renderer = state
-        .typst_renderer
-        .as_ref()
-        .ok_or_else(|| ApiError::service_unavailable("worksheet render service is not configured"))?;
+    let renderer = state.typst_renderer.as_ref().ok_or_else(|| {
+        ApiError::service_unavailable("worksheet render service is not configured")
+    })?;
 
     let pdf_bytes = match generate_proposal_pdf(renderer, &snapshot).await {
         Ok(bytes) => bytes,
@@ -1105,10 +1264,12 @@ mod tests {
         let filename = proposal_filename(
             "Budapest, Kossuth tér 2-4.",
             "20260412",
-            uuid::Uuid::parse_str("dfcc66ea-0000-0000-0000-000000000000")
-                .expect("valid uuid"),
+            uuid::Uuid::parse_str("dfcc66ea-0000-0000-0000-000000000000").expect("valid uuid"),
         );
 
-        assert_eq!(filename, "NoMa_ajanlat_Budapest-Kossuth-ter-2-4_20260412_dfcc66ea.pdf");
+        assert_eq!(
+            filename,
+            "NoMa_ajanlat_Budapest-Kossuth-ter-2-4_20260412_dfcc66ea.pdf"
+        );
     }
 }
