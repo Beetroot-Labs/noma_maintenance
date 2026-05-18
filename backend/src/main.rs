@@ -36,8 +36,8 @@ use crate::labeling::{
 };
 use crate::maintenance::{sync_maintenance_work, upload_maintenance_photo};
 use crate::proposals::{
-    create_admin_proposal, get_admin_proposal_detail, get_admin_proposal_pdf, list_admin_proposals,
-    update_admin_proposal,
+    create_admin_proposal, get_admin_proposal_detail, get_admin_proposal_pdf,
+    get_admin_proposal_version_pdf, list_admin_proposals, update_admin_proposal,
 };
 use crate::service_worksheets::get_admin_shift_service_worksheets;
 use crate::shift_reports::get_admin_shift_report;
@@ -157,6 +157,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/admin/proposals/{proposal_id}/pdf",
             get(get_admin_proposal_pdf),
+        )
+        .route(
+            "/admin/proposals/{proposal_id}/versions/{version_number}/pdf",
+            get(get_admin_proposal_version_pdf),
         )
         .route("/admin/buildings", get(list_admin_buildings))
         .route(

@@ -382,7 +382,7 @@ export default function ProposalNewPage() {
         throw new Error(
           await readApiErrorMessage(
             response,
-            isEditing ? "Nem sikerült menteni az ajánlatot." : "Nem sikerült létrehozni az ajánlatot.",
+            isEditing ? "Nem sikerült létrehozni az új verziót." : "Nem sikerült létrehozni az ajánlatot.",
           ),
         );
       }
@@ -390,13 +390,18 @@ export default function ProposalNewPage() {
       const created = (await response.json()) as { proposal_id?: string };
       const nextProposalId = created.proposal_id ?? proposalId;
       if (!nextProposalId) {
-        throw new Error(isEditing ? "Nem sikerült menteni az ajánlatot." : "Nem sikerült létrehozni az ajánlatot.");
+        throw new Error(isEditing ? "Nem sikerült létrehozni az új verziót." : "Nem sikerült létrehozni az ajánlatot.");
       }
 
-      toast.success(isEditing ? "Az ajánlat sikeresen mentve." : "Az ajánlat sikeresen létrejött.");
+      toast.success(isEditing ? "Új verzió sikeresen létrejött." : "Az ajánlat sikeresen létrejött.");
       navigate(`/admin/proposals/${nextProposalId}`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : isEditing ? "Nem sikerült menteni az ajánlatot." : "Nem sikerült létrehozni az ajánlatot.";
+      const message =
+        err instanceof Error
+          ? err.message
+          : isEditing
+            ? "Nem sikerült létrehozni az új verziót."
+            : "Nem sikerült létrehozni az ajánlatot.";
       setSubmitError(message);
       toast.error(message);
     } finally {
@@ -614,7 +619,7 @@ export default function ProposalNewPage() {
                 disabled={!canSubmit || isSubmitting}
                 sx={{ alignSelf: { xs: "stretch", md: "flex-start" } }}
               >
-                {isSubmitting ? "Mentés..." : isEditing ? "Ajánlat mentése" : "Ajánlat létrehozása"}
+                {isSubmitting ? "Mentés..." : isEditing ? "Új verzió mentése" : "Ajánlat létrehozása"}
               </Button>
             </Box>
           </CardContent>

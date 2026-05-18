@@ -80,10 +80,11 @@ pub fn proposal_object_name(
     storage: &StorageConfig,
     tenant_id: uuid::Uuid,
     proposal_id: uuid::Uuid,
+    version_number: i32,
     file_name: &str,
 ) -> String {
     format!(
-        "{}/tenants/{}/proposals/{}/{}",
-        storage.proposal_prefix, tenant_id, proposal_id, file_name
+        "{}/tenants/{}/proposals/{}/versions/{}/{}",
+        storage.proposal_prefix, tenant_id, proposal_id, version_number, file_name
     )
 }

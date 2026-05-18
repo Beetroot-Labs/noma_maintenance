@@ -9,7 +9,10 @@ import {
   CardHeader,
   Chip,
   CircularProgress,
+  Drawer,
+  Divider,
   IconButton,
+  Stack,
   Table,
   TableBody,
   TableCell,
@@ -18,7 +21,7 @@ import {
   TableRow,
   Typography,
 } from "@mui/material";
-import { ArrowLeft, Download, Edit3 } from "lucide-react";
+import { ArrowLeft, Download, Edit3, X } from "lucide-react";
 import { getDeviceKindLabel } from "@noma/shared";
 import { Layout } from "@/components/Layout";
 import { formatDateTime } from "@/lib/date";
@@ -55,6 +58,7 @@ export default function ProposalDetailsPage() {
   const [payload, setPayload] = useState<AdminProposalDetailPayload | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [versionsOpen, setVersionsOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -156,6 +160,16 @@ export default function ProposalDetailsPage() {
           </Box>
 
           <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+            {payload.versions.length > 0 ? (
+              <Button
+                size="small"
+                variant="text"
+                onClick={() => setVersionsOpen(true)}
+                sx={{ textTransform: "none", color: "text.secondary" }}
+              >
+                Verziók
+              </Button>
+            ) : null}
             <Button
               variant="outlined"
               startIcon={<Edit3 size={16} />}
@@ -283,6 +297,80 @@ export default function ProposalDetailsPage() {
           </CardContent>
         </Card>
       </Box>
+
+      <Drawer
+        anchor="right"
+        open={versionsOpen}
+        onClose={() => setVersionsOpen(false)}
+        PaperProps={{ sx: { width: { xs: "100%", sm: 420 }, p: 3, overflowY: "auto" } }}
+      >
+        <Stack spacing={2} sx={{ height: "100%" }}>
+          <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 2 }}>
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 800 }}>
+                Korábbi verziók
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                PDF letöltéshez.
+              </Typography>
+            </Box>
+            <IconButton onClick={() => setVersionsOpen(false)} aria-label="Bezárás">
+              <X size={18} />
+            </IconButton>
+          </Box>
+
+          <Divider />
+
+          {payload.versions.length === 0 ? (
+            <Alert severity="info">Nincsenek korábbi verziók.</Alert>
+          ) : (
+            <Stack spacing={1}>
+              {payload.versions.map((version) => (
+                <Box
+                  key={version.version_number}
+                  sx={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 2,
+                    alignItems: "flex-start",
+                    p: 1.5,
+                    borderRadius: 2,
+                    border: `1px solid ${appColors.border}`,
+                    bgcolor: "rgba(15, 23, 42, 0.02)",
+                  }}
+                >
+                  <Box sx={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 0.25 }}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
+                      Verzió {version.version_number}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {formatDateTime(new Date(version.created_at))}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {version.created_by_name ?? "-"} · {formatMoney(version.net_price, version.currency)}
+                    </Typography>
+                  </Box>
+                  <Button
+                    size="small"
+                    variant="text"
+                    startIcon={<Download size={16} />}
+                    onClick={() =>
+                      window.open(
+                        `/api/admin/proposals/${payload.proposal_id}/versions/${version.version_number}/pdf`,
+                        "_blank",
+                        "noopener,noreferrer",
+                      )
+                    }
+                    sx={{ textTransform: "none" }}
+                  >
+                    PDF
+                  </Button>
+                </Box>
+              ))}
+            </Stack>
+          )}
+        </Stack>
+      </Drawer>
     </Layout>
   );
 }

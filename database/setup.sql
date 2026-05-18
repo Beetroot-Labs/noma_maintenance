@@ -373,38 +373,54 @@ CREATE TABLE maintenance_photos (
 CREATE TABLE proposals (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4() NOT NULL,
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    url TEXT,
+    current_version_number INTEGER NOT NULL DEFAULT 1,
+    external_issue_number TEXT,
+    CONSTRAINT proposals_tenant_id_id_unique UNIQUE (tenant_id, id),
+    CONSTRAINT proposals_current_version_number_positive CHECK (current_version_number > 0)
+);
+
+CREATE TABLE proposal_versions (
+    proposal_id UUID NOT NULL,
+    version_number INTEGER NOT NULL,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     device_id UUID NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
     created_by UUID REFERENCES users(id) ON DELETE SET NULL,
     net_price NUMERIC NOT NULL,
     currency TEXT NOT NULL DEFAULT 'Ft',
     note TEXT,
-    external_issue_number TEXT,
-    CONSTRAINT proposals_tenant_device_fk
+    url TEXT,
+    CONSTRAINT proposal_versions_proposal_pk PRIMARY KEY (proposal_id, version_number),
+    CONSTRAINT proposal_versions_tenant_proposal_version_unique UNIQUE (tenant_id, proposal_id, version_number),
+    CONSTRAINT proposal_versions_tenant_proposal_fk
+        FOREIGN KEY (tenant_id, proposal_id)
+        REFERENCES proposals (tenant_id, id)
+        ON DELETE CASCADE,
+    CONSTRAINT proposal_versions_tenant_device_fk
         FOREIGN KEY (tenant_id, device_id)
         REFERENCES devices (tenant_id, id)
         ON DELETE RESTRICT,
-    CONSTRAINT proposals_tenant_id_id_unique UNIQUE (tenant_id, id),
-    CONSTRAINT proposals_currency_not_empty CHECK (NULLIF(BTRIM(currency), '') IS NOT NULL),
-    CONSTRAINT proposals_net_price_non_negative CHECK (net_price >= 0)
+    CONSTRAINT proposal_versions_currency_not_empty CHECK (NULLIF(BTRIM(currency), '') IS NOT NULL),
+    CONSTRAINT proposal_versions_net_price_non_negative CHECK (net_price >= 0),
+    CONSTRAINT proposal_versions_version_number_positive CHECK (version_number > 0)
 );
 
 CREATE TABLE proposal_lines (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4() NOT NULL,
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     proposal_id UUID NOT NULL,
+    version_number INTEGER NOT NULL,
     position INTEGER NOT NULL,
     item TEXT NOT NULL,
     quantity NUMERIC NOT NULL,
     uom TEXT NOT NULL,
     net_unit_price NUMERIC NOT NULL,
-    CONSTRAINT proposal_lines_tenant_proposal_fk
-        FOREIGN KEY (tenant_id, proposal_id)
-        REFERENCES proposals (tenant_id, id)
+    CONSTRAINT proposal_lines_tenant_version_fk
+        FOREIGN KEY (tenant_id, proposal_id, version_number)
+        REFERENCES proposal_versions (tenant_id, proposal_id, version_number)
         ON DELETE CASCADE,
     CONSTRAINT proposal_lines_tenant_id_id_unique UNIQUE (tenant_id, id),
-    CONSTRAINT proposal_lines_tenant_proposal_position_unique UNIQUE (tenant_id, proposal_id, position),
+    CONSTRAINT proposal_lines_tenant_proposal_position_unique UNIQUE (tenant_id, proposal_id, version_number, position),
     CONSTRAINT proposal_lines_position_positive CHECK (position > 0),
     CONSTRAINT proposal_lines_item_not_empty CHECK (NULLIF(BTRIM(item), '') IS NOT NULL),
     CONSTRAINT proposal_lines_uom_not_empty CHECK (NULLIF(BTRIM(uom), '') IS NOT NULL),
@@ -738,11 +754,5 @@ WHERE status = 'IN_PROGRESS';
 CREATE INDEX maintenance_photos_tenant_work_idx
 ON maintenance_photos (tenant_id, maintenance_work_id);
 
-CREATE INDEX proposals_tenant_created_idx
-ON proposals (tenant_id, created_at DESC);
-
-CREATE INDEX proposals_tenant_device_idx
-ON proposals (tenant_id, device_id);
-
-CREATE INDEX proposal_lines_tenant_proposal_idx
-ON proposal_lines (tenant_id, proposal_id, position);
+CREATE INDEX proposal_versions_tenant_created_idx
+ON proposal_versions (tenant_id, created_at DESC);

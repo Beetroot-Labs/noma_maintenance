@@ -53,11 +53,21 @@ export type AdminProposalLineRow = {
   line_total: string;
 };
 
+export type AdminProposalVersionRow = {
+  version_number: number;
+  created_at: string;
+  created_by_name: string | null;
+  net_price: string;
+  currency: string;
+  url: string | null;
+};
+
 export type AdminProposalDetailPayload = AdminProposalListRow & {
   created_by_email: string | null;
   building_id: string;
   note: string;
   external_issue_number: string | null;
+  versions: AdminProposalVersionRow[];
   lines: AdminProposalLineRow[];
 };
 

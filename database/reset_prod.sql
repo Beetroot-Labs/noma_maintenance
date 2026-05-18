@@ -4,6 +4,7 @@
 
 -- Drop business-domain tables first.
 DROP TABLE IF EXISTS maintenance_photos CASCADE;
+DROP TABLE IF EXISTS proposal_versions CASCADE;
 DROP TABLE IF EXISTS proposal_lines CASCADE;
 DROP TABLE IF EXISTS proposals CASCADE;
 DROP TABLE IF EXISTS maintenance_works CASCADE;

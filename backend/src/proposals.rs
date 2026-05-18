@@ -39,6 +39,7 @@ pub struct CreateAdminProposalLineRequest {
 #[derive(Serialize, sqlx::FromRow)]
 struct AdminProposalListRow {
     proposal_id: uuid::Uuid,
+    version_number: i32,
     created_at: chrono::DateTime<chrono::Utc>,
     created_by_name: Option<String>,
     device_id: uuid::Uuid,
@@ -63,6 +64,7 @@ struct AdminProposalListRow {
 #[derive(Serialize, sqlx::FromRow)]
 struct AdminProposalDetailRow {
     proposal_id: uuid::Uuid,
+    version_number: i32,
     created_at: chrono::DateTime<chrono::Utc>,
     created_by_name: Option<String>,
     created_by_email: Option<String>,
@@ -107,6 +109,26 @@ pub struct AdminProposalLineRow {
     uom: String,
     net_unit_price: String,
     line_total: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct AdminProposalVersionDbRow {
+    version_number: i32,
+    created_at: chrono::DateTime<chrono::Utc>,
+    created_by_name: Option<String>,
+    net_price: Decimal,
+    currency: String,
+    url: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct AdminProposalVersionRow {
+    version_number: i32,
+    created_at: chrono::DateTime<chrono::Utc>,
+    created_by_name: Option<String>,
+    net_price: String,
+    currency: String,
+    url: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -159,6 +181,7 @@ pub struct AdminProposalDetailResponse {
     external_issue_number: Option<String>,
     url: Option<String>,
     line_count: i64,
+    versions: Vec<AdminProposalVersionRow>,
     lines: Vec<AdminProposalLineRow>,
 }
 
@@ -166,6 +189,7 @@ pub struct AdminProposalDetailResponse {
 struct ProposalPdfCoreRow {
     proposal_id: uuid::Uuid,
     tenant_id: uuid::Uuid,
+    version_number: i32,
     url: Option<String>,
     proposal_generated_at: String,
     proposal_created_date_display: String,
@@ -299,6 +323,7 @@ fn proposal_filename(
     building_address: &str,
     proposal_created_date: &str,
     proposal_id: uuid::Uuid,
+    version_number: i32,
 ) -> String {
     let building_address = sanitize_filename_component(building_address);
     let building_address = if building_address.is_empty() {
@@ -320,7 +345,7 @@ fn proposal_filename(
         .take(8)
         .collect::<String>();
 
-    format!("NoMa_ajanlat_{building_address}_{proposal_created_date}_{proposal_id_short}.pdf")
+    format!("NoMa_ajanlat_{building_address}_{proposal_created_date}_{proposal_id_short}_v{version_number}.pdf")
 }
 
 fn proposal_device_kind_label(kind: &str) -> String {
@@ -525,11 +550,13 @@ async fn store_proposal_pdf(
         &snapshot.core.building_address,
         &snapshot.core.proposal_created_date,
         snapshot.core.proposal_id,
+        snapshot.core.version_number,
     );
     let object_name = proposal_object_name(
         storage,
         snapshot.core.tenant_id,
         snapshot.core.proposal_id,
+        snapshot.core.version_number,
         &filename,
     );
 
@@ -544,23 +571,25 @@ async fn store_proposal_pdf(
 
     let updated = sqlx::query(
         r#"
-        UPDATE proposals
+        UPDATE proposal_versions
         SET url = $3
         WHERE tenant_id = $1
-          AND id = $2
+          AND proposal_id = $2
+          AND version_number = $4
           AND url IS NULL
         "#,
     )
     .bind(snapshot.core.tenant_id)
     .bind(snapshot.core.proposal_id)
     .bind(&object_name)
+    .bind(snapshot.core.version_number)
     .execute(&mut **tx)
     .await
     .map_err(ApiError::internal)?;
 
     if updated.rows_affected() != 1 {
         return Err(ApiError::conflict(
-            "proposal PDF could not be stored for the current proposal",
+            "proposal PDF could not be stored for the current version",
         ));
     }
 
@@ -587,9 +616,10 @@ async fn load_admin_proposal_list_row(
         r#"
         SELECT
             p.id AS proposal_id,
-            p.created_at,
+            pv.version_number,
+            pv.created_at,
             cu.full_name AS created_by_name,
-            d.id AS device_id,
+            pv.device_id,
             bc.code AS device_barcode,
             NULLIF(BTRIM(d.source_device_code), '') AS device_source_device_code,
             d.kind::text AS device_kind,
@@ -602,25 +632,30 @@ async fn load_admin_proposal_list_row(
             sl.wing,
             sl.floor,
             sl.room,
-            p.net_price,
-            p.currency,
+            pv.net_price,
+            pv.currency,
             COALESCE(
                 (
                     SELECT COUNT(*)::bigint
                     FROM proposal_lines pl
                     WHERE pl.tenant_id = p.tenant_id
-                      AND pl.proposal_id = p.id
+                       AND pl.proposal_id = p.id
+                       AND pl.version_number = pv.version_number
                 ),
                 0
             ) AS line_count,
-            p.url
+            pv.url
         FROM proposals p
+        JOIN proposal_versions pv
+          ON pv.tenant_id = p.tenant_id
+         AND pv.proposal_id = p.id
+         AND pv.version_number = p.current_version_number
         JOIN devices d
-          ON d.tenant_id = p.tenant_id
-         AND d.id = p.device_id
+          ON d.tenant_id = pv.tenant_id
+         AND d.id = pv.device_id
         JOIN site_locations sl
           ON sl.tenant_id = d.tenant_id
-         AND sl.id = d.location_id
+          AND sl.id = d.location_id
         JOIN buildings b
           ON b.tenant_id = sl.tenant_id
          AND b.id = sl.building_id
@@ -629,10 +664,10 @@ async fn load_admin_proposal_list_row(
          AND bc.device_id = d.id
          AND bc.deactivated_at IS NULL
         LEFT JOIN users cu
-          ON cu.tenant_id = p.tenant_id
-         AND cu.id = p.created_by
+          ON cu.tenant_id = pv.tenant_id
+          AND cu.id = pv.created_by
         WHERE p.tenant_id = $1
-        ORDER BY p.created_at DESC, p.id DESC
+        ORDER BY pv.created_at DESC, p.id DESC
         "#,
     )
     .bind(tenant_id)
@@ -650,10 +685,11 @@ async fn load_admin_proposal_detail_row(
         r#"
         SELECT
             p.id AS proposal_id,
-            p.created_at,
+            pv.version_number,
+            pv.created_at,
             cu.full_name AS created_by_name,
             cu.email::text AS created_by_email,
-            d.id AS device_id,
+            pv.device_id,
             bc.code AS device_barcode,
             NULLIF(BTRIM(d.source_device_code), '') AS device_source_device_code,
             d.kind::text AS device_kind,
@@ -667,27 +703,32 @@ async fn load_admin_proposal_detail_row(
             sl.wing,
             sl.floor,
             sl.room,
-            p.net_price,
-            p.currency,
-            COALESCE(NULLIF(BTRIM(p.note), ''), '') AS note,
+            pv.net_price,
+            pv.currency,
+            COALESCE(NULLIF(BTRIM(pv.note), ''), '') AS note,
             NULLIF(BTRIM(p.external_issue_number), '') AS external_issue_number,
-            p.url,
+            pv.url,
             COALESCE(
                 (
                     SELECT COUNT(*)::bigint
                     FROM proposal_lines pl
                     WHERE pl.tenant_id = p.tenant_id
-                      AND pl.proposal_id = p.id
+                       AND pl.proposal_id = p.id
+                       AND pl.version_number = pv.version_number
                 ),
                 0
             ) AS line_count
         FROM proposals p
+        JOIN proposal_versions pv
+          ON pv.tenant_id = p.tenant_id
+         AND pv.proposal_id = p.id
+         AND pv.version_number = p.current_version_number
         JOIN devices d
-          ON d.tenant_id = p.tenant_id
-         AND d.id = p.device_id
+          ON d.tenant_id = pv.tenant_id
+         AND d.id = pv.device_id
         JOIN site_locations sl
           ON sl.tenant_id = d.tenant_id
-         AND sl.id = d.location_id
+          AND sl.id = d.location_id
         JOIN buildings b
           ON b.tenant_id = sl.tenant_id
          AND b.id = sl.building_id
@@ -696,8 +737,8 @@ async fn load_admin_proposal_detail_row(
          AND bc.device_id = d.id
          AND bc.deactivated_at IS NULL
         LEFT JOIN users cu
-          ON cu.tenant_id = p.tenant_id
-         AND cu.id = p.created_by
+          ON cu.tenant_id = pv.tenant_id
+          AND cu.id = pv.created_by
         WHERE p.tenant_id = $1
           AND p.id = $2
         "#,
@@ -714,6 +755,7 @@ async fn load_admin_proposal_lines(
     pool: &sqlx::PgPool,
     tenant_id: uuid::Uuid,
     proposal_id: uuid::Uuid,
+    version_number: i32,
 ) -> Result<Vec<AdminProposalLineDbRow>, ApiError> {
     sqlx::query_as::<_, AdminProposalLineDbRow>(
         r#"
@@ -727,7 +769,43 @@ async fn load_admin_proposal_lines(
         FROM proposal_lines pl
         WHERE pl.tenant_id = $1
           AND pl.proposal_id = $2
+          AND pl.version_number = $3
         ORDER BY pl.position ASC, pl.id ASC
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(proposal_id)
+    .bind(version_number)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)
+}
+
+async fn load_admin_proposal_versions(
+    pool: &sqlx::PgPool,
+    tenant_id: uuid::Uuid,
+    proposal_id: uuid::Uuid,
+) -> Result<Vec<AdminProposalVersionDbRow>, ApiError> {
+    sqlx::query_as::<_, AdminProposalVersionDbRow>(
+        r#"
+        SELECT
+            pv.version_number,
+            pv.created_at,
+            cu.full_name AS created_by_name,
+            pv.net_price,
+            pv.currency,
+            pv.url
+        FROM proposal_versions pv
+        JOIN proposals p
+          ON p.tenant_id = pv.tenant_id
+         AND p.id = pv.proposal_id
+        LEFT JOIN users cu
+          ON cu.tenant_id = pv.tenant_id
+         AND cu.id = pv.created_by
+        WHERE pv.tenant_id = $1
+          AND pv.proposal_id = $2
+          AND pv.version_number < p.current_version_number
+        ORDER BY pv.version_number DESC
         "#,
     )
     .bind(tenant_id)
@@ -743,13 +821,18 @@ async fn load_admin_proposal_detail_response(
     proposal_id: uuid::Uuid,
 ) -> Result<AdminProposalDetailResponse, ApiError> {
     let row = load_admin_proposal_detail_row(pool, tenant_id, proposal_id).await?;
-    let lines = load_admin_proposal_lines(pool, tenant_id, proposal_id)
+    let versions = load_admin_proposal_versions(pool, tenant_id, proposal_id)
+        .await?
+        .into_iter()
+        .map(response_version_row)
+        .collect::<Vec<_>>();
+    let lines = load_admin_proposal_lines(pool, tenant_id, proposal_id, row.version_number)
         .await?
         .into_iter()
         .map(response_line_from_db)
         .collect::<Vec<_>>();
 
-    Ok(response_detail_row(row, lines))
+    Ok(response_detail_row(row, versions, lines))
 }
 
 async fn load_proposal_pdf_snapshot(
@@ -762,10 +845,11 @@ async fn load_proposal_pdf_snapshot(
         SELECT
             p.id AS proposal_id,
             p.tenant_id,
-            p.url,
+            pv.version_number,
+            pv.url,
             to_char(timezone('Europe/Budapest', clock_timestamp()), 'YYYY.MM.DD. HH24:MI') AS proposal_generated_at,
-            to_char(timezone('Europe/Budapest', p.created_at), 'YYYY.MM.DD.') AS proposal_created_date_display,
-            to_char(timezone('Europe/Budapest', p.created_at), 'YYYYMMDD') AS proposal_created_date,
+            to_char(timezone('Europe/Budapest', pv.created_at), 'YYYY.MM.DD.') AS proposal_created_date_display,
+            to_char(timezone('Europe/Budapest', pv.created_at), 'YYYYMMDD') AS proposal_created_date,
             cu.full_name AS created_by_name,
             NULLIF(BTRIM(d.source_device_code), '') AS device_source_device_code,
             d.kind::text AS device_kind,
@@ -776,13 +860,17 @@ async fn load_proposal_pdf_snapshot(
             sl.wing,
             sl.floor,
             sl.room,
-            p.net_price,
-            COALESCE(NULLIF(BTRIM(p.note), ''), '') AS proposal_note,
+            pv.net_price,
+            COALESCE(NULLIF(BTRIM(pv.note), ''), '') AS proposal_note,
             NULLIF(BTRIM(p.external_issue_number), '') AS external_issue_number
         FROM proposals p
+        JOIN proposal_versions pv
+          ON pv.tenant_id = p.tenant_id
+         AND pv.proposal_id = p.id
+         AND pv.version_number = p.current_version_number
         JOIN devices d
-          ON d.tenant_id = p.tenant_id
-         AND d.id = p.device_id
+          ON d.tenant_id = pv.tenant_id
+         AND d.id = pv.device_id
         JOIN site_locations sl
           ON sl.tenant_id = d.tenant_id
          AND sl.id = d.location_id
@@ -790,11 +878,11 @@ async fn load_proposal_pdf_snapshot(
           ON b.tenant_id = sl.tenant_id
          AND b.id = sl.building_id
         LEFT JOIN users cu
-          ON cu.tenant_id = p.tenant_id
-          AND cu.id = p.created_by
+          ON cu.tenant_id = pv.tenant_id
+         AND cu.id = pv.created_by
         WHERE p.tenant_id = $1
           AND p.id = $2
-        FOR UPDATE OF p
+        FOR UPDATE OF p, pv
         "#,
     )
     .bind(tenant_id)
@@ -815,11 +903,97 @@ async fn load_proposal_pdf_snapshot(
         FROM proposal_lines pl
         WHERE pl.tenant_id = $1
           AND pl.proposal_id = $2
+          AND pl.version_number = $3
         ORDER BY pl.position ASC, pl.id ASC
         "#,
     )
     .bind(tenant_id)
     .bind(proposal_id)
+    .bind(core.version_number)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(ProposalPdfSnapshot { core, lines })
+}
+
+async fn load_proposal_version_pdf_snapshot(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: uuid::Uuid,
+    proposal_id: uuid::Uuid,
+    version_number: i32,
+) -> Result<ProposalPdfSnapshot, ApiError> {
+    let core = sqlx::query_as::<_, ProposalPdfCoreRow>(
+        r#"
+        SELECT
+            p.id AS proposal_id,
+            p.tenant_id,
+            pv.version_number,
+            pv.url,
+            to_char(timezone('Europe/Budapest', clock_timestamp()), 'YYYY.MM.DD. HH24:MI') AS proposal_generated_at,
+            to_char(timezone('Europe/Budapest', pv.created_at), 'YYYY.MM.DD.') AS proposal_created_date_display,
+            to_char(timezone('Europe/Budapest', pv.created_at), 'YYYYMMDD') AS proposal_created_date,
+            cu.full_name AS created_by_name,
+            NULLIF(BTRIM(d.source_device_code), '') AS device_source_device_code,
+            d.kind::text AS device_kind,
+            d.brand AS device_brand,
+            d.model AS device_model,
+            b.address AS building_address,
+            sl.location_description,
+            sl.wing,
+            sl.floor,
+            sl.room,
+            pv.net_price,
+            COALESCE(NULLIF(BTRIM(pv.note), ''), '') AS proposal_note,
+            NULLIF(BTRIM(p.external_issue_number), '') AS external_issue_number
+        FROM proposals p
+        JOIN proposal_versions pv
+          ON pv.tenant_id = p.tenant_id
+         AND pv.proposal_id = p.id
+         AND pv.version_number = $3
+        JOIN devices d
+          ON d.tenant_id = pv.tenant_id
+         AND d.id = pv.device_id
+        JOIN site_locations sl
+          ON sl.tenant_id = d.tenant_id
+         AND sl.id = d.location_id
+        JOIN buildings b
+          ON b.tenant_id = sl.tenant_id
+         AND b.id = sl.building_id
+        LEFT JOIN users cu
+          ON cu.tenant_id = pv.tenant_id
+         AND cu.id = pv.created_by
+        WHERE p.tenant_id = $1
+          AND p.id = $2
+        FOR UPDATE OF p, pv
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(proposal_id)
+    .bind(version_number)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(|| ApiError::forbidden("Az ajánlat nem található a jelenlegi tenanthez."))?;
+
+    let lines = sqlx::query_as::<_, ProposalPdfLineRow>(
+        r#"
+        SELECT
+            pl.position,
+            pl.item,
+            pl.quantity,
+            pl.uom,
+            pl.net_unit_price
+        FROM proposal_lines pl
+        WHERE pl.tenant_id = $1
+          AND pl.proposal_id = $2
+          AND pl.version_number = $3
+        ORDER BY pl.position ASC, pl.id ASC
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(proposal_id)
+    .bind(version_number)
     .fetch_all(&mut **tx)
     .await
     .map_err(ApiError::internal)?;
@@ -832,6 +1006,7 @@ fn proposal_pdf_attachment_filename(snapshot: &ProposalPdfSnapshot) -> String {
         &snapshot.core.building_address,
         &snapshot.core.proposal_created_date,
         snapshot.core.proposal_id,
+        snapshot.core.version_number,
     )
 }
 
@@ -876,6 +1051,7 @@ fn response_list_row(row: AdminProposalListRow) -> AdminProposalListResponseRow 
 
 fn response_detail_row(
     row: AdminProposalDetailRow,
+    versions: Vec<AdminProposalVersionRow>,
     lines: Vec<AdminProposalLineRow>,
 ) -> AdminProposalDetailResponse {
     AdminProposalDetailResponse {
@@ -903,7 +1079,19 @@ fn response_detail_row(
         external_issue_number: row.external_issue_number,
         url: row.url,
         line_count: row.line_count,
+        versions,
         lines,
+    }
+}
+
+fn response_version_row(row: AdminProposalVersionDbRow) -> AdminProposalVersionRow {
+    AdminProposalVersionRow {
+        version_number: row.version_number,
+        created_at: row.created_at,
+        created_by_name: row.created_by_name,
+        net_price: decimal_to_string(row.net_price),
+        currency: row.currency,
+        url: row.url,
     }
 }
 
@@ -969,6 +1157,7 @@ async fn insert_admin_proposal_lines(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: uuid::Uuid,
     proposal_id: uuid::Uuid,
+    version_number: i32,
     validated_lines: &[(String, Decimal, String, Decimal)],
 ) -> Result<(), ApiError> {
     for (index, (item, quantity, uom, net_unit_price)) in validated_lines.iter().enumerate() {
@@ -977,17 +1166,19 @@ async fn insert_admin_proposal_lines(
             INSERT INTO proposal_lines (
                 tenant_id,
                 proposal_id,
+                version_number,
                 position,
                 item,
                 quantity,
                 uom,
                 net_unit_price
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             "#,
         )
         .bind(tenant_id)
         .bind(proposal_id)
+        .bind(version_number)
         .bind((index + 1) as i32)
         .bind(item)
         .bind(quantity)
@@ -1029,30 +1220,24 @@ async fn save_admin_proposal(
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
 
     let saved_proposal_id = if let Some(proposal_id) = proposal_id {
-        let updated_id = sqlx::query_scalar::<_, uuid::Uuid>(
+        let next_version_number = sqlx::query_scalar::<_, i32>(
             r#"
             UPDATE proposals
-            SET device_id = $3,
-                net_price = $4,
-                note = NULLIF(BTRIM($5), ''),
-                external_issue_number = NULLIF(BTRIM($6), ''),
-                url = NULL
+            SET external_issue_number = NULLIF(BTRIM($3), ''),
+                current_version_number = current_version_number + 1
             WHERE tenant_id = $1
               AND id = $2
-            RETURNING id
+            RETURNING current_version_number
             "#,
         )
         .bind(tenant_id)
         .bind(proposal_id)
-        .bind(payload.device_id)
-        .bind(net_price)
-        .bind(&payload.note)
         .bind(&payload.external_issue_number)
         .fetch_optional(&mut *tx)
         .await
         .map_err(ApiError::internal)?;
 
-        let Some(updated_id) = updated_id else {
+        let Some(next_version_number) = next_version_number else {
             return Err(ApiError::forbidden(
                 "Az ajánlat nem található a jelenlegi tenanthez.",
             ));
@@ -1060,45 +1245,82 @@ async fn save_admin_proposal(
 
         sqlx::query(
             r#"
-            DELETE FROM proposal_lines
-            WHERE tenant_id = $1
-              AND proposal_id = $2
+            INSERT INTO proposal_versions (
+                tenant_id,
+                proposal_id,
+                version_number,
+                device_id,
+                created_by,
+                net_price,
+                currency,
+                note
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, 'Ft', NULLIF(BTRIM($7), ''))
             "#,
         )
         .bind(tenant_id)
-        .bind(updated_id)
+        .bind(proposal_id)
+        .bind(next_version_number)
+        .bind(payload.device_id)
+        .bind(user_id)
+        .bind(net_price)
+        .bind(&payload.note)
         .execute(&mut *tx)
         .await
         .map_err(ApiError::internal)?;
 
-        insert_admin_proposal_lines(&mut tx, tenant_id, updated_id, &validated_lines).await?;
-        updated_id
+        insert_admin_proposal_lines(
+            &mut tx,
+            tenant_id,
+            proposal_id,
+            next_version_number,
+            &validated_lines,
+        )
+        .await?;
+        proposal_id
     } else {
         let created_id = sqlx::query_scalar::<_, uuid::Uuid>(
             r#"
             INSERT INTO proposals (
                 tenant_id,
-                device_id,
-                created_by,
-                net_price,
-                note,
                 external_issue_number
             )
-            VALUES ($1, $2, $3, $4, NULLIF(BTRIM($5), ''), NULLIF(BTRIM($6), ''))
+            VALUES ($1, NULLIF(BTRIM($2), ''))
             RETURNING id
             "#,
         )
         .bind(tenant_id)
-        .bind(payload.device_id)
-        .bind(user_id)
-        .bind(net_price)
-        .bind(&payload.note)
         .bind(&payload.external_issue_number)
         .fetch_one(&mut *tx)
         .await
         .map_err(ApiError::internal)?;
 
-        insert_admin_proposal_lines(&mut tx, tenant_id, created_id, &validated_lines).await?;
+        sqlx::query(
+            r#"
+            INSERT INTO proposal_versions (
+                tenant_id,
+                proposal_id,
+                version_number,
+                device_id,
+                created_by,
+                net_price,
+                currency,
+                note
+            )
+            VALUES ($1, $2, 1, $3, $4, $5, 'Ft', NULLIF(BTRIM($6), ''))
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(created_id)
+        .bind(payload.device_id)
+        .bind(user_id)
+        .bind(net_price)
+        .bind(&payload.note)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+
+        insert_admin_proposal_lines(&mut tx, tenant_id, created_id, 1, &validated_lines).await?;
         created_id
     };
 
@@ -1255,6 +1477,48 @@ pub async fn get_admin_proposal_pdf(
     Ok(proposal_attachment_response(&snapshot, pdf_bytes))
 }
 
+pub async fn get_admin_proposal_version_pdf(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((proposal_id, version_number)): Path<(uuid::Uuid, i32)>,
+) -> Result<Response, ApiError> {
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("database is not configured"))?;
+    let storage = state
+        .storage
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("worksheet storage is not configured"))?;
+    let user = require_session_user(&state, &headers).await?;
+    require_lead_or_admin(&user)?;
+
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+    let snapshot = load_proposal_version_pdf_snapshot(&mut tx, user.tenant_id, proposal_id, version_number).await?;
+
+    if let Some(url) = snapshot.core.url.as_deref() {
+        tx.commit().await.map_err(ApiError::internal)?;
+        return download_existing_pdf(storage, &snapshot, url).await;
+    }
+
+    let renderer = state.typst_renderer.as_ref().ok_or_else(|| {
+        ApiError::service_unavailable("worksheet render service is not configured")
+    })?;
+
+    let pdf_bytes = match generate_proposal_pdf(renderer, &snapshot).await {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            let _ = tx.rollback().await;
+            return Err(err);
+        }
+    };
+
+    let _ = store_proposal_pdf(&mut tx, storage, &snapshot, &pdf_bytes).await?;
+    tx.commit().await.map_err(ApiError::internal)?;
+
+    Ok(proposal_attachment_response(&snapshot, pdf_bytes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::proposal_filename;
@@ -1265,11 +1529,12 @@ mod tests {
             "Budapest, Kossuth tér 2-4.",
             "20260412",
             uuid::Uuid::parse_str("dfcc66ea-0000-0000-0000-000000000000").expect("valid uuid"),
+            3,
         );
 
         assert_eq!(
             filename,
-            "NoMa_ajanlat_Budapest-Kossuth-ter-2-4_20260412_dfcc66ea.pdf"
+            "NoMa_ajanlat_Budapest-Kossuth-ter-2-4_20260412_dfcc66ea_v3.pdf"
         );
     }
 }
