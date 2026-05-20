@@ -21,6 +21,7 @@
 #let report-generated-at = input-or-arg("report_generated_at", "-")
 #let service-date = input-or-arg("service_date", input-or-arg("maintenance_date", "-"))
 #let device-code = input-or-arg("device_code", input-or-arg("source_device_code", "-"))
+#let device-barcode = input-or-arg("device_barcode", "-")
 #let issue-number = input-or-arg("issue_number", input-or-arg("reference_number", "-"))
 #let building-address = input-or-arg("building_address", input-or-arg("report_location", "-"))
 #let building-code = input-or-arg("building_code", "-")
@@ -70,7 +71,7 @@
   ],
 )
 
-#set document(title: "Szervíz munkalap")
+#set document(title: "Szerviz munkalap")
 #set text(
   lang: "hu",
   font: ("Carlito", "DejaVu Sans"),
@@ -170,7 +171,7 @@
     [
       #text(size: 7.4pt, fill: accent, weight: "bold")[NoMa Klíma- és Hűtéstechnikai Kft.]
       #v(0.6mm)
-      #text(size: 18pt, fill: white, weight: "bold")[Szervíz munkalap]
+      #text(size: 18pt, fill: white, weight: "bold")[Szerviz munkalap]
     ],
   )
 ]
@@ -181,10 +182,11 @@
 #v(1.1mm)
 
 #grid(
-  columns: (1fr, 1fr, 1fr),
+  columns: (1fr, 1fr, 1fr, 1fr),
   gutter: 2.2mm,
-  [#stat([Szervíz dátuma], service-date)],
+  [#stat([Szerviz dátuma], service-date)],
   [#stat([Berendezés kód], device-code)],
+  [#stat([Vonalkód], device-barcode)],
   [#stat([Igénylési szám], issue-number)],
 )
 
@@ -198,7 +200,7 @@
   [#info-card([Helyiség], room)],
   [#info-card([Berendezés típusa], device-type)],
   [#info-card([Márka, modell], brand-model)],
-  [#info-card([Szervízt végző személy], maintainer)],
+  [#info-card([Szervizt végző személy], maintainer)],
 )
 
 #v(2mm)

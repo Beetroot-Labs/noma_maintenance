@@ -106,9 +106,6 @@ export default function ProposalsPage() {
             <Typography variant="h4" sx={{ fontWeight: 800 }}>
               Ajánlatok
             </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              Létrehozott ajánlatok és PDF letöltés.
-            </Typography>
           </Box>
 
           <Button
@@ -147,7 +144,7 @@ export default function ProposalsPage() {
                     <TableCell>Berendezés</TableCell>
                     <TableCell>Helyszín</TableCell>
                     <TableCell align="right">Nettó összeg</TableCell>
-                    <TableCell align="right">Sorok</TableCell>
+                    <TableCell align="right">Tételek</TableCell>
                     <TableCell>Készítette</TableCell>
                     <TableCell align="right">PDF</TableCell>
                   </TableRow>
@@ -187,7 +184,7 @@ export default function ProposalsPage() {
                         </Typography>
                       </TableCell>
                       <TableCell align="right">
-                        <Chip label={`${row.line_count} sor`} size="small" sx={{ fontWeight: 700 }} />
+                        <Chip label={`${row.line_count} tétel`} size="small" sx={{ fontWeight: 700 }} />
                       </TableCell>
                       <TableCell>{row.created_by_name ?? "-"}</TableCell>
                       <TableCell align="right">

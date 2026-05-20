@@ -26,6 +26,7 @@
 #let proposal-device-type = input-or-arg("proposal_device_type", "-")
 #let proposal-device-brand-model = input-or-arg("proposal_device_brand_model", "-")
 #let proposal-device-identifier = input-or-arg("proposal_device_identifier", "-")
+#let proposal-device-barcode = input-or-arg("proposal_device_barcode", "-")
 #let proposal-device-location = input-or-arg("proposal_device_location", "-")
 #let proposal-net-price = input-or-arg("proposal_net_price", "0 Ft")
 #let proposal-note = input-or-arg("proposal_note", "")
@@ -44,6 +45,22 @@
   #text(size: 7.9pt, weight: "semibold", fill: muted)[#label]
   #v(0.9mm)
   #text(size: 10.2pt, weight: "bold", fill: ink)[#value]
+]
+
+#let meta-pair(primary-label, primary-value, secondary-label, secondary-value) = box(
+  width: 100%,
+  fill: white,
+  stroke: (paint: border, thickness: 0.7pt),
+  radius: 6pt,
+  inset: (x: 4mm, y: 2.5mm),
+)[
+  #text(size: 7.9pt, weight: "semibold", fill: muted)[#primary-label]
+  #v(0.8mm)
+  #text(size: 10.2pt, weight: "bold", fill: ink)[#primary-value]
+  #v(1.0mm)
+  #text(size: 7.9pt, weight: "semibold", fill: muted)[#secondary-label]
+  #v(0.8mm)
+  #text(size: 10.2pt, weight: "bold", fill: ink)[#secondary-value]
 ]
 
 #let line-cells = lines.map(line => (
@@ -133,7 +150,7 @@
 #grid(
   columns: (1fr, 1fr),
   gutter: 4mm,
-  [#meta([Azonosító], proposal-device-identifier)],
+  [#meta-pair([Azonosító], proposal-device-identifier, [Vonalkód], proposal-device-barcode)],
   [#meta([Típus], proposal-device-type)],
   [#meta([Márka / modell], proposal-device-brand-model)],
   [#meta([Elhelyezkedés], proposal-device-location)],

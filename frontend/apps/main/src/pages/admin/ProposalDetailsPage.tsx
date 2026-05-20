@@ -153,9 +153,6 @@ export default function ProposalDetailsPage() {
               <Typography variant="h5" sx={{ fontWeight: 800 }}>
                 Ajánlat részletei
               </Typography>
-              <Typography variant="body2" color="text.secondary">
-                {payload.proposal_id}
-              </Typography>
             </Box>
           </Box>
 
@@ -167,7 +164,7 @@ export default function ProposalDetailsPage() {
                 onClick={() => setVersionsOpen(true)}
                 sx={{ textTransform: "none", color: "text.secondary" }}
               >
-                Verziók
+                Korábbi verziók
               </Button>
             ) : null}
             <Button
@@ -204,18 +201,11 @@ export default function ProposalDetailsPage() {
                 <Typography variant="body2" color="text.secondary">
                   {deviceLabel(payload)}
                 </Typography>
-                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", pt: 0.5 }}>
-                  <Chip label={payload.currency} sx={{ fontWeight: 700 }} />
-                  <Chip label={`${payload.line_count} sor`} sx={{ fontWeight: 700 }} />
-                </Box>
               </Box>
 
               <Box sx={{ display: "flex", flexDirection: "column", alignItems: { xs: "flex-start", md: "flex-end" }, gap: 0.75 }}>
                 <Typography variant="body2" color="text.secondary">
                   Létrehozta: <strong>{payload.created_by_name ?? "-"}</strong>
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  E-mail: <strong>{payload.created_by_email ?? "-"}</strong>
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
                   Dátum: <strong>{formatDateTime(new Date(payload.created_at))}</strong>
@@ -256,7 +246,7 @@ export default function ProposalDetailsPage() {
           </CardContent>
         </Card>
 
-        <TableContainer sx={{ borderRadius: 3, border: `1px solid ${appColors.border}`, overflow: "hidden" }}>
+        <TableContainer sx={{ borderRadius: 3, border: `1px solid ${appColors.border}`, overflowX: "auto", boxShadow: "0 10px 24px rgba(31, 50, 58, 0.08)" }}>
           <Table size="small" sx={{ minWidth: 1000 }}>
             <TableHead>
               <TableRow sx={{ bgcolor: "rgba(15, 23, 42, 0.04)" }}>
@@ -310,9 +300,6 @@ export default function ProposalDetailsPage() {
               <Typography variant="h6" sx={{ fontWeight: 800 }}>
                 Korábbi verziók
               </Typography>
-              <Typography variant="body2" color="text.secondary">
-                PDF letöltéshez.
-              </Typography>
             </Box>
             <IconButton onClick={() => setVersionsOpen(false)} aria-label="Bezárás">
               <X size={18} />
@@ -341,7 +328,7 @@ export default function ProposalDetailsPage() {
                 >
                   <Box sx={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 0.25 }}>
                     <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
-                      Verzió {version.version_number}
+                      v{version.version_number}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
                       {formatDateTime(new Date(version.created_at))}

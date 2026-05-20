@@ -13,11 +13,11 @@ use crate::state::{AppState, StorageConfig};
 use crate::storage::shift_service_worksheets_object_name;
 use crate::typst_render::TypstRenderClient;
 
-const SERVICE_TEMPLATE: &str = include_str!("../../worksheet_templates/SzervizMunkalap.typ");
-const SERVICE_TEMPLATE_FILENAME: &str = "SzervizMunkalap.typ";
-const SERVICE_LOGO: &[u8] =
+const SERVICE_WORKSHEET_TEMPLATE: &str = include_str!("../../worksheet_templates/service_worksheet.typ");
+const SERVICE_WORKSHEET_TEMPLATE_FILENAME: &str = "service_worksheet.typ";
+const SERVICE_WORKSHEET_LOGO: &[u8] =
     include_bytes!("../../frontend/apps/main/public/Noma_logo_color_text_vertical.png");
-const SERVICE_LOGO_FILENAME: &str = "Noma_logo_color_text_vertical.png";
+const SERVICE_WORKSHEET_LOGO_FILENAME: &str = "Noma_logo_color_text_vertical.png";
 
 #[derive(sqlx::FromRow)]
 struct ServiceWorksheetShiftCore {
@@ -36,8 +36,10 @@ struct ServiceWorksheetWorkRow {
     maintenance_id: uuid::Uuid,
     report_id: String,
     service_date: String,
+    service_date_code: String,
     issue_number: String,
     device_code: String,
+    device_barcode: String,
     room: String,
     device_type: String,
     device_brand: Option<String>,
@@ -73,8 +75,74 @@ struct ServiceWorksheetSnapshot {
     works: Vec<ServiceWorksheetWorkRow>,
 }
 
-fn zip_filename_for_work(work: &ServiceWorksheetWorkRow) -> String {
-    format!("szerviz_munkalap_{}.pdf", work.maintenance_id)
+fn map_filename_char(ch: char) -> Option<char> {
+    match ch {
+        'a'..='z' | 'A'..='Z' | '0'..='9' => Some(ch),
+        'á' | 'à' | 'â' | 'ä' | 'ã' | 'å' | 'ā' => Some('a'),
+        'Á' | 'À' | 'Â' | 'Ä' | 'Ã' | 'Å' | 'Ā' => Some('A'),
+        'é' | 'è' | 'ê' | 'ë' | 'ē' => Some('e'),
+        'É' | 'È' | 'Ê' | 'Ë' | 'Ē' => Some('E'),
+        'í' | 'ì' | 'î' | 'ï' => Some('i'),
+        'Í' | 'Ì' | 'Î' | 'Ï' => Some('I'),
+        'ó' | 'ò' | 'ô' | 'ö' | 'ő' | 'ø' => Some('o'),
+        'Ó' | 'Ò' | 'Ô' | 'Ö' | 'Ő' | 'Ø' => Some('O'),
+        'ú' | 'ù' | 'û' | 'ü' | 'ű' => Some('u'),
+        'Ú' | 'Ù' | 'Û' | 'Ü' | 'Ű' => Some('U'),
+        'ç' => Some('c'),
+        'Ç' => Some('C'),
+        'ñ' => Some('n'),
+        'Ñ' => Some('N'),
+        _ => None,
+    }
+}
+
+fn sanitize_filename_component(value: &str) -> String {
+    let mut output = String::new();
+    let mut pending_separator = false;
+
+    for ch in value.trim().chars() {
+        if let Some(mapped) = map_filename_char(ch) {
+            if pending_separator && !output.is_empty() {
+                output.push('-');
+            }
+            output.push(mapped);
+            pending_separator = false;
+        } else if !output.is_empty() {
+            pending_separator = true;
+        }
+    }
+
+    output.trim_matches('-').to_string()
+}
+
+fn service_worksheet_filename(
+    building_address: &str,
+    service_date_code: &str,
+    maintenance_id: uuid::Uuid,
+) -> String {
+    let building_address = sanitize_filename_component(building_address);
+    let building_address = if building_address.is_empty() {
+        "ismeretlen-helyszin".to_string()
+    } else {
+        building_address
+    };
+
+    let service_date_code = if service_date_code.trim().is_empty() {
+        "00000000".to_string()
+    } else {
+        service_date_code.trim().to_string()
+    };
+
+    let maintenance_id_short = maintenance_id
+        .to_string()
+        .replace('-', "")
+        .chars()
+        .take(8)
+        .collect::<String>();
+
+    format!(
+        "NoMa_szerviz_munkalap_{building_address}_{service_date_code}_{maintenance_id_short}.pdf"
+    )
 }
 
 fn service_photo_caption(
@@ -155,8 +223,8 @@ fn render_service_form(
     let mut form = Form::new()
         .part(
             "template",
-            Part::bytes(SERVICE_TEMPLATE.as_bytes().to_vec())
-                .file_name(SERVICE_TEMPLATE_FILENAME)
+            Part::bytes(SERVICE_WORKSHEET_TEMPLATE.as_bytes().to_vec())
+                .file_name(SERVICE_WORKSHEET_TEMPLATE_FILENAME)
                 .mime_str("application/vnd.typst")
                 .map_err(ApiError::internal)?,
         )
@@ -164,6 +232,7 @@ fn render_service_form(
         .text("report_generated_at", core.report_generated_at.clone())
         .text("service_date", work.service_date.clone())
         .text("device_code", work.device_code.clone())
+        .text("device_barcode", work.device_barcode.clone())
         .text("issue_number", work.issue_number.clone())
         .text("building_address", core.building_address.clone())
         .text("building_code", "-")
@@ -190,8 +259,8 @@ fn render_service_form(
         )
         .part(
             "logo_path",
-            Part::bytes(SERVICE_LOGO.to_vec())
-                .file_name(SERVICE_LOGO_FILENAME)
+            Part::bytes(SERVICE_WORKSHEET_LOGO.to_vec())
+                .file_name(SERVICE_WORKSHEET_LOGO_FILENAME)
                 .mime_str("image/png")
                 .map_err(ApiError::internal)?,
         );
@@ -310,11 +379,16 @@ async fn load_service_snapshot(
             mw.id AS maintenance_id,
             mw.id::text AS report_id,
             to_char(timezone('Europe/Budapest', mw.started_at), 'YYYY.MM.DD.') AS service_date,
+            to_char(timezone('Europe/Budapest', mw.started_at), 'YYYYMMDD') AS service_date_code,
             COALESCE(NULLIF(BTRIM(mw.issue_number), ''), '-') AS issue_number,
             COALESCE(
                 NULLIF(BTRIM(d.source_device_code), ''),
                 '-'
             ) AS device_code,
+            COALESCE(
+                NULLIF(BTRIM(bc.code), ''),
+                '-'
+            ) AS device_barcode,
             COALESCE(
                 NULLIF(
                     CONCAT_WS(', ',
@@ -366,7 +440,11 @@ async fn load_service_snapshot(
          AND d.id = mw.device_id
         LEFT JOIN site_locations l
           ON l.tenant_id = d.tenant_id
-          AND l.id = d.location_id
+           AND l.id = d.location_id
+        LEFT JOIN barcodes bc
+          ON bc.tenant_id = d.tenant_id
+         AND bc.device_id = d.id
+         AND bc.deactivated_at IS NULL
         JOIN users mu
           ON mu.tenant_id = mw.tenant_id
          AND mu.id = mw.maintainer_user_id
@@ -495,7 +573,10 @@ async fn generate_service_archive(
             referent_signature_bytes.as_deref(),
         )
         .await?;
-        pdf_entries.push((zip_filename_for_work(work), pdf_bytes));
+        pdf_entries.push((
+            service_worksheet_filename(&snapshot.core.building_address, &work.service_date_code, work.maintenance_id),
+            pdf_bytes,
+        ));
     }
 
     build_zip(&pdf_entries)
@@ -615,4 +696,23 @@ pub async fn get_admin_shift_service_worksheets(
     tx.commit().await.map_err(ApiError::internal)?;
 
     Ok(zip_attachment_response(shift_id, zip_bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::service_worksheet_filename;
+
+    #[test]
+    fn formats_service_worksheet_filename() {
+        let filename = service_worksheet_filename(
+            "Budapest, Alkotmány u. 5.",
+            "20260514",
+            uuid::Uuid::parse_str("53fc165b-faaa-423b-8b33-fd456497e8cf").expect("valid uuid"),
+        );
+
+        assert_eq!(
+            filename,
+            "NoMa_szerviz_munkalap_Budapest-Alkotmany-u-5_20260514_53fc165b.pdf"
+        );
+    }
 }

@@ -11,14 +11,14 @@ use crate::state::{AppState, StorageConfig};
 use crate::storage::shift_report_object_name;
 use crate::typst_render::TypstRenderClient;
 
-const MUNKALAP_TEMPLATE: &str = include_str!("../../worksheet_templates/Munkalap.typ");
-const MUNKALAP_LOGO: &[u8] =
+const SHIFT_REPORT_TEMPLATE: &str = include_str!("../../worksheet_templates/shift_report.typ");
+const SHIFT_REPORT_LOGO: &[u8] =
     include_bytes!("../../frontend/apps/main/public/Noma_logo_color_text_vertical.png");
-const MUNKALAP_TEMPLATE_FILENAME: &str = "Munkalap.typ";
-const MUNKALAP_ROWS_FILENAME: &str = "munkalap_rows.csv";
-const MUNKALAP_WORKERS_FILENAME: &str = "munkalap_workers.csv";
-const MUNKALAP_LOGO_FILENAME: &str = "Noma_logo_color_text_vertical.png";
-const MUNKALAP_CLIENT_SIGNATURE_FILENAME: &str = "signature_client.png";
+const SHIFT_REPORT_TEMPLATE_FILENAME: &str = "shift_report.typ";
+const SHIFT_REPORT_ROWS_FILENAME: &str = "shift_report_rows.csv";
+const SHIFT_REPORT_WORKERS_FILENAME: &str = "shift_report_workers.csv";
+const SHIFT_REPORT_LOGO_FILENAME: &str = "Noma_logo_color_text_vertical.png";
+const SHIFT_REPORT_CLIENT_SIGNATURE_FILENAME: &str = "signature_client.png";
 
 #[derive(sqlx::FromRow)]
 struct ShiftReportCoreRow {
@@ -216,8 +216,8 @@ fn build_shift_report_form(
     let mut form = Form::new()
         .part(
             "template",
-            Part::bytes(MUNKALAP_TEMPLATE.as_bytes().to_vec())
-                .file_name(MUNKALAP_TEMPLATE_FILENAME)
+            Part::bytes(SHIFT_REPORT_TEMPLATE.as_bytes().to_vec())
+                .file_name(SHIFT_REPORT_TEMPLATE_FILENAME)
                 .mime_str("application/vnd.typst")
                 .map_err(ApiError::internal)?,
         )
@@ -245,21 +245,21 @@ fn build_shift_report_form(
         .part(
             "rows_csv",
             Part::bytes(render_rows_csv(&snapshot.rows).into_bytes())
-                .file_name(MUNKALAP_ROWS_FILENAME)
+                .file_name(SHIFT_REPORT_ROWS_FILENAME)
                 .mime_str("text/csv")
                 .map_err(ApiError::internal)?,
         )
         .part(
             "workers_csv",
             Part::bytes(render_workers_csv(&snapshot.workers).into_bytes())
-                .file_name(MUNKALAP_WORKERS_FILENAME)
+                .file_name(SHIFT_REPORT_WORKERS_FILENAME)
                 .mime_str("text/csv")
                 .map_err(ApiError::internal)?,
         )
         .part(
             "logo_path",
-            Part::bytes(MUNKALAP_LOGO.to_vec())
-                .file_name(MUNKALAP_LOGO_FILENAME)
+            Part::bytes(SHIFT_REPORT_LOGO.to_vec())
+                .file_name(SHIFT_REPORT_LOGO_FILENAME)
                 .mime_str("image/png")
                 .map_err(ApiError::internal)?,
         );
@@ -268,7 +268,7 @@ fn build_shift_report_form(
         form = form.part(
             "client_signature_path",
             Part::bytes(client_signature_bytes.to_vec())
-                .file_name(MUNKALAP_CLIENT_SIGNATURE_FILENAME)
+                .file_name(SHIFT_REPORT_CLIENT_SIGNATURE_FILENAME)
                 .mime_str("image/png")
                 .map_err(ApiError::internal)?,
         );

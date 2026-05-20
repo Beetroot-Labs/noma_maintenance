@@ -14,10 +14,10 @@ use crate::state::{AppState, StorageConfig};
 use crate::storage::proposal_object_name;
 use crate::typst_render::TypstRenderClient;
 
-const PROPOSAL_TEMPLATE: &str = include_str!("../../worksheet_templates/Ajanlat.typ");
+const PROPOSAL_TEMPLATE: &str = include_str!("../../worksheet_templates/proposal.typ");
 const PROPOSAL_LOGO: &[u8] =
     include_bytes!("../../frontend/apps/main/public/Noma_logo_color_text_vertical.png");
-const PROPOSAL_TEMPLATE_FILENAME: &str = "Ajanlat.typ";
+const PROPOSAL_TEMPLATE_FILENAME: &str = "proposal.typ";
 const PROPOSAL_LOGO_FILENAME: &str = "Noma_logo_color_text_vertical.png";
 
 #[derive(Deserialize)]
@@ -195,6 +195,7 @@ struct ProposalPdfCoreRow {
     proposal_created_date_display: String,
     proposal_created_date: String,
     created_by_name: Option<String>,
+    device_barcode: Option<String>,
     device_source_device_code: Option<String>,
     device_kind: String,
     device_brand: Option<String>,
@@ -382,14 +383,6 @@ fn proposal_brand_model(brand: Option<&str>, model: Option<&str>) -> String {
     }
 }
 
-fn proposal_identifier(source_device_code: Option<&str>) -> String {
-    source_device_code
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("-")
-        .to_string()
-}
-
 fn proposal_location(
     floor: Option<&str>,
     wing: Option<&str>,
@@ -498,7 +491,11 @@ fn build_proposal_form(snapshot: &ProposalPdfSnapshot) -> Result<Form, ApiError>
         .text("proposal_device_brand_model", brand_model)
         .text(
             "proposal_device_identifier",
-            proposal_identifier(snapshot.core.device_source_device_code.as_deref()),
+            snapshot.core.device_source_device_code.clone().unwrap_or_default(),
+        )
+        .text(
+            "proposal_device_barcode",
+            snapshot.core.device_barcode.clone().unwrap_or_default(),
         )
         .text(
             "proposal_device_location",
@@ -851,6 +848,7 @@ async fn load_proposal_pdf_snapshot(
             to_char(timezone('Europe/Budapest', pv.created_at), 'YYYY.MM.DD.') AS proposal_created_date_display,
             to_char(timezone('Europe/Budapest', pv.created_at), 'YYYYMMDD') AS proposal_created_date,
             cu.full_name AS created_by_name,
+            bc.code AS device_barcode,
             NULLIF(BTRIM(d.source_device_code), '') AS device_source_device_code,
             d.kind::text AS device_kind,
             d.brand AS device_brand,
@@ -871,6 +869,10 @@ async fn load_proposal_pdf_snapshot(
         JOIN devices d
           ON d.tenant_id = pv.tenant_id
          AND d.id = pv.device_id
+        LEFT JOIN barcodes bc
+          ON bc.tenant_id = d.tenant_id
+         AND bc.device_id = d.id
+         AND bc.deactivated_at IS NULL
         JOIN site_locations sl
           ON sl.tenant_id = d.tenant_id
          AND sl.id = d.location_id
@@ -934,6 +936,7 @@ async fn load_proposal_version_pdf_snapshot(
             to_char(timezone('Europe/Budapest', pv.created_at), 'YYYY.MM.DD.') AS proposal_created_date_display,
             to_char(timezone('Europe/Budapest', pv.created_at), 'YYYYMMDD') AS proposal_created_date,
             cu.full_name AS created_by_name,
+            bc.code AS device_barcode,
             NULLIF(BTRIM(d.source_device_code), '') AS device_source_device_code,
             d.kind::text AS device_kind,
             d.brand AS device_brand,
@@ -954,6 +957,10 @@ async fn load_proposal_version_pdf_snapshot(
         JOIN devices d
           ON d.tenant_id = pv.tenant_id
          AND d.id = pv.device_id
+        LEFT JOIN barcodes bc
+          ON bc.tenant_id = d.tenant_id
+         AND bc.device_id = d.id
+         AND bc.deactivated_at IS NULL
         JOIN site_locations sl
           ON sl.tenant_id = d.tenant_id
          AND sl.id = d.location_id
