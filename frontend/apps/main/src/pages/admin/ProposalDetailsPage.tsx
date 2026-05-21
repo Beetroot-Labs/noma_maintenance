@@ -24,6 +24,7 @@ import {
 import { ArrowLeft, Download, Edit3, X } from "lucide-react";
 import { getDeviceKindLabel } from "@noma/shared";
 import { Layout } from "@/components/Layout";
+import { downloadFromApi } from "@/lib/download";
 import { formatDateTime } from "@/lib/date";
 import { formatBrandModel, formatMoney, formatProposalLocation, formatQuantity } from "@/lib/proposals";
 import { appColors } from "@/theme";
@@ -177,7 +178,12 @@ export default function ProposalDetailsPage() {
             <Button
               variant="contained"
               startIcon={<Download size={16} />}
-              onClick={() => window.open(`/api/admin/proposals/${payload.proposal_id}/pdf`, "_blank", "noopener,noreferrer")}
+              onClick={() =>
+                void downloadFromApi(
+                  `/api/admin/proposals/${payload.proposal_id}/pdf`,
+                  "Nem sikerült letölteni az ajánlatot.",
+                )
+              }
             >
               PDF letöltése
             </Button>
@@ -196,6 +202,9 @@ export default function ProposalDetailsPage() {
             >
               <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
                 <Typography variant="h6" sx={{ fontWeight: 800 }}>
+                  {payload.external_issue_number?.trim() || "-"}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
                   {deviceIdentifier(payload)}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
@@ -337,19 +346,18 @@ export default function ProposalDetailsPage() {
                       {version.created_by_name ?? "-"} · {formatMoney(version.net_price, version.currency)}
                     </Typography>
                   </Box>
-                  <Button
-                    size="small"
-                    variant="text"
-                    startIcon={<Download size={16} />}
-                    onClick={() =>
-                      window.open(
-                        `/api/admin/proposals/${payload.proposal_id}/versions/${version.version_number}/pdf`,
-                        "_blank",
-                        "noopener,noreferrer",
-                      )
-                    }
-                    sx={{ textTransform: "none" }}
-                  >
+                    <Button
+                      size="small"
+                      variant="text"
+                      startIcon={<Download size={16} />}
+                      onClick={() =>
+                        void downloadFromApi(
+                          `/api/admin/proposals/${payload.proposal_id}/versions/${version.version_number}/pdf`,
+                          "Nem sikerült letölteni a korábbi ajánlatverziót.",
+                        )
+                      }
+                      sx={{ textTransform: "none" }}
+                    >
                     PDF
                   </Button>
                 </Box>

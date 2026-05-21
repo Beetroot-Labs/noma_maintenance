@@ -1,23 +1,27 @@
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, header};
-use axum::response::{IntoResponse, Response};
+use axum::http::HeaderMap;
+use axum::response::Response;
 use cloud_storage::Object;
-use reqwest::multipart::{Form, Part};
 use serde::Serialize;
+use serde_json::json;
 use sqlx::{Postgres, Transaction};
 use std::io::{Cursor, Write};
 
 use crate::auth::{require_lead_or_admin, require_session_user};
+use crate::gcs::{
+    download_url_response, signed_download_url, signed_upload_url, typst_template_asset_object_name,
+    typst_template_object_name,
+};
 use crate::error::ApiError;
 use crate::state::{AppState, StorageConfig};
 use crate::storage::shift_service_worksheets_object_name;
-use crate::typst_render::TypstRenderClient;
+use crate::typst_render::{RenderUriAsset, RenderUriRequest, RenderUriResponse, TypstRenderClient};
 
-const SERVICE_WORKSHEET_TEMPLATE: &str = include_str!("../../worksheet_templates/service_worksheet.typ");
 const SERVICE_WORKSHEET_TEMPLATE_FILENAME: &str = "service_worksheet.typ";
-const SERVICE_WORKSHEET_LOGO: &[u8] =
-    include_bytes!("../../frontend/apps/main/public/Noma_logo_color_text_vertical.png");
 const SERVICE_WORKSHEET_LOGO_FILENAME: &str = "Noma_logo_color_text_vertical.png";
+const SERVICE_WORKSHEET_LOGO_BUNDLE_PATH: &str = "logo.png";
+const SERVICE_WORKSHEET_REFERENT_SIGNATURE_BUNDLE_PATH: &str = "referent_signature.png";
+const PDF_SIGN_URL_TTL_SECS: u32 = 600;
 
 #[derive(sqlx::FromRow)]
 struct ServiceWorksheetShiftCore {
@@ -25,6 +29,7 @@ struct ServiceWorksheetShiftCore {
     tenant_id: uuid::Uuid,
     service_worksheets_url: Option<String>,
     report_generated_at: String,
+    shift_start_date: String,
     building_address: String,
     report_client: Option<String>,
     report_client_role: Option<String>,
@@ -63,10 +68,8 @@ struct ServiceWorksheetPhotoArg {
 }
 
 struct ServiceWorksheetPhotoAsset {
-    field_name: String,
-    file_name: String,
-    mime_type: String,
-    bytes: Vec<u8>,
+    path: String,
+    url: String,
     caption: Option<String>,
 }
 
@@ -145,6 +148,36 @@ fn service_worksheet_filename(
     )
 }
 
+fn service_worksheet_archive_filename(
+    building_address: &str,
+    shift_start_date: &str,
+    shift_id: uuid::Uuid,
+) -> String {
+    let building_address = sanitize_filename_component(building_address);
+    let building_address = if building_address.is_empty() {
+        "ismeretlen-helyszin".to_string()
+    } else {
+        building_address
+    };
+
+    let shift_start_date = if shift_start_date.trim().is_empty() {
+        "00000000".to_string()
+    } else {
+        shift_start_date.trim().to_string()
+    };
+
+    let shift_id_short = shift_id
+        .to_string()
+        .replace('-', "")
+        .chars()
+        .take(8)
+        .collect::<String>();
+
+    format!(
+        "NoMa_szerviz_munkalapok_{building_address}_{shift_start_date}_{shift_id_short}.zip"
+    )
+}
+
 fn service_photo_caption(
     work: &ServiceWorksheetWorkRow,
     capture_note: Option<&str>,
@@ -172,38 +205,33 @@ fn service_photo_file_name(photo_id: uuid::Uuid, content_type: Option<&str>) -> 
     format!("service-photo-{photo_id}.{extension}")
 }
 
-fn zip_attachment_response(shift_id: uuid::Uuid, zip_bytes: Vec<u8>) -> Response {
-    let filename = format!("szerviz-munkalapok-{shift_id}.zip");
-    let content_disposition = format!("attachment; filename=\"{filename}\"");
-
-    (
-        [
-            (header::CONTENT_TYPE, "application/zip"),
-            (header::CONTENT_DISPOSITION, content_disposition.as_str()),
-        ],
-        zip_bytes,
-    )
-        .into_response()
-}
-
 async fn download_existing_archive(
     storage: &StorageConfig,
-    shift_id: uuid::Uuid,
+    snapshot: &ServiceWorksheetSnapshot,
     object_name: &str,
 ) -> Result<Response, ApiError> {
-    let zip_bytes = Object::download(&storage.bucket, object_name)
-        .await
-        .map_err(ApiError::internal)?;
+    let filename = service_worksheet_archive_filename(
+        &snapshot.core.building_address,
+        &snapshot.core.shift_start_date,
+        snapshot.core.shift_id,
+    );
+    let download_url = signed_download_url(
+        &storage.bucket,
+        object_name,
+        PDF_SIGN_URL_TTL_SECS,
+        Some(&filename),
+    )
+    .map_err(ApiError::internal)?;
 
-    Ok(zip_attachment_response(shift_id, zip_bytes))
+    Ok(download_url_response(download_url))
 }
 
-fn render_service_form(
+fn build_service_worksheet_inputs(
     core: &ServiceWorksheetShiftCore,
     work: &ServiceWorksheetWorkRow,
     photos: &[ServiceWorksheetPhotoAsset],
-    referent_signature_bytes: Option<&[u8]>,
-) -> Result<Form, ApiError> {
+    referent_signature_path: Option<&str>,
+) -> serde_json::Value {
     let brand_model = match (
         work.device_brand
             .as_ref()
@@ -220,106 +248,134 @@ fn render_service_form(
         (None, None) => String::new(),
     };
 
-    let mut form = Form::new()
-        .part(
-            "template",
-            Part::bytes(SERVICE_WORKSHEET_TEMPLATE.as_bytes().to_vec())
-                .file_name(SERVICE_WORKSHEET_TEMPLATE_FILENAME)
-                .mime_str("application/vnd.typst")
-                .map_err(ApiError::internal)?,
-        )
-        .text("report_id", work.report_id.clone())
-        .text("report_generated_at", core.report_generated_at.clone())
-        .text("service_date", work.service_date.clone())
-        .text("device_code", work.device_code.clone())
-        .text("device_barcode", work.device_barcode.clone())
-        .text("issue_number", work.issue_number.clone())
-        .text("building_address", core.building_address.clone())
-        .text("building_code", "-")
-        .text("room", work.room.clone())
-        .text("device_type", work.device_type.clone())
-        .text(
-            "device_brand",
-            work.device_brand.clone().unwrap_or_default(),
-        )
-        .text(
-            "device_model",
-            work.device_model.clone().unwrap_or_default(),
-        )
-        .text("brand_model", brand_model)
-        .text("maintainer", work.maintainer.clone())
-        .text("note", work.note.clone().unwrap_or_else(|| "-".to_string()))
-        .text(
-            "referent_name",
-            core.report_client.clone().unwrap_or_default(),
-        )
-        .text(
-            "referent_role",
-            core.report_client_role.clone().unwrap_or_default(),
-        )
-        .part(
-            "logo_path",
-            Part::bytes(SERVICE_WORKSHEET_LOGO.to_vec())
-                .file_name(SERVICE_WORKSHEET_LOGO_FILENAME)
-                .mime_str("image/png")
-                .map_err(ApiError::internal)?,
-        );
+    let photo_args: Vec<ServiceWorksheetPhotoArg> = photos
+        .iter()
+        .map(|photo| ServiceWorksheetPhotoArg {
+            path: photo.path.clone(),
+            caption: photo.caption.clone(),
+        })
+        .collect();
+    let photo_args_alias = photo_args.clone();
 
-    if !photos.is_empty() {
-        let photo_args: Vec<ServiceWorksheetPhotoArg> = photos
-            .iter()
-            .map(|photo| ServiceWorksheetPhotoArg {
-                path: photo.field_name.clone(),
-                caption: photo.caption.clone(),
-            })
-            .collect();
-        let photo_args_alias = photo_args.clone();
+    let mut value = json!({
+        "report_id": work.report_id.clone(),
+        "report_generated_at": core.report_generated_at.clone(),
+        "service_date": work.service_date.clone(),
+        "device_code": work.device_code.clone(),
+        "device_barcode": work.device_barcode.clone(),
+        "issue_number": work.issue_number.clone(),
+        "building_address": core.building_address.clone(),
+        "building_code": "-",
+        "room": work.room.clone(),
+        "device_type": work.device_type.clone(),
+        "device_brand": work.device_brand.clone().unwrap_or_default(),
+        "device_model": work.device_model.clone().unwrap_or_default(),
+        "brand_model": brand_model,
+        "maintainer": work.maintainer.clone(),
+        "note": work.note.clone().unwrap_or_else(|| "-".to_string()),
+        "referent_name": core.report_client.clone().unwrap_or_default(),
+        "referent_role": core.report_client_role.clone().unwrap_or_default(),
+        "logo_path": SERVICE_WORKSHEET_LOGO_BUNDLE_PATH,
+        "args": {
+            "photos": photo_args,
+            "images": photo_args_alias,
+        },
+    });
 
-        form = form.text(
-            "args",
-            serde_json::json!({
-                "photos": photo_args,
-                "images": photo_args_alias,
-            })
-            .to_string(),
-        );
-
-        for photo in photos {
-            form = form.part(
-                photo.field_name.clone(),
-                Part::bytes(photo.bytes.clone())
-                    .file_name(photo.file_name.clone())
-                    .mime_str(&photo.mime_type)
-                    .map_err(ApiError::internal)?,
-            );
-        }
+    if let Some(referent_signature_path) = referent_signature_path {
+        value["referent_signature_path"] = serde_json::Value::String(referent_signature_path.to_string());
     }
 
-    if let Some(referent_signature_bytes) = referent_signature_bytes {
-        form = form.part(
-            "referent_signature_path",
-            Part::bytes(referent_signature_bytes.to_vec())
-                .file_name("referent_signature.png")
-                .mime_str("image/png")
-                .map_err(ApiError::internal)?,
-        );
-    }
+    value
+}
 
-    Ok(form)
+fn build_service_worksheet_render_uri_request(
+    storage: &StorageConfig,
+    core: &ServiceWorksheetShiftCore,
+    work: &ServiceWorksheetWorkRow,
+    photos: &[ServiceWorksheetPhotoAsset],
+    output_object_name: &str,
+    referent_signature_object_name: Option<&str>,
+) -> Result<RenderUriRequest, ApiError> {
+    let template_object_name = typst_template_object_name(SERVICE_WORKSHEET_TEMPLATE_FILENAME);
+    let template_url = signed_download_url(
+        &storage.bucket,
+        &template_object_name,
+        PDF_SIGN_URL_TTL_SECS,
+        None,
+    )
+    .map_err(ApiError::internal)?;
+    let output_url = signed_upload_url(&storage.bucket, output_object_name, PDF_SIGN_URL_TTL_SECS)
+        .map_err(ApiError::internal)?;
+    let logo_object_name = typst_template_asset_object_name(SERVICE_WORKSHEET_LOGO_FILENAME);
+    let logo_url = signed_download_url(
+        &storage.bucket,
+        &logo_object_name,
+        PDF_SIGN_URL_TTL_SECS,
+        None,
+    )
+    .map_err(ApiError::internal)?;
+
+    let mut assets = vec![RenderUriAsset {
+        path: SERVICE_WORKSHEET_LOGO_BUNDLE_PATH.to_string(),
+        url: logo_url,
+    }];
+
+    let referent_signature_path = if let Some(signature_object_name) = referent_signature_object_name
+    {
+        let url = signed_download_url(
+            &storage.bucket,
+            signature_object_name,
+            PDF_SIGN_URL_TTL_SECS,
+            None,
+        )
+        .map_err(ApiError::internal)?;
+        assets.push(RenderUriAsset {
+            path: SERVICE_WORKSHEET_REFERENT_SIGNATURE_BUNDLE_PATH.to_string(),
+            url,
+        });
+        Some(SERVICE_WORKSHEET_REFERENT_SIGNATURE_BUNDLE_PATH)
+    } else {
+        None
+    };
+
+    assets.extend(photos.iter().map(|photo| RenderUriAsset {
+        path: photo.path.clone(),
+        url: photo.url.clone(),
+    }));
+
+    Ok(RenderUriRequest {
+        template: template_url,
+        template_path: Some(SERVICE_WORKSHEET_TEMPLATE_FILENAME.to_string()),
+        inputs: Some(build_service_worksheet_inputs(
+            core,
+            work,
+            photos,
+            referent_signature_path,
+        )),
+        assets,
+        output: output_url,
+    })
 }
 
 async fn render_service_pdf(
     renderer: &TypstRenderClient,
+    storage: &StorageConfig,
     core: &ServiceWorksheetShiftCore,
     work: &ServiceWorksheetWorkRow,
     photos: &[ServiceWorksheetPhotoAsset],
-    referent_signature_bytes: Option<&[u8]>,
-) -> Result<Vec<u8>, ApiError> {
-    let form = render_service_form(core, work, photos, referent_signature_bytes)?;
-    renderer
-        .render_typst(form)
-        .await
-        .map_err(ApiError::internal)
+    output_object_name: &str,
+    referent_signature_object_name: Option<&str>,
+) -> Result<RenderUriResponse, ApiError> {
+    let request = build_service_worksheet_render_uri_request(
+        storage,
+        core,
+        work,
+        photos,
+        output_object_name,
+        referent_signature_object_name,
+    )?;
+    renderer.render_uri(request).await.map_err(ApiError::internal)
 }
 
 fn build_zip(entries: &[(String, Vec<u8>)]) -> Result<Vec<u8>, ApiError> {
@@ -350,6 +406,7 @@ async fn load_service_snapshot(
             s.tenant_id,
             s.service_worksheets_url,
             to_char(timezone('Europe/Budapest', clock_timestamp()), 'YYYY.MM.DD. HH24:MI') AS report_generated_at,
+            to_char(timezone('Europe/Budapest', COALESCE(s.started_at, s.created_at)), 'YYYYMMDD') AS shift_start_date,
             b.address AS building_address,
             ss.reference_person_name AS report_client,
             ss.reference_person_role AS report_client_role,
@@ -503,29 +560,16 @@ async fn load_service_work_photos(
             }
         };
 
-        let bytes = match Object::download(&storage.bucket, &photo.photo_url).await {
-            Ok(bytes) => bytes,
-            Err(err) => {
-                log::warn!(
-                    "Failed to download service photo {} for work {}: {}",
-                    photo.photo_id,
-                    work.maintenance_id,
-                    err
-                );
-                continue;
-            }
-        };
-
         let mime_type = metadata
             .content_type
             .unwrap_or_else(|| "image/jpeg".to_string());
-        let field_name = format!("service_photo_{}", photo.photo_id);
+        let path = service_photo_file_name(photo.photo_id, Some(mime_type.as_str()));
+        let url = signed_download_url(&storage.bucket, &photo.photo_url, PDF_SIGN_URL_TTL_SECS, None)
+            .map_err(ApiError::internal)?;
 
         assets.push(ServiceWorksheetPhotoAsset {
-            field_name,
-            file_name: service_photo_file_name(photo.photo_id, Some(mime_type.as_str())),
-            mime_type,
-            bytes,
+            path,
+            url,
             caption: service_photo_caption(work, photo.capture_note.as_deref()),
         });
     }
@@ -539,42 +583,51 @@ async fn generate_service_archive(
     tx: &mut Transaction<'_, Postgres>,
     snapshot: &ServiceWorksheetSnapshot,
 ) -> Result<Vec<u8>, ApiError> {
-    let referent_signature_bytes = if let Some(signature_object_name) = snapshot
-        .core
-        .referent_signature_image_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        match Object::download(&storage.bucket, signature_object_name).await {
-            Ok(bytes) => Some(bytes),
-            Err(err) => {
-                log::warn!(
-                    "Failed to download referent signature {} for service worksheets: {}",
-                    signature_object_name,
-                    err
-                );
-                None
-            }
-        }
-    } else {
-        None
-    };
-
     let mut pdf_entries = Vec::with_capacity(snapshot.works.len());
 
     for work in &snapshot.works {
         let photos = load_service_work_photos(storage, tx, snapshot.core.tenant_id, work).await?;
-        let pdf_bytes = render_service_pdf(
+        let filename = service_worksheet_filename(
+            &snapshot.core.building_address,
+            &work.service_date_code,
+            work.maintenance_id,
+        );
+        let temp_object_name = format!(
+            "{}/tenants/{}/shifts/{}/service-worksheets/{}",
+            storage.shift_service_worksheets_prefix,
+            snapshot.core.tenant_id,
+            snapshot.core.shift_id,
+            filename,
+        );
+        let render_result = render_service_pdf(
             renderer,
+            storage,
             &snapshot.core,
             work,
             &photos,
-            referent_signature_bytes.as_deref(),
+            &temp_object_name,
+            snapshot
+                .core
+                .referent_signature_image_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty()),
         )
         .await?;
+        log::info!(
+            "Service worksheet rendered for work {} in {} ms ({} bytes, upload {} ms)",
+            work.maintenance_id,
+            render_result.compile_ms,
+            render_result.bytes,
+            render_result.upload_ms,
+        );
+
+        let pdf_bytes = Object::download(&storage.bucket, &temp_object_name)
+            .await
+            .map_err(ApiError::internal)?;
+        let _ = Object::delete(&storage.bucket, &temp_object_name).await;
         pdf_entries.push((
-            service_worksheet_filename(&snapshot.core.building_address, &work.service_date_code, work.maintenance_id),
+            filename,
             pdf_bytes,
         ));
     }
@@ -660,7 +713,7 @@ pub async fn get_admin_shift_service_worksheets(
             service_worksheets_url
         );
         tx.commit().await.map_err(ApiError::internal)?;
-        return download_existing_archive(storage, shift_id, service_worksheets_url).await;
+        return download_existing_archive(storage, &snapshot, service_worksheets_url).await;
     }
 
     if snapshot.works.is_empty() {
@@ -690,17 +743,30 @@ pub async fn get_admin_shift_service_worksheets(
         "Uploading service worksheet archive for shift {} to GCS",
         shift_id
     );
-    let _ = store_service_archive(&mut tx, storage, &snapshot, &zip_bytes).await?;
+    let object_name = store_service_archive(&mut tx, storage, &snapshot, &zip_bytes).await?;
     log::info!("Service worksheet archive stored for shift {}", shift_id);
 
     tx.commit().await.map_err(ApiError::internal)?;
 
-    Ok(zip_attachment_response(shift_id, zip_bytes))
+    let filename = service_worksheet_archive_filename(
+        &snapshot.core.building_address,
+        &snapshot.core.shift_start_date,
+        snapshot.core.shift_id,
+    );
+    let download_url = signed_download_url(
+        &storage.bucket,
+        &object_name,
+        PDF_SIGN_URL_TTL_SECS,
+        Some(&filename),
+    )
+    .map_err(ApiError::internal)?;
+
+    Ok(download_url_response(download_url))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::service_worksheet_filename;
+    use super::{service_worksheet_archive_filename, service_worksheet_filename};
 
     #[test]
     fn formats_service_worksheet_filename() {
@@ -713,6 +779,20 @@ mod tests {
         assert_eq!(
             filename,
             "NoMa_szerviz_munkalap_Budapest-Alkotmany-u-5_20260514_53fc165b.pdf"
+        );
+    }
+
+    #[test]
+    fn formats_service_worksheet_archive_filename() {
+        let filename = service_worksheet_archive_filename(
+            "Budapest, Alkotmány u. 5.",
+            "20260514",
+            uuid::Uuid::parse_str("017a3d19-45cd-4269-819a-974d4f3b5c22").expect("valid uuid"),
+        );
+
+        assert_eq!(
+            filename,
+            "NoMa_szerviz_munkalapok_Budapest-Alkotmany-u-5_20260514_017a3d19.zip"
         );
     }
 }

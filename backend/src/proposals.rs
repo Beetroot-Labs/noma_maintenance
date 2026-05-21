@@ -1,24 +1,26 @@
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use cloud_storage::Object;
-use reqwest::multipart::{Form, Part};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sqlx::{Postgres, Transaction};
 use std::str::FromStr;
 
 use crate::auth::{require_lead_or_admin, require_session_user};
+use crate::gcs::{
+    download_url_response, signed_download_url, signed_upload_url, typst_template_asset_object_name,
+    typst_template_object_name,
+};
 use crate::error::ApiError;
 use crate::state::{AppState, StorageConfig};
 use crate::storage::proposal_object_name;
-use crate::typst_render::TypstRenderClient;
+use crate::typst_render::{RenderUriAsset, RenderUriRequest, RenderUriResponse, TypstRenderClient};
 
-const PROPOSAL_TEMPLATE: &str = include_str!("../../worksheet_templates/proposal.typ");
-const PROPOSAL_LOGO: &[u8] =
-    include_bytes!("../../frontend/apps/main/public/Noma_logo_color_text_vertical.png");
 const PROPOSAL_TEMPLATE_FILENAME: &str = "proposal.typ";
+const PROPOSAL_LOGO_BUNDLE_PATH: &str = "logo.png";
 const PROPOSAL_LOGO_FILENAME: &str = "Noma_logo_color_text_vertical.png";
+const PDF_SIGN_URL_TTL_SECS: u32 = 600;
 
 #[derive(Deserialize)]
 pub struct CreateAdminProposalRequest {
@@ -42,6 +44,7 @@ struct AdminProposalListRow {
     version_number: i32,
     created_at: chrono::DateTime<chrono::Utc>,
     created_by_name: Option<String>,
+    external_issue_number: Option<String>,
     device_id: uuid::Uuid,
     device_barcode: Option<String>,
     device_source_device_code: Option<String>,
@@ -136,6 +139,7 @@ pub struct AdminProposalListResponseRow {
     proposal_id: uuid::Uuid,
     created_at: chrono::DateTime<chrono::Utc>,
     created_by_name: Option<String>,
+    external_issue_number: Option<String>,
     device_id: uuid::Uuid,
     device_barcode: Option<String>,
     device_source_device_code: Option<String>,
@@ -408,21 +412,12 @@ fn proposal_location(
     }
 }
 
-fn proposal_attachment_response(snapshot: &ProposalPdfSnapshot, pdf_bytes: Vec<u8>) -> Response {
-    let filename = proposal_pdf_attachment_filename(snapshot);
-    let content_disposition = format!("attachment; filename=\"{filename}\"");
-
-    (
-        [
-            (header::CONTENT_TYPE, "application/pdf"),
-            (header::CONTENT_DISPOSITION, content_disposition.as_str()),
-        ],
-        pdf_bytes,
-    )
-        .into_response()
+fn proposal_download_response(download_url: String) -> Response {
+    download_url_response(download_url)
 }
 
-fn build_proposal_form(snapshot: &ProposalPdfSnapshot) -> Result<Form, ApiError> {
+fn build_proposal_inputs(snapshot: &ProposalPdfSnapshot) -> serde_json::Value {
+    let core = &snapshot.core;
     let lines: Vec<ProposalRenderLine> = snapshot
         .lines
         .iter()
@@ -452,120 +447,82 @@ fn build_proposal_form(snapshot: &ProposalPdfSnapshot) -> Result<Form, ApiError>
 
     let total_display = format_currency_for_pdf(snapshot.core.net_price);
 
-    let args = serde_json::json!({
-        "lines": lines,
+    json!({
+        "proposal_id": core.proposal_id.to_string(),
+        "proposal_generated_at": core.proposal_generated_at.clone(),
+        "proposal_created_at": core.proposal_created_date_display.clone(),
+        "proposal_created_by": core.created_by_name.clone().unwrap_or_else(|| "-".to_string()),
+        "proposal_building_address": core.building_address.clone(),
+        "proposal_device_name": device_name,
+        "proposal_device_type": device_type,
+        "proposal_device_brand_model": brand_model,
+        "proposal_device_identifier": core.device_source_device_code.clone().unwrap_or_default(),
+        "proposal_device_barcode": core.device_barcode.clone().unwrap_or_default(),
+        "proposal_device_location": proposal_location(
+            core.floor.as_deref(),
+            core.wing.as_deref(),
+            core.room.as_deref(),
+            core.location_description.as_deref(),
+        ),
+        "proposal_net_price": total_display,
+        "proposal_note": core.proposal_note.clone(),
+        "proposal_external_issue_number": core.external_issue_number.clone().unwrap_or_default(),
+        "logo_path": PROPOSAL_LOGO_BUNDLE_PATH,
+        "args": { "lines": lines },
     })
-    .to_string();
-
-    Ok(Form::new()
-        .part(
-            "template",
-            Part::bytes(PROPOSAL_TEMPLATE.as_bytes().to_vec())
-                .file_name(PROPOSAL_TEMPLATE_FILENAME)
-                .mime_str("application/vnd.typst")
-                .map_err(ApiError::internal)?,
-        )
-        .text("proposal_id", snapshot.core.proposal_id.to_string())
-        .text(
-            "proposal_generated_at",
-            snapshot.core.proposal_generated_at.clone(),
-        )
-        .text(
-            "proposal_created_at",
-            snapshot.core.proposal_created_date_display.clone(),
-        )
-        .text(
-            "proposal_created_by",
-            snapshot
-                .core
-                .created_by_name
-                .clone()
-                .unwrap_or_else(|| "-".to_string()),
-        )
-        .text(
-            "proposal_building_address",
-            snapshot.core.building_address.clone(),
-        )
-        .text("proposal_device_name", device_name)
-        .text("proposal_device_type", device_type)
-        .text("proposal_device_brand_model", brand_model)
-        .text(
-            "proposal_device_identifier",
-            snapshot.core.device_source_device_code.clone().unwrap_or_default(),
-        )
-        .text(
-            "proposal_device_barcode",
-            snapshot.core.device_barcode.clone().unwrap_or_default(),
-        )
-        .text(
-            "proposal_device_location",
-            proposal_location(
-                snapshot.core.floor.as_deref(),
-                snapshot.core.wing.as_deref(),
-                snapshot.core.room.as_deref(),
-                snapshot.core.location_description.as_deref(),
-            ),
-        )
-        .text("proposal_net_price", total_display)
-        .text("proposal_note", snapshot.core.proposal_note.clone())
-        .text(
-            "proposal_external_issue_number",
-            snapshot
-                .core
-                .external_issue_number
-                .clone()
-                .unwrap_or_default(),
-        )
-        .text("args", args)
-        .part(
-            "logo_path",
-            Part::bytes(PROPOSAL_LOGO.to_vec())
-                .file_name(PROPOSAL_LOGO_FILENAME)
-                .mime_str("image/png")
-                .map_err(ApiError::internal)?,
-        ))
 }
 
-async fn generate_proposal_pdf(
-    renderer: &TypstRenderClient,
-    snapshot: &ProposalPdfSnapshot,
-) -> Result<Vec<u8>, ApiError> {
-    let form = build_proposal_form(snapshot)?;
-    renderer
-        .render_typst(form)
-        .await
-        .map_err(ApiError::internal)
-}
-
-async fn store_proposal_pdf(
-    tx: &mut Transaction<'_, Postgres>,
+fn build_proposal_render_uri_request(
     storage: &StorageConfig,
     snapshot: &ProposalPdfSnapshot,
-    pdf_bytes: &[u8],
-) -> Result<String, ApiError> {
-    let filename = proposal_filename(
-        &snapshot.core.building_address,
-        &snapshot.core.proposal_created_date,
-        snapshot.core.proposal_id,
-        snapshot.core.version_number,
-    );
-    let object_name = proposal_object_name(
-        storage,
-        snapshot.core.tenant_id,
-        snapshot.core.proposal_id,
-        snapshot.core.version_number,
-        &filename,
-    );
-
-    Object::create(
+    output_object_name: &str,
+) -> Result<RenderUriRequest, ApiError> {
+    let template_object_name = typst_template_object_name(PROPOSAL_TEMPLATE_FILENAME);
+    let template_url = signed_download_url(
         &storage.bucket,
-        pdf_bytes.to_vec(),
-        &object_name,
-        "application/pdf",
+        &template_object_name,
+        PDF_SIGN_URL_TTL_SECS,
+        None,
     )
-    .await
+    .map_err(ApiError::internal)?;
+    let output_url = signed_upload_url(&storage.bucket, output_object_name, PDF_SIGN_URL_TTL_SECS)
+        .map_err(ApiError::internal)?;
+    let logo_object_name = typst_template_asset_object_name(PROPOSAL_LOGO_FILENAME);
+    let logo_url = signed_download_url(
+        &storage.bucket,
+        &logo_object_name,
+        PDF_SIGN_URL_TTL_SECS,
+        None,
+    )
     .map_err(ApiError::internal)?;
 
+    Ok(RenderUriRequest {
+        template: template_url,
+        template_path: Some(PROPOSAL_TEMPLATE_FILENAME.to_string()),
+        inputs: Some(build_proposal_inputs(snapshot)),
+        assets: vec![RenderUriAsset {
+            path: PROPOSAL_LOGO_BUNDLE_PATH.to_string(),
+            url: logo_url,
+        }],
+        output: output_url,
+    })
+}
+
+async fn render_proposal_pdf(
+    renderer: &TypstRenderClient,
+    storage: &StorageConfig,
+    snapshot: &ProposalPdfSnapshot,
+    output_object_name: &str,
+) -> Result<RenderUriResponse, ApiError> {
+    let request = build_proposal_render_uri_request(storage, snapshot, output_object_name)?;
+    renderer.render_uri(request).await.map_err(ApiError::internal)
+}
+
+async fn store_proposal_pdf_reference(
+    tx: &mut Transaction<'_, Postgres>,
+    snapshot: &ProposalPdfSnapshot,
+    object_name: &str,
+) -> Result<String, ApiError> {
     let updated = sqlx::query(
         r#"
         UPDATE proposal_versions
@@ -578,7 +535,7 @@ async fn store_proposal_pdf(
     )
     .bind(snapshot.core.tenant_id)
     .bind(snapshot.core.proposal_id)
-    .bind(&object_name)
+    .bind(object_name)
     .bind(snapshot.core.version_number)
     .execute(&mut **tx)
     .await
@@ -590,19 +547,22 @@ async fn store_proposal_pdf(
         ));
     }
 
-    Ok(object_name)
+    Ok(object_name.to_string())
 }
 
-async fn download_existing_pdf(
+fn proposal_download_url(
     storage: &StorageConfig,
     snapshot: &ProposalPdfSnapshot,
     object_name: &str,
-) -> Result<Response, ApiError> {
-    let pdf_bytes = Object::download(&storage.bucket, object_name)
-        .await
-        .map_err(ApiError::internal)?;
-
-    Ok(proposal_attachment_response(snapshot, pdf_bytes))
+) -> Result<String, ApiError> {
+    let filename = proposal_filename(
+        &snapshot.core.building_address,
+        &snapshot.core.proposal_created_date,
+        snapshot.core.proposal_id,
+        snapshot.core.version_number,
+    );
+    signed_download_url(&storage.bucket, object_name, PDF_SIGN_URL_TTL_SECS, Some(&filename))
+        .map_err(ApiError::internal)
 }
 
 async fn load_admin_proposal_list_row(
@@ -616,6 +576,7 @@ async fn load_admin_proposal_list_row(
             pv.version_number,
             pv.created_at,
             cu.full_name AS created_by_name,
+            NULLIF(BTRIM(p.external_issue_number), '') AS external_issue_number,
             pv.device_id,
             bc.code AS device_barcode,
             NULLIF(BTRIM(d.source_device_code), '') AS device_source_device_code,
@@ -1036,6 +997,7 @@ fn response_list_row(row: AdminProposalListRow) -> AdminProposalListResponseRow 
         proposal_id: row.proposal_id,
         created_at: row.created_at,
         created_by_name: row.created_by_name,
+        external_issue_number: row.external_issue_number,
         device_id: row.device_id,
         device_barcode: row.device_barcode,
         device_source_device_code: row.device_source_device_code,
@@ -1460,28 +1422,47 @@ pub async fn get_admin_proposal_pdf(
 
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
     let snapshot = load_proposal_pdf_snapshot(&mut tx, user.tenant_id, proposal_id).await?;
+    let filename = proposal_pdf_attachment_filename(&snapshot);
 
-    if let Some(url) = snapshot.core.url.as_deref() {
+    if let Some(object_name) = snapshot.core.url.as_deref() {
+        let download_url = proposal_download_url(storage, &snapshot, object_name)?;
         tx.commit().await.map_err(ApiError::internal)?;
-        return download_existing_pdf(storage, &snapshot, url).await;
+        return Ok(proposal_download_response(download_url));
     }
 
     let renderer = state.typst_renderer.as_ref().ok_or_else(|| {
         ApiError::service_unavailable("worksheet render service is not configured")
     })?;
 
-    let pdf_bytes = match generate_proposal_pdf(renderer, &snapshot).await {
-        Ok(bytes) => bytes,
+    let object_name = proposal_object_name(
+        storage,
+        snapshot.core.tenant_id,
+        snapshot.core.proposal_id,
+        snapshot.core.version_number,
+        &filename,
+    );
+
+    let render_result = match render_proposal_pdf(renderer, storage, &snapshot, &object_name).await {
+        Ok(result) => result,
         Err(err) => {
             let _ = tx.rollback().await;
             return Err(err);
         }
     };
 
-    let _ = store_proposal_pdf(&mut tx, storage, &snapshot, &pdf_bytes).await?;
+    log::info!(
+        "Proposal PDF rendered for {} in {} ms ({} bytes, upload {} ms)",
+        proposal_id,
+        render_result.compile_ms,
+        render_result.bytes,
+        render_result.upload_ms,
+    );
+
+    let _ = store_proposal_pdf_reference(&mut tx, &snapshot, &object_name).await?;
     tx.commit().await.map_err(ApiError::internal)?;
 
-    Ok(proposal_attachment_response(&snapshot, pdf_bytes))
+    let download_url = proposal_download_url(storage, &snapshot, &object_name)?;
+    Ok(proposal_download_response(download_url))
 }
 
 pub async fn get_admin_proposal_version_pdf(
@@ -1502,28 +1483,48 @@ pub async fn get_admin_proposal_version_pdf(
 
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
     let snapshot = load_proposal_version_pdf_snapshot(&mut tx, user.tenant_id, proposal_id, version_number).await?;
+    let filename = proposal_pdf_attachment_filename(&snapshot);
 
-    if let Some(url) = snapshot.core.url.as_deref() {
+    if let Some(object_name) = snapshot.core.url.as_deref() {
+        let download_url = proposal_download_url(storage, &snapshot, object_name)?;
         tx.commit().await.map_err(ApiError::internal)?;
-        return download_existing_pdf(storage, &snapshot, url).await;
+        return Ok(proposal_download_response(download_url));
     }
 
     let renderer = state.typst_renderer.as_ref().ok_or_else(|| {
         ApiError::service_unavailable("worksheet render service is not configured")
     })?;
 
-    let pdf_bytes = match generate_proposal_pdf(renderer, &snapshot).await {
-        Ok(bytes) => bytes,
+    let object_name = proposal_object_name(
+        storage,
+        snapshot.core.tenant_id,
+        snapshot.core.proposal_id,
+        snapshot.core.version_number,
+        &filename,
+    );
+
+    let render_result = match render_proposal_pdf(renderer, storage, &snapshot, &object_name).await {
+        Ok(result) => result,
         Err(err) => {
             let _ = tx.rollback().await;
             return Err(err);
         }
     };
 
-    let _ = store_proposal_pdf(&mut tx, storage, &snapshot, &pdf_bytes).await?;
+    log::info!(
+        "Proposal version PDF rendered for {} v{} in {} ms ({} bytes, upload {} ms)",
+        proposal_id,
+        version_number,
+        render_result.compile_ms,
+        render_result.bytes,
+        render_result.upload_ms,
+    );
+
+    let _ = store_proposal_pdf_reference(&mut tx, &snapshot, &object_name).await?;
     tx.commit().await.map_err(ApiError::internal)?;
 
-    Ok(proposal_attachment_response(&snapshot, pdf_bytes))
+    let download_url = proposal_download_url(storage, &snapshot, &object_name)?;
+    Ok(proposal_download_response(download_url))
 }
 
 #[cfg(test)]

@@ -4,7 +4,6 @@ import {
   Alert,
   Box,
   Button,
-  Chip,
   CircularProgress,
   Paper,
   Table,
@@ -18,6 +17,7 @@ import {
 import { Download, Plus } from "lucide-react";
 import { getDeviceKindLabel } from "@noma/shared";
 import { Layout } from "@/components/Layout";
+import { downloadFromApi } from "@/lib/download";
 import { formatDateTime } from "@/lib/date";
 import { formatBrandModel, formatMoney, formatProposalLocation } from "@/lib/proposals";
 import { appColors } from "@/theme";
@@ -137,18 +137,18 @@ export default function ProposalsPage() {
             }}
           >
             <TableContainer sx={{ maxWidth: "100%", overflowX: "auto" }}>
-              <Table sx={{ minWidth: 1100 }} size="small">
-                <TableHead>
-                  <TableRow sx={{ bgcolor: "rgba(15, 23, 42, 0.04)" }}>
-                    <TableCell>Dátum</TableCell>
-                    <TableCell>Berendezés</TableCell>
-                    <TableCell>Helyszín</TableCell>
-                    <TableCell align="right">Nettó összeg</TableCell>
-                    <TableCell align="right">Tételek</TableCell>
-                    <TableCell>Készítette</TableCell>
-                    <TableCell align="right">PDF</TableCell>
-                  </TableRow>
-                </TableHead>
+                <Table sx={{ minWidth: 1050 }} size="small">
+                  <TableHead>
+                    <TableRow sx={{ bgcolor: "rgba(15, 23, 42, 0.04)" }}>
+                      <TableCell>Dátum</TableCell>
+                      <TableCell>Referencia szám</TableCell>
+                      <TableCell>Berendezés</TableCell>
+                      <TableCell>Helyszín</TableCell>
+                      <TableCell align="right">Nettó összeg</TableCell>
+                      <TableCell>Készítette</TableCell>
+                      <TableCell align="right">PDF</TableCell>
+                    </TableRow>
+                  </TableHead>
                 <TableBody>
                   {rows.map((row) => (
                     <TableRow
@@ -158,6 +158,11 @@ export default function ProposalsPage() {
                       sx={{ cursor: "pointer" }}
                     >
                       <TableCell>{formatDateTime(new Date(row.created_at))}</TableCell>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                          {row.external_issue_number?.trim() || "-"}
+                        </Typography>
+                      </TableCell>
                       <TableCell>
                         <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
                           <Typography variant="body2" sx={{ fontWeight: 700 }}>
@@ -183,9 +188,6 @@ export default function ProposalsPage() {
                           {formatMoney(row.net_price, row.currency)}
                         </Typography>
                       </TableCell>
-                      <TableCell align="right">
-                        <Chip label={`${row.line_count} tétel`} size="small" sx={{ fontWeight: 700 }} />
-                      </TableCell>
                       <TableCell>{row.created_by_name ?? "-"}</TableCell>
                       <TableCell align="right">
                         <Button
@@ -194,7 +196,10 @@ export default function ProposalsPage() {
                           startIcon={<Download size={16} />}
                           onClick={(event) => {
                             event.stopPropagation();
-                            window.open(`/api/admin/proposals/${row.proposal_id}/pdf`, "_blank", "noopener,noreferrer");
+                            void downloadFromApi(
+                              `/api/admin/proposals/${row.proposal_id}/pdf`,
+                              "Nem sikerült letölteni az ajánlatot.",
+                            );
                           }}
                           sx={{ color: appColors.primary }}
                         >

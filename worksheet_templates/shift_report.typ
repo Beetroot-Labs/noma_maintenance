@@ -9,14 +9,16 @@
 
 #let fallback(value, default) = if value == none or value == "" { default } else { value }
 
-#let args = if sys.inputs.at("args", default: none) == none {
+#let inputs = if sys.inputs.at("data", default: none) == none {
   (:)
 } else {
-  json(bytes(sys.inputs.at("args")))
+  json.decode(sys.inputs.data)
 }
 
-#let input-or-arg(name, default) = fallback(sys.inputs.at(name, default: none), args.at(name, default: default))
-#let asset-or-arg(name, default) = fallback(sys.inputs.at(name, default: none), args.at(name, default: default))
+#let args = inputs.at("args", default: (:))
+
+#let input-or-arg(name, default) = fallback(inputs.at(name, default: none), args.at(name, default: default))
+#let asset-or-arg(name, default) = fallback(inputs.at(name, default: none), args.at(name, default: default))
 
 #let report-id = input-or-arg("report_id", "-")
 #let report-generated-at = input-or-arg("report_generated_at", "-")
@@ -28,12 +30,18 @@
 #let works-total = input-or-arg("works_total", "0 db")
 #let flagged-total = input-or-arg("flagged_total", "0 db")
 
-#let logo-path = asset-or-arg("logo_path", "../frontend/apps/main/public/Noma_logo_color_text_vertical.png")
+#let logo-path = asset-or-arg("logo_path", "logo.png")
 #let lead-signature-path = asset-or-arg("lead_signature_path", none)
 #let client-signature-path = asset-or-arg("client_signature_path", none)
 
-#let workers = csv(input-or-arg("workers_csv", "munkalap_workers.csv"), row-type: dictionary)
-#let rows = csv(input-or-arg("rows_csv", "munkalap_rows.csv"), row-type: dictionary)
+#let csv-input-or-arg(name, default) = if inputs.at(name, default: none) == none {
+  csv(default, row-type: dictionary)
+} else {
+  csv(bytes(input-or-arg(name, default)), row-type: dictionary)
+}
+
+#let workers = csv-input-or-arg("workers_csv", "munkalap_workers.csv")
+#let rows = csv-input-or-arg("rows_csv", "munkalap_rows.csv")
 
 #set page(
   paper: "a4",

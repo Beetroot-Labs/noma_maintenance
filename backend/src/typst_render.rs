@@ -1,7 +1,6 @@
 use anyhow::{Context, anyhow};
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
-use reqwest::multipart::Form;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::sync::Arc;
 
@@ -32,11 +31,36 @@ pub struct TypstRenderClient {
     http_client: reqwest::Client,
 }
 
+#[derive(Serialize)]
+pub struct RenderUriAsset {
+    pub path: String,
+    pub url: String,
+}
+
+#[derive(Serialize)]
+pub struct RenderUriRequest {
+    pub template: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inputs: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assets: Vec<RenderUriAsset>,
+    pub output: String,
+}
+
+#[derive(Deserialize)]
+pub struct RenderUriResponse {
+    pub bytes: usize,
+    pub compile_ms: u128,
+    pub upload_ms: u128,
+}
+
 impl TypstRenderClient {
     pub fn from_env() -> anyhow::Result<Option<Self>> {
         let Some(base_url) = first_nonempty_env(SERVICE_URL_ENV_CANDIDATES) else {
             log::warn!(
-                "Typst render service is not configured; worksheet generation will be unavailable. Set one of {:?} and one of {:?} (or the LABEL_PDF_* equivalents) to enable it.",
+                "Typst render service is not configured; PDF generation will be unavailable. Set one of {:?} and one of {:?} (or the LABEL_PDF_* equivalents) to enable it.",
                 SERVICE_URL_ENV_CANDIDATES,
                 SERVICE_ACCOUNT_ENV_CANDIDATES,
             );
@@ -84,15 +108,15 @@ impl TypstRenderClient {
         }))
     }
 
-    pub async fn render_typst(&self, form: Form) -> anyhow::Result<Vec<u8>> {
-        let endpoint = format!("{}/generate-multipart", self.base_url.trim_end_matches('/'));
+    pub async fn render_uri(&self, request: RenderUriRequest) -> anyhow::Result<RenderUriResponse> {
+        let endpoint = format!("{}/render-uri", self.base_url.trim_end_matches('/'));
         let id_token = self.fetch_id_token().await?;
 
         let response = self
             .http_client
             .post(endpoint)
             .bearer_auth(id_token)
-            .multipart(form)
+            .json(&request)
             .send()
             .await
             .context("failed to call typst render service")?;
@@ -108,7 +132,10 @@ impl TypstRenderClient {
             anyhow::bail!("typst render service returned {}: {}", status, body_text);
         }
 
-        Ok(body.to_vec())
+        let response: RenderUriResponse = serde_json::from_slice(&body)
+            .context("failed to parse typst render service response")?;
+
+        Ok(response)
     }
 
     async fn fetch_id_token(&self) -> anyhow::Result<String> {

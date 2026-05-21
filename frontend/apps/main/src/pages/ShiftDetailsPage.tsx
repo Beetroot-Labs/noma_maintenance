@@ -34,6 +34,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { Layout } from "@/components/Layout";
+import { downloadFromApi } from "@/lib/download";
 import { appColors } from "@/theme";
 
 type ShiftParticipantRow = {
@@ -216,7 +217,10 @@ export default function ShiftDetailsPage() {
       return;
     }
 
-    window.open(`/api/admin/shifts/${shiftId}/report`, "_blank", "noopener,noreferrer");
+    void downloadFromApi(
+      `/api/admin/shifts/${shiftId}/report`,
+      "Nem sikerült letölteni a karbantartási munkalapot.",
+    );
   };
 
   const handleDownloadServiceWorksheets = () => {
@@ -224,10 +228,9 @@ export default function ShiftDetailsPage() {
       return;
     }
 
-    window.open(
+    void downloadFromApi(
       `/api/admin/shifts/${shiftId}/service-worksheets`,
-      "_blank",
-      "noopener,noreferrer",
+      "Nem sikerült letölteni a szerviz munkalapokat.",
     );
   };
 
@@ -304,6 +307,16 @@ export default function ShiftDetailsPage() {
                         sx={{ alignSelf: { xs: "stretch", sm: "flex-start" } }}
                       >
                         Karbantartási munkalap letöltése
+                      </Button>
+                    ) : null}
+                    {hasServiceMaintenances ? (
+                      <Button
+                        variant="outlined"
+                        startIcon={<Download size={16} />}
+                        onClick={handleDownloadServiceWorksheets}
+                        sx={{ alignSelf: { xs: "stretch", sm: "flex-start" } }}
+                      >
+                        Szerviz munkalapok letöltése
                       </Button>
                     ) : null}
                   </Box>

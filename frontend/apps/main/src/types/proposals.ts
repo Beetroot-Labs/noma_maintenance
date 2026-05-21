@@ -24,6 +24,7 @@ export type AdminProposalListRow = {
   proposal_id: string;
   created_at: string;
   created_by_name: string | null;
+  external_issue_number: string | null;
   device_id: string;
   device_barcode: string | null;
   device_source_device_code: string | null;

@@ -8,14 +8,17 @@
 #let row-alt = rgb("#f9fbfb")
 
 #let fallback(value, default) = if value == none or value == "" { default } else { value }
-#let args = if sys.inputs.at("args", default: none) == none {
+
+#let inputs = if sys.inputs.at("data", default: none) == none {
   (:)
 } else {
-  json(bytes(sys.inputs.at("args")))
+  json.decode(sys.inputs.data)
 }
 
-#let input-or-arg(name, default) = fallback(sys.inputs.at(name, default: none), args.at(name, default: default))
-#let asset-or-arg(name, default) = fallback(sys.inputs.at(name, default: none), args.at(name, default: default))
+#let args = inputs.at("args", default: (:))
+
+#let input-or-arg(name, default) = fallback(inputs.at(name, default: none), args.at(name, default: default))
+#let asset-or-arg(name, default) = fallback(inputs.at(name, default: none), args.at(name, default: default))
 
 #let proposal-id = input-or-arg("proposal_id", "-")
 #let proposal-generated-at = input-or-arg("proposal_generated_at", "-")
@@ -31,7 +34,7 @@
 #let proposal-net-price = input-or-arg("proposal_net_price", "0 Ft")
 #let proposal-note = input-or-arg("proposal_note", "")
 #let proposal-external-issue-number = input-or-arg("proposal_external_issue_number", "")
-#let logo-path = asset-or-arg("logo_path", "../frontend/apps/main/public/Noma_logo_color_text_vertical.png")
+#let logo-path = asset-or-arg("logo_path", "logo.png")
 
 #let lines = args.at("lines", default: ())
 

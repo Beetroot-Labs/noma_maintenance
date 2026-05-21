@@ -1,4 +1,5 @@
 mod auth;
+mod gcs;
 mod error;
 mod labeling;
 mod maintenance;

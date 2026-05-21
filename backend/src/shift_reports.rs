@@ -1,24 +1,24 @@
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, header};
-use axum::response::{IntoResponse, Response};
-use cloud_storage::Object;
-use reqwest::multipart::{Form, Part};
+use axum::http::HeaderMap;
+use axum::response::Response;
+use serde_json::json;
 use sqlx::{Postgres, Transaction};
 
 use crate::auth::{require_lead_or_admin, require_session_user};
+use crate::gcs::{
+    download_url_response, signed_download_url, signed_upload_url, typst_template_asset_object_name,
+    typst_template_object_name,
+};
 use crate::error::ApiError;
 use crate::state::{AppState, StorageConfig};
 use crate::storage::shift_report_object_name;
-use crate::typst_render::TypstRenderClient;
+use crate::typst_render::{RenderUriAsset, RenderUriRequest, RenderUriResponse, TypstRenderClient};
 
-const SHIFT_REPORT_TEMPLATE: &str = include_str!("../../worksheet_templates/shift_report.typ");
-const SHIFT_REPORT_LOGO: &[u8] =
-    include_bytes!("../../frontend/apps/main/public/Noma_logo_color_text_vertical.png");
 const SHIFT_REPORT_TEMPLATE_FILENAME: &str = "shift_report.typ";
-const SHIFT_REPORT_ROWS_FILENAME: &str = "shift_report_rows.csv";
-const SHIFT_REPORT_WORKERS_FILENAME: &str = "shift_report_workers.csv";
 const SHIFT_REPORT_LOGO_FILENAME: &str = "Noma_logo_color_text_vertical.png";
-const SHIFT_REPORT_CLIENT_SIGNATURE_FILENAME: &str = "signature_client.png";
+const SHIFT_REPORT_LOGO_BUNDLE_PATH: &str = "logo.png";
+const SHIFT_REPORT_CLIENT_SIGNATURE_BUNDLE_PATH: &str = "client_signature.png";
+const PDF_SIGN_URL_TTL_SECS: u32 = 600;
 
 #[derive(sqlx::FromRow)]
 struct ShiftReportCoreRow {
@@ -185,96 +185,138 @@ fn render_workers_csv(workers: &[ShiftReportWorkerRow]) -> String {
     csv
 }
 
-async fn download_client_signature_bytes(
-    storage: &StorageConfig,
-    signature_object_name: Option<&str>,
-) -> Option<Vec<u8>> {
-    let Some(signature_object_name) = signature_object_name
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return None;
-    };
+fn build_shift_report_inputs(
+    snapshot: &ShiftReportSnapshot,
+    client_signature_path: Option<&str>,
+) -> serde_json::Value {
+    let core = &snapshot.core;
+    let mut value = json!({
+        "report_id": core.shift_id.to_string(),
+        "report_generated_at": core.report_generated_at.clone(),
+        "report_location": core.report_location.clone(),
+        "report_period": core.report_period.clone(),
+        "report_lead": core.report_lead.clone(),
+        "report_client": core.report_client.clone().unwrap_or_default(),
+        "report_client_role": core.report_client_role.clone().unwrap_or_default(),
+        "works_total": format!("{} db", core.works_total),
+        "flagged_total": format!("{} db", core.flagged_total),
+        "rows_csv": render_rows_csv(&snapshot.rows),
+        "workers_csv": render_workers_csv(&snapshot.workers),
+        "logo_path": SHIFT_REPORT_LOGO_BUNDLE_PATH,
+    });
 
-    match Object::download(&storage.bucket, signature_object_name).await {
-        Ok(bytes) => Some(bytes),
-        Err(err) => {
-            log::warn!(
-                "Failed to download client signature {} for worksheet: {}",
-                signature_object_name,
-                err
-            );
-            None
-        }
+    if let Some(client_signature_path) = client_signature_path {
+        value["client_signature_path"] = serde_json::Value::String(client_signature_path.to_string());
     }
+
+    value
 }
 
-fn build_shift_report_form(
+fn build_shift_report_render_uri_request(
+    storage: &StorageConfig,
     snapshot: &ShiftReportSnapshot,
-    client_signature_bytes: Option<&[u8]>,
-) -> Result<Form, ApiError> {
-    let mut form = Form::new()
-        .part(
-            "template",
-            Part::bytes(SHIFT_REPORT_TEMPLATE.as_bytes().to_vec())
-                .file_name(SHIFT_REPORT_TEMPLATE_FILENAME)
-                .mime_str("application/vnd.typst")
-                .map_err(ApiError::internal)?,
-        )
-        .text("report_id", snapshot.core.shift_id.to_string())
-        .text(
-            "report_generated_at",
-            snapshot.core.report_generated_at.clone(),
-        )
-        .text("report_location", snapshot.core.report_location.clone())
-        .text("report_period", snapshot.core.report_period.clone())
-        .text("report_lead", snapshot.core.report_lead.clone())
-        .text(
-            "report_client",
-            snapshot.core.report_client.clone().unwrap_or_default(),
-        )
-        .text(
-            "report_client_role",
-            snapshot.core.report_client_role.clone().unwrap_or_default(),
-        )
-        .text("works_total", format!("{} db", snapshot.core.works_total))
-        .text(
-            "flagged_total",
-            format!("{} db", snapshot.core.flagged_total),
-        )
-        .part(
-            "rows_csv",
-            Part::bytes(render_rows_csv(&snapshot.rows).into_bytes())
-                .file_name(SHIFT_REPORT_ROWS_FILENAME)
-                .mime_str("text/csv")
-                .map_err(ApiError::internal)?,
-        )
-        .part(
-            "workers_csv",
-            Part::bytes(render_workers_csv(&snapshot.workers).into_bytes())
-                .file_name(SHIFT_REPORT_WORKERS_FILENAME)
-                .mime_str("text/csv")
-                .map_err(ApiError::internal)?,
-        )
-        .part(
-            "logo_path",
-            Part::bytes(SHIFT_REPORT_LOGO.to_vec())
-                .file_name(SHIFT_REPORT_LOGO_FILENAME)
-                .mime_str("image/png")
-                .map_err(ApiError::internal)?,
-        );
+    output_object_name: &str,
+    client_signature_object_name: Option<&str>,
+) -> Result<RenderUriRequest, ApiError> {
+    let template_object_name = typst_template_object_name(SHIFT_REPORT_TEMPLATE_FILENAME);
+    let template_url = signed_download_url(
+        &storage.bucket,
+        &template_object_name,
+        PDF_SIGN_URL_TTL_SECS,
+        None,
+    )
+    .map_err(ApiError::internal)?;
+    let output_url = signed_upload_url(&storage.bucket, output_object_name, PDF_SIGN_URL_TTL_SECS)
+        .map_err(ApiError::internal)?;
+    let logo_object_name = typst_template_asset_object_name(SHIFT_REPORT_LOGO_FILENAME);
+    let logo_url = signed_download_url(
+        &storage.bucket,
+        &logo_object_name,
+        PDF_SIGN_URL_TTL_SECS,
+        None,
+    )
+    .map_err(ApiError::internal)?;
 
-    if let Some(client_signature_bytes) = client_signature_bytes {
-        form = form.part(
-            "client_signature_path",
-            Part::bytes(client_signature_bytes.to_vec())
-                .file_name(SHIFT_REPORT_CLIENT_SIGNATURE_FILENAME)
-                .mime_str("image/png")
-                .map_err(ApiError::internal)?,
-        );
+    let mut assets = vec![RenderUriAsset {
+        path: SHIFT_REPORT_LOGO_BUNDLE_PATH.to_string(),
+        url: logo_url,
+    }];
+
+    let client_signature_path = if let Some(signature_object_name) = client_signature_object_name
+    {
+        let url = signed_download_url(
+            &storage.bucket,
+            signature_object_name,
+            PDF_SIGN_URL_TTL_SECS,
+            None,
+        )
+        .map_err(ApiError::internal)?;
+        assets.push(RenderUriAsset {
+            path: SHIFT_REPORT_CLIENT_SIGNATURE_BUNDLE_PATH.to_string(),
+            url,
+        });
+        Some(SHIFT_REPORT_CLIENT_SIGNATURE_BUNDLE_PATH)
+    } else {
+        None
+    };
+
+    Ok(RenderUriRequest {
+        template: template_url,
+        template_path: Some(SHIFT_REPORT_TEMPLATE_FILENAME.to_string()),
+        inputs: Some(build_shift_report_inputs(snapshot, client_signature_path)),
+        assets,
+        output: output_url,
+    })
+}
+
+async fn render_shift_report_pdf(
+    renderer: &TypstRenderClient,
+    storage: &StorageConfig,
+    snapshot: &ShiftReportSnapshot,
+    output_object_name: &str,
+    client_signature_object_name: Option<&str>,
+) -> Result<RenderUriResponse, ApiError> {
+    let request = build_shift_report_render_uri_request(
+        storage,
+        snapshot,
+        output_object_name,
+        client_signature_object_name,
+    )?;
+    renderer.render_uri(request).await.map_err(ApiError::internal)
+}
+
+async fn store_shift_report_reference(
+    tx: &mut Transaction<'_, Postgres>,
+    snapshot: &ShiftReportSnapshot,
+    object_name: &str,
+) -> Result<String, ApiError> {
+    let updated = sqlx::query(
+        r#"
+        UPDATE shifts
+        SET report_url = $3
+        WHERE tenant_id = $1
+          AND id = $2
+          AND report_url IS NULL
+        "#,
+    )
+    .bind(snapshot.core.tenant_id)
+    .bind(snapshot.core.shift_id)
+    .bind(object_name)
+    .execute(&mut **tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    if updated.rows_affected() != 1 {
+        return Err(ApiError::conflict(
+            "worksheet could not be stored for the shift",
+        ));
     }
 
-    Ok(form)
+    Ok(object_name.to_string())
+}
+
+fn shift_report_download_response(download_url: String) -> Response {
+    download_url_response(download_url)
 }
 
 async fn load_shift_report_snapshot(
@@ -473,99 +515,6 @@ async fn load_shift_report_snapshot(
     })
 }
 
-async fn generate_shift_report_pdf(
-    renderer: &TypstRenderClient,
-    storage: &StorageConfig,
-    snapshot: &ShiftReportSnapshot,
-) -> Result<Vec<u8>, ApiError> {
-    let client_signature_bytes = download_client_signature_bytes(
-        storage,
-        snapshot.core.client_signature_image_url.as_deref(),
-    )
-    .await;
-
-    let form = build_shift_report_form(snapshot, client_signature_bytes.as_deref())?;
-
-    renderer
-        .render_typst(form)
-        .await
-        .map_err(ApiError::internal)
-}
-
-async fn upload_shift_report_pdf(
-    tx: &mut Transaction<'_, Postgres>,
-    storage: &StorageConfig,
-    snapshot: &ShiftReportSnapshot,
-    pdf_bytes: &[u8],
-) -> Result<String, ApiError> {
-    let filename = shift_report_attachment_filename(snapshot);
-    let object_name = shift_report_object_name(
-        storage,
-        snapshot.core.tenant_id,
-        snapshot.core.shift_id,
-        &filename,
-    );
-
-    Object::create(
-        &storage.bucket,
-        pdf_bytes.to_vec(),
-        &object_name,
-        "application/pdf",
-    )
-    .await
-    .map_err(ApiError::internal)?;
-
-    let updated = sqlx::query(
-        r#"
-        UPDATE shifts
-        SET report_url = $3
-        WHERE tenant_id = $1
-          AND id = $2
-          AND report_url IS NULL
-        "#,
-    )
-    .bind(snapshot.core.tenant_id)
-    .bind(snapshot.core.shift_id)
-    .bind(&object_name)
-    .execute(&mut **tx)
-    .await
-    .map_err(ApiError::internal)?;
-
-    if updated.rows_affected() != 1 {
-        return Err(ApiError::conflict(
-            "worksheet could not be stored for the shift",
-        ));
-    }
-
-    Ok(object_name)
-}
-
-fn pdf_attachment_response(snapshot: &ShiftReportSnapshot, pdf_bytes: Vec<u8>) -> Response {
-    let filename = shift_report_attachment_filename(snapshot);
-    let content_disposition = format!("attachment; filename=\"{filename}\"");
-
-    (
-        [
-            (header::CONTENT_TYPE, "application/pdf"),
-            (header::CONTENT_DISPOSITION, content_disposition.as_str()),
-        ],
-        pdf_bytes,
-    )
-        .into_response()
-}
-
-async fn download_existing_report(
-    storage: &StorageConfig,
-    snapshot: &ShiftReportSnapshot,
-    object_name: &str,
-) -> Result<Response, ApiError> {
-    let pdf_bytes = Object::download(&storage.bucket, object_name)
-        .await
-        .map_err(ApiError::internal)?;
-
-    Ok(pdf_attachment_response(snapshot, pdf_bytes))
-}
-
 pub async fn get_admin_shift_report(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -590,6 +539,7 @@ pub async fn get_admin_shift_report(
 
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
     let snapshot = load_shift_report_snapshot(&mut tx, user.tenant_id, shift_id).await?;
+    let filename = shift_report_attachment_filename(&snapshot);
 
     if let Some(report_url) = snapshot.core.report_url.as_deref() {
         log::info!(
@@ -597,8 +547,15 @@ pub async fn get_admin_shift_report(
             shift_id,
             report_url
         );
+        let download_url = signed_download_url(
+            &storage.bucket,
+            report_url,
+            PDF_SIGN_URL_TTL_SECS,
+            Some(&filename),
+        )
+        .map_err(ApiError::internal)?;
         tx.commit().await.map_err(ApiError::internal)?;
-        return download_existing_report(storage, &snapshot, report_url).await;
+        return Ok(shift_report_download_response(download_url));
     }
 
     if snapshot.core.status != "COMMITTED" {
@@ -618,22 +575,57 @@ pub async fn get_admin_shift_report(
 
     log::info!("Generating worksheet for shift {}", shift_id);
 
-    let pdf_bytes = match generate_shift_report_pdf(renderer, storage, &snapshot).await {
-        Ok(bytes) => bytes,
+    let object_name = shift_report_object_name(
+        storage,
+        snapshot.core.tenant_id,
+        snapshot.core.shift_id,
+        &filename,
+    );
+
+    let render_result = match render_shift_report_pdf(
+        renderer,
+        storage,
+        &snapshot,
+        &object_name,
+        snapshot
+            .core
+            .client_signature_image_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+    )
+    .await
+    {
+        Ok(result) => result,
         Err(err) => {
             let _ = tx.rollback().await;
             return Err(err);
         }
     };
 
-    log::info!("Uploading worksheet for shift {} to GCS", shift_id);
-    let _ = upload_shift_report_pdf(&mut tx, storage, &snapshot, &pdf_bytes).await?;
+    log::info!(
+        "Worksheet rendered for shift {} in {} ms ({} bytes, upload {} ms)",
+        shift_id,
+        render_result.compile_ms,
+        render_result.bytes,
+        render_result.upload_ms,
+    );
+
+    let _ = store_shift_report_reference(&mut tx, &snapshot, &object_name).await?;
 
     log::info!("Worksheet stored for shift {}", shift_id);
 
     tx.commit().await.map_err(ApiError::internal)?;
 
-    Ok(pdf_attachment_response(&snapshot, pdf_bytes))
+    let download_url = signed_download_url(
+        &storage.bucket,
+        &object_name,
+        PDF_SIGN_URL_TTL_SECS,
+        Some(&filename),
+    )
+    .map_err(ApiError::internal)?;
+
+    Ok(shift_report_download_response(download_url))
 }
 
 #[cfg(test)]

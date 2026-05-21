@@ -8,14 +8,16 @@
 #let row-alt = rgb("#f9fbfb")
 
 #let fallback(value, default) = if value == none or value == "" { default } else { value }
-#let args = if sys.inputs.at("args", default: none) == none {
+#let inputs = if sys.inputs.at("data", default: none) == none {
   (:)
 } else {
-  json(bytes(sys.inputs.at("args")))
+  json.decode(sys.inputs.data)
 }
 
-#let input-or-arg(name, default) = fallback(sys.inputs.at(name, default: none), args.at(name, default: default))
-#let asset-or-arg(name, default) = fallback(sys.inputs.at(name, default: none), args.at(name, default: default))
+#let args = inputs.at("args", default: (:))
+
+#let input-or-arg(name, default) = fallback(inputs.at(name, default: none), args.at(name, default: default))
+#let asset-or-arg(name, default) = fallback(inputs.at(name, default: none), args.at(name, default: default))
 
 #let report-id = input-or-arg("report_id", "-")
 #let report-generated-at = input-or-arg("report_generated_at", "-")
@@ -45,7 +47,7 @@
 #let note = input-or-arg("note", input-or-arg("extra_note", "-"))
 #let referent-name = input-or-arg("referent_name", input-or-arg("report_client", "-"))
 #let referent-role = input-or-arg("referent_role", input-or-arg("report_client_role", "-"))
-#let logo-path = asset-or-arg("logo_path", "../frontend/apps/main/public/Noma_logo_color_text_vertical.png")
+#let logo-path = asset-or-arg("logo_path", "logo.png")
 #let referent-signature-path = asset-or-arg(
   "referent_signature_path",
   fallback(asset-or-arg("client_signature_path", none), none),
@@ -104,10 +106,10 @@
 
 #let resolve-photo-path(raw-path) = if raw-path == none or raw-path == "" {
   none
-} else if sys.inputs.at(raw-path, default: none) == none {
+} else if inputs.at(raw-path, default: none) == none {
   raw-path
 } else {
-  sys.inputs.at(raw-path)
+  inputs.at(raw-path)
 }
 
 #let photo-path(photo) = fallback(
